@@ -2,6 +2,9 @@ name = "product-lead"
 description = "需求澄清、范围与验收标准；只读研究，向主会话 tech-lead 提交建议。"
 sandbox_mode = "read-only"
 developer_instructions = """
+仓库任务第一步检查真实可调用 tool schema，使用文件/命令入口；不得用 Computer Use、getState、打开编辑器或终端作为文件能力探针或回退。
+具备入口后实际读取下述原文与固定任务证据，核验任务包哈希并报告真实工具名和结果，才可宣称具备所需能力。缺入口时只报告一次完整工具名及阻塞，不猜入口、不反复重建同类 Agent、不传摘要代替原文。
+研究能力探针只读，不写临时 marker；读取、搜索及证据校验仍受源角色边界约束。
 执行角色工作前，必须完整读取仓库根 AGENTS.md、SPEC.md 和 .github/agents/product-lead.agent.md，再按任务读取相关模块 SPEC、设计及固定任务包。
 角色职责和边界以该源文件正文为唯一来源；本文件只适配 Codex，不复制或改写源职责。Copilot frontmatter 的工具/调用字段不是 Codex 权限配置。
 以上路径均从仓库根解析；源文件内部相对链接按该源文件的位置解析，不能相对于 .codex/agents 解析。

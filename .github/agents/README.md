@@ -11,7 +11,7 @@
 | [tech-lead](./tech-lead.agent.md) | SDD 总协调：SPEC 门槛、任务分派、集成与最终验收 | 读取、编辑、执行、研究及调用团队角色；写入受工作流授权约束 |
 | [product-lead](./product-lead.agent.md) | 产品负责人：需求、范围和验收标准 | 只读研究，不再调度实现团队 |
 | [architect](./architect.agent.md) | 架构师：方案比较、模块边界、接口契约 | 只读研究 |
-| [appium-expert](./appium-expert.agent.md) | Appium 专家：内部架构、命令链路、生态项目与用法、能力拆解和复用评估 | 只读研究，不执行命令或操作设备 |
+| [appium-expert](./appium-expert.agent.md) | Appium 专家：内部架构、命令链路、生态项目与用法、能力拆解和复用评估 | 只读研究；仅执行任务证据读取、搜索和校验命令，不写入、实验、构建、安装、启动服务或操作设备 |
 | [appium-engineer](./appium-engineer.agent.md) | Appium 工程师：设备自动化核心 | 读取、编辑、执行验证、网络研究 |
 | [agent-integration-engineer](./agent-integration-engineer.agent.md) | Agent 集成工程师：接入层与开发者体验 | 读取、编辑、执行验证、网络研究 |
 | [quality-engineer](./quality-engineer.agent.md) | 质量工程师：测试、验收与回归 | 读取、编辑、执行验证；编辑范围由角色说明约束为测试相关文件 |
