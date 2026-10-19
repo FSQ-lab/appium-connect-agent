@@ -30,3 +30,32 @@
 - 当前没有产品依赖、构建命令、自动化测试套件或已验证的兼容性范围。
 - 当前没有产品源码或已实现 feature；模块 SPEC 仅建立职责与文档所有权边界。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
+
+## Python Engineering Foundation — 待确认 SPEC Delta
+
+以下是已审查的 [Python 工程基础设计](docs/superpowers/specs/2026-10-19-python-project-foundation-design.md) 对当前项目约束的拟议变更。该段整体待用户确认；确认前不替换以上当前状态，也不实施工程骨架。
+
+### Python Architecture
+
+- 项目采用纯 Python 实现，发行名为 `appium-connect-agent`，导入包为 `appium_connect_agent`，源码采用 `src/appium_connect_agent/` 布局。
+- 包元数据声明 CPython `>=3.11`，本地默认版本为 `3.11`。工程基础必须在 CPython 3.11 上验证；其他版本在实际验证前仅属元数据允许范围。该声明不构成设备平台支持承诺。
+- 根包包含 `__init__.py` 和 `py.typed`。五个产品模块的 Python 子包在各自首个已确认 feature 实施时创建；现有 `modules/*/SPEC.md` 继续维护模块契约。
+- 工程基础只提供打包、质量工具配置和非产品包导入 smoke test，不提供 Appium、MCP、CLI 或 SDK 产品能力。
+
+### Tooling and Verification Constraints
+
+- 使用 `pyproject.toml` 统一项目元数据、构建后端、依赖组和质量工具配置；构建后端为带兼容版本范围的 `uv_build`。
+- 使用 uv 管理环境和依赖，`uv.lock` 纳入版本控制；初始运行依赖为空。pytest、Ruff、mypy 和 import-linter 放入单一默认 `dev` 组，`uv sync --locked` 应能从全新环境安装所需开发依赖。
+- pytest 从 `tests/` 收集测试，使用已安装包，不注入源码搜索路径；初始测试只验证包可导入。默认测试不得隐式要求 Appium 服务或设备。
+- Ruff 使用 Python 3.11 目标、88 字符行宽、四空格缩进和双引号，统一格式化与 lint；mypy 对源码和测试采用 strict 基线，不全局忽略缺失类型。
+- 基础验证入口为 `uv sync --locked`、`uv run ruff format --check .`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest` 和 `uv build`；构建产物还须在隔离环境安装并验证导入及 `py.typed`。
+
+### Module Import Constraints
+
+- 目标允许方向为：`configuration → contracts`；`runtime → configuration + contracts`；`automation → runtime + contracts`；`integrations → configuration + runtime + automation + contracts`。`contracts` 不依赖其他产品模块，禁止反向和循环依赖。
+- 只有一条规则涉及的真实 source/target 产品包均存在时，才启用对应生产 import-linter 契约；至少一条生产契约可执行后，`uv run lint-imports` 才纳入强制验证。隔离正反例只能验证契约模板，不能代替生产图检查。
+- 模块首次出现时须由相应模块 SPEC 确认 Python 包映射及实际依赖。公开/私有入口规则须待模块 SPEC 定义后启用，不从工程骨架推断业务 API。
+
+### Current-State Text Replacement
+
+确认后移除本段待确认标记，将以上约束并入正式章节，同时将原有“技术栈尚未确定”改为“Python 工程基线已确认，目标 Agent、设备平台、首个场景、MVP 和产品接入形式仍未确定”。工程骨架完成并验证后，更新“无构建命令和测试”的状态描述；五个产品模块仍保持尚未实现。本次不修改模块 SPEC 的业务边界。

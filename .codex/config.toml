@@ -1,0 +1,12 @@
+# 项目级适配；模型、审批与执行权限沿用宿主配置。
+developer_instructions = """
+主会话按 tech-lead 协调：开展角色工作前完整读取仓库根 AGENTS.md、SPEC.md 和 .github/agents/tech-lead.agent.md。
+根 AGENTS.md 的显式授权规则优先；加载配置或提及技能不会启动 SDD 或授权写入。
+需要委派时由主会话直接分配六个叶角色，禁止委派 tech-lead 子角色或嵌套委派。
+独立审查必须新建未参与本批实现或测试编写的上下文，遵循原审查技能；不可用时报告 audit-blocked。
+"""
+
+[agents]
+enabled = true
+# 最多 3 个并发子角色；加上主会话共 4 个会话，按依赖与文件所有权分配。
+max_concurrent_threads_per_session = 3
