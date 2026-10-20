@@ -1,0 +1,19 @@
+# Local environments and Python artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Quality tool caches and coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.import_linter_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
