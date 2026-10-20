@@ -123,3 +123,24 @@ observer_errors 后停止通知，诊断继续；KeyboardInterrupt 仍传播并�
 
 本 feature 无需服务或设备；后续连接、安装、自管服务、维护和启停尚未交付。
 Runtime 首批整体仍须完成其余 feature 及真实 Android Session 创建/关闭验收。
+
+## GitHub Actions 检查
+
+`CI` 在推送 `master`、面向 `master` 的 Pull Request，以及手动触发时运行。
+两个检查均使用 CPython 3.11（与 `.python-version` 一致）和 uv 0.12.5：
+
+- `macOS quality`：在 `macos-15` 锁定同步默认开发组，执行 Ruff 格式与 lint、
+  strict mypy、pytest、生产 import-linter，以及构建与隔离安装检查。
+- `Windows packaging`：在 `windows-latest` 仅锁定同步包、构建与隔离安装；
+  检查根包、Contracts、元数据和 `py.typed`，不导入 Runtime 或执行其测试。
+  该检查不代表 Windows Runtime 已支持；Windows 宿主仍是后续目标。
+
+wheel 与 sdist 均检查包文件白名单、源码一致性和元数据，随后分别安装到
+全新临时环境，从仓库外以 `-I` 验证导入和类型标记；macOS 另验证 Runtime
+公开入口。检查脚本为 `.github/scripts/check_distributions.py`，可在 `uv build`
+后运行 `uv run --no-project --python 3.11 .github/scripts/check_distributions.py`。
+
+CI 的 `UV_DEFAULT_INDEX` 与现有 `uv.lock` 保持一致，使用锁中已批准的
+`https://packagefeedproxy.microsoft.io/pypi/simple/` 镜像；runner 必须可访问该
+镜像，不需要仓库凭据，也不会修改本机 pip 配置或重写锁文件。
+工作流不发布产物，不修改分支保护或合并策略。

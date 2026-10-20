@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Match the existing lockfile registry without rewriting uv.lock.
+  UV_DEFAULT_INDEX: https://packagefeedproxy.microsoft.io/pypi/simple/
+
+jobs:
+  checks:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macOS quality
+            quality: true
+          - os: windows-latest
+            name: Windows packaging
+            quality: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: false
+      - name: Sync locked development environment
+        if: matrix.quality
+        run: uv sync --locked
+      - name: Sync locked package only
+        if: ${{ !matrix.quality }}
+        run: uv sync --locked --no-dev
+      - name: Quality, types, tests and import boundaries
+        if: matrix.quality
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+          uv run --locked mypy src tests
+          uv run --locked pytest
+          uv run --locked lint-imports
+          uv run --locked mypy .github/scripts/check_distributions.py
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Check archives and isolated installations
+        run: uv run --no-project --python 3.11 .github/scripts/check_distributions.py
