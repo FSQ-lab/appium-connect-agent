@@ -1,0 +1,107 @@
+name: Bug Report
+description: 报告问题，提供复现信息和发生环境。
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请提供最小复现信息，并删去日志、截图中的令牌和设备标识等敏感内容。
+        下方平台选项用于记录发生环境，不代表项目已支持所有平台。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题描述
+      description: 简要说明遇到的问题及其影响。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序列出操作、命令和必要配置，尽量提供最小复现。
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: 预期与实际结果
+      placeholder: |
+        预期结果：
+        实际结果：
+    validations:
+      required: true
+  - type: input
+    id: project-version
+    attributes:
+      label: 项目版本或提交号
+      description: 填写安装的版本号或使用的 Git 提交号。
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python 版本
+      description: 填写完整版本号；不涉及 Python 时填写“不适用”。
+    validations:
+      required: true
+  - type: dropdown
+    id: host-os
+    attributes:
+      label: 宿主操作系统
+      description: 运行 appium_connect_agent 或执行相关命令的电脑系统。
+      options:
+        - macOS
+        - Windows
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: host-version
+    attributes:
+      label: 宿主系统名称与版本
+      description: 填写电脑系统版本；选择“其他”时也请填写系统名称。
+    validations:
+      required: true
+  - type: dropdown
+    id: target-os
+    attributes:
+      label: 操作目标系统
+      description: 希望通过本工具操作的系统；CI、打包等问题可选“不涉及设备”。
+      options:
+        - macOS
+        - iOS
+        - Android
+        - 不涉及设备
+        - 未知
+    validations:
+      required: true
+  - type: input
+    id: appium-driver-versions
+    attributes:
+      label: Appium 与 driver 版本（如适用）
+      description: 涉及 Appium 时填写其版本、driver 名称和版本；否则留空。
+    validations:
+      required: false
+  - type: input
+    id: target-details
+    attributes:
+      label: 目标系统版本与设备信息（如适用）
+      description: 涉及设备时填写目标系统版本、设备型号及真机或模拟器；否则留空。
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志（可选）
+      description: 粘贴相关命令输出或错误日志，无需添加代码围栏。
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: 截图（可选）
+      description: 可拖入帮助说明问题的截图。
+    validations:
+      required: false
