@@ -14,3 +14,6 @@ developer_instructions = """
 enabled = true
 # 最多 3 个并发子角色；加上主会话共 4 个会话，按依赖与文件所有权分配。
 max_concurrent_threads_per_session = 3
+
+[plugins."unified-computer-use@openai-bundled"]
+enabled = false
