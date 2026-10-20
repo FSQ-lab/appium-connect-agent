@@ -1,0 +1,558 @@
+import json
+import os
+import platform
+import socket
+import subprocess
+import time
+from dataclasses import FrozenInstanceError
+from pathlib import Path
+from threading import Event
+from typing import Any
+
+import pytest
+
+from appium_connect_agent.runtime import (
+    DiagnosticCheck,
+    LocalSettings,
+    OperationCancelledError,
+    OperationControl,
+    OperationTimeoutError,
+    Runtime,
+    _coordination,
+)
+from appium_connect_agent.runtime._inspection import Finding, Reader
+from appium_connect_agent.runtime._semver import satisfies
+
+
+def write_package(root: Path, name: str, version: str, **extra: Any) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    entry = root / "bin" / f"{name}.js"
+    entry.parent.mkdir(exist_ok=True)
+    entry.write_text("throw Error('MUST NOT EXECUTE');")
+    (root / "package.json").write_text(
+        json.dumps(
+            {"name": name, "version": version, "bin": {name: f"bin/{name}.js"}, **extra}
+        )
+    )
+    return entry
+
+
+def settings(
+    tmp_path: Path, *, peer: str = "^3.0.0", npm: str = ">=10.0.0"
+) -> LocalSettings:
+    appium = write_package(
+        tmp_path / "appium", "appium", "3.7.0", engines={"node": ">=20.0.0", "npm": npm}
+    )
+    npm_path = write_package(tmp_path / "npm", "npm", "11.19.0")
+    node = tmp_path / "node"
+    node.write_text("do not execute")
+    home = tmp_path / "extensions"
+    write_package(
+        home / "node_modules" / "appium-uiautomator2-driver",
+        "appium-uiautomator2-driver",
+        "8.7.0",
+        appium={
+            "driverName": "uiautomator2",
+            "automationName": "UiAutomator2",
+            "private": "TOP-SECRET",
+        },
+        peerDependencies={"appium": peer},
+    )
+    return LocalSettings(
+        appium_executable=appium,
+        appium_home=home,
+        node_executable=node,
+        npm_executable=npm_path,
+    )
+
+
+def checks(runtime: Runtime) -> dict[str, DiagnosticCheck]:
+    return {check.check_id: check for check in runtime.diagnose().checks}
+
+
+def snapshot(root: Path) -> dict[str, tuple[bytes | None, int]]:
+    return {
+        str(path.relative_to(root)): (
+            path.read_bytes() if path.is_file() else None,
+            path.stat().st_mtime_ns,
+        )
+        for path in root.rglob("*")
+    }
+
+
+def test_construction_is_pure(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unexpected I/O")
+
+    monkeypatch.setattr(os, "open", forbidden)
+    monkeypatch.setattr(Path, "stat", forbidden)
+    monkeypatch.setattr(os.environ, "get", forbidden)
+    runtime = Runtime(LocalSettings(appium_executable=Path("/absent")))
+    assert runtime is not None
+
+
+def test_static_report_readonly_no_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    component = tmp_path / "components"
+    config = settings(component)
+    before = snapshot(component)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unexpected execution/network")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    report = Runtime(config).diagnose()
+    assert snapshot(component) == before
+    result = {check.check_id: check for check in report.checks}
+    assert result["appium_installation"].status == "pass"
+    assert result["driver_installation"].status == "pass"
+    assert result["npm_candidate"].status == "pass"
+    assert result["node_candidate"].status == "pass"
+    assert result["declared_compatibility"].status == "unknown"
+    assert result["qualified_support"].reason_code == "not_qualified"
+    assert result["java_layout"].status == "unknown"
+    assert (
+        result["service"].reason_code == result["device"].reason_code == "not_checked"
+    )
+    assert report.observed_at.utcoffset() is not None
+    assert report.operation_id and not hasattr(report, "ready")
+    assert "TOP-SECRET" not in repr(report)
+    assert len(report.checks) <= 32
+    with pytest.raises(FrozenInstanceError):
+        report.checks = ()  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("peer,npm", [("^2.0.0", ">=10.0.0"), ("^3.0.0", "<10.0.0")])
+def test_known_incompatibility_survives_unqualified(
+    tmp_path: Path, peer: str, npm: str
+) -> None:
+    result = checks(Runtime(settings(tmp_path / "components", peer=peer, npm=npm)))
+    assert result["declared_compatibility"].status == "fail"
+    assert result["qualified_support"].status == "unknown"
+
+
+def test_declarations_match_without_unobservable_constraints(tmp_path: Path) -> None:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None
+    metadata = config.appium_executable.parent.parent / "package.json"
+    data = json.loads(metadata.read_text())
+    del data["engines"]["node"]
+    metadata.write_text(json.dumps(data))
+    assert checks(Runtime(config))["declared_compatibility"].status == "pass"
+
+
+def test_explicit_missing_does_not_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = write_package(tmp_path / "good", "appium", "3.7.0")
+    directory = tmp_path / "bin"
+    directory.mkdir()
+    (directory / "appium").symlink_to(entry)
+    monkeypatch.setenv("PATH", str(directory))
+    result = checks(Runtime(LocalSettings(appium_executable=tmp_path / "missing")))
+    assert result["appium_installation"].reason_code == "missing"
+    assert result["appium_installation"].status == "fail"
+
+
+def test_path_symlink_dedup_ambiguity_and_relative_omission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = write_package(tmp_path / "package", "appium", "3.7.0")
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "appium").symlink_to(entry)
+    (b / "appium").symlink_to(entry)
+    monkeypatch.setenv("PATH", f"{a}:{b}::relative")
+    check = checks(Runtime(LocalSettings()))["appium_installation"]
+    assert check.status == "pass" and "duplicates=1" in check.evidence
+    (b / "appium").unlink()
+    (b / "appium").symlink_to(write_package(tmp_path / "other", "appium", "2.0.0"))
+    assert (
+        checks(Runtime(LocalSettings()))["appium_installation"].reason_code
+        == "ambiguous_candidates"
+    )
+    monkeypatch.setenv("PATH", ":".join([str(a)] * 65))
+    assert (
+        checks(Runtime(LocalSettings()))["appium_installation"].reason_code
+        == "path_limit"
+    )
+
+
+def test_default_driver_home_only_candidate(tmp_path: Path) -> None:
+    home = _coordination._account_home()
+    write_package(
+        home / ".appium/node_modules/appium-uiautomator2-driver",
+        "appium-uiautomator2-driver",
+        "8.7.0",
+        appium={"driverName": "uiautomator2", "automationName": "UiAutomator2"},
+    )
+    result = checks(Runtime(LocalSettings()))["driver_installation"]
+    assert (
+        result.status == "unknown" and result.reason_code == "home_association_unknown"
+    )
+    explicit = checks(Runtime(LocalSettings(appium_home=tmp_path / "missing")))[
+        "driver_installation"
+    ]
+    assert explicit.status == "fail"
+
+
+def test_product_environment_is_not_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for key in ("APPIUM_HOME", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT"):
+        monkeypatch.setenv(key, str(tmp_path / "missing"))
+    result = checks(Runtime(LocalSettings()))
+    assert (
+        result["java_layout"].reason_code
+        == result["android_sdk_layout"].reason_code
+        == "not_specified"
+    )
+    assert result["driver_installation"].status == "unknown"
+
+
+@pytest.mark.parametrize(
+    "content,reason",
+    [
+        (b"{broken", "invalid_json"),
+        (b"[]", "invalid_metadata"),
+        (b"x" * (1024 * 1024 + 1), "file_too_large"),
+    ],
+)
+def test_invalid_metadata(tmp_path: Path, content: bytes, reason: str) -> None:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None
+    (config.appium_executable.parent.parent / "package.json").write_bytes(content)
+    check = checks(Runtime(config))["appium_installation"]
+    assert check.status == "unknown" and check.reason_code == reason
+
+
+def test_fifo_metadata_never_blocks(tmp_path: Path) -> None:
+    entry = write_package(tmp_path / "package", "appium", "3.7.0")
+    metadata = entry.parent.parent / "package.json"
+    metadata.unlink()
+    os.mkfifo(metadata)
+    check = checks(Runtime(LocalSettings(appium_executable=entry)))[
+        "appium_installation"
+    ]
+    assert check.status == "unknown" and check.reason_code == "not_regular_file"
+
+
+def test_wrong_name_and_bin_mapping_not_identified(tmp_path: Path) -> None:
+    entry = write_package(tmp_path / "package", "wrong", "3.7.0")
+    assert (
+        checks(Runtime(LocalSettings(appium_executable=entry)))[
+            "appium_installation"
+        ].reason_code
+        == "unrecognized_layout"
+    )
+    metadata = entry.parent.parent / "package.json"
+    metadata.write_text(
+        json.dumps(
+            {"name": "appium", "version": "3.7.0", "bin": {"appium": "different.js"}}
+        )
+    )
+    assert (
+        checks(Runtime(LocalSettings(appium_executable=entry)))[
+            "appium_installation"
+        ].status
+        == "unknown"
+    )
+
+
+def test_bounded_reader_and_partial_read_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = tmp_path / "data"
+    file.write_bytes(b"{}")
+    reader = Reader(lambda: None)
+    for _ in range(64):
+        assert reader.read(file) == b"{}"
+    with pytest.raises(Finding) as error:
+        reader.read(file)
+    assert error.value.reason == "read_limit"
+
+    def denied(*args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("SECRET")
+
+    monkeypatch.setattr(os, "read", denied)
+    with pytest.raises(Finding) as error:
+        Reader(lambda: None).read(file)
+    assert error.value.reason == "file_unreadable" and "SECRET" not in str(error.value)
+
+
+def test_java_sdk_explicit_layout(tmp_path: Path) -> None:
+    java, sdk = tmp_path / "jdk", tmp_path / "sdk"
+    (java / "bin").mkdir(parents=True)
+    (java / "release").write_text('JAVA_VERSION="21"\nSECRET="hidden"')
+    (java / "bin/java").write_text("do not execute")
+    (sdk / "platform-tools").mkdir(parents=True)
+    (sdk / "platform-tools/adb").write_text("do not execute")
+    (sdk / "platform-tools/source.properties").write_text("Pkg.Revision=1")
+    result = checks(Runtime(LocalSettings(java_home=java, android_sdk_root=sdk)))
+    assert result["java_layout"].status == result["android_sdk_layout"].status == "pass"
+    assert "hidden" not in repr(result)
+
+
+def test_cancel_timeout_observer_and_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancellation = Event()
+    cancellation.set()
+    with pytest.raises(OperationCancelledError) as error:
+        Runtime(LocalSettings()).diagnose(
+            control=OperationControl(cancellation=cancellation)
+        )
+    assert error.value.partial_report.checks == ()
+    cancellation.clear()
+
+    def cancel(event: Any) -> None:
+        cancellation.set()
+
+    with pytest.raises(OperationCancelledError) as error:
+        Runtime(LocalSettings(), on_progress=cancel).diagnose(
+            control=OperationControl(cancellation=cancellation)
+        )
+    assert len(error.value.partial_report.checks) == 1
+    cancellation.clear()
+
+    def failed(event: Any) -> None:
+        raise ValueError("SECRET")
+
+    runtime = Runtime(LocalSettings(), on_progress=failed)
+    report = runtime.diagnose()
+    assert report.observer_errors == (
+        "progress_callback_failed",
+    ) and "SECRET" not in repr(report)
+    ticks = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: ticks[0])
+
+    def slow(event: Any) -> None:
+        ticks[0] = 11.0
+
+    with pytest.raises(OperationTimeoutError) as timeout_error:
+        Runtime(LocalSettings(), on_progress=slow).diagnose()
+    assert (
+        timeout_error.value.code == "operation_timeout"
+        and timeout_error.value.partial_report.checks
+    )
+    assert Runtime(LocalSettings()).diagnose().checks
+
+
+def test_keyboard_interrupt_propagates_and_releases() -> None:
+    def interrupt(event: Any) -> None:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        Runtime(LocalSettings(), on_progress=interrupt).diagnose()
+    assert Runtime(LocalSettings()).diagnose().checks
+
+
+def test_non_mac_reports_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    report = Runtime(LocalSettings()).diagnose()
+    assert (
+        len(report.checks) == 1 and report.checks[0].reason_code == "unsupported_host"
+    )
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan"), True, "10"])
+def test_control_validation(value: Any) -> None:
+    with pytest.raises(ValueError):
+        OperationControl(timeout_seconds=value)
+
+
+@pytest.mark.parametrize(
+    "actual,expression,expected",
+    [
+        ("3.7.0", "^3.0.0", True),
+        ("2.0.0", "^3.0.0", False),
+        ("0.0.2", "^0.0.1", False),
+        ("0.2.3", "^0.2.0", True),
+        ("2.1.0", "~2.0.0", False),
+        ("3.7.0", ">=3.0.0 <4.0.0", True),
+        ("3.7.0", "^2.0.0 || ^3.0.0", True),
+        ("3.7.0", "3.x", None),
+        ("3.7.0", "^3.0.0-rc.2", None),
+        ("3.7.0-rc.2", "^3.0.0", None),
+    ],
+)
+def test_conservative_ranges(
+    actual: str, expression: str, expected: bool | None
+) -> None:
+    assert satisfies(actual, expression) is expected
+
+
+def test_metadata_ancestor_limit(tmp_path: Path) -> None:
+    root = tmp_path / "package"
+    deep = "a/" * 9 + "entry.js"
+    entry = root / deep
+    entry.parent.mkdir(parents=True)
+    entry.write_text("not executed")
+    (root / "package.json").write_text(
+        json.dumps({"name": "appium", "version": "3.7.0", "bin": {"appium": deep}})
+    )
+    check = checks(Runtime(LocalSettings(appium_executable=entry)))[
+        "appium_installation"
+    ]
+    assert check.reason_code == "unrecognized_layout"
+
+
+def test_permission_failure_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None
+    metadata = config.appium_executable.parent.parent / "package.json"
+    actual_open = os.open
+
+    def denied(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if path == metadata:
+            raise PermissionError("credential=SECRET")
+        return actual_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", denied)
+    check = checks(Runtime(config))["appium_installation"]
+    assert check.status == "unknown" and check.reason_code == "file_unreadable"
+    assert "SECRET" not in repr(check)
+
+
+def test_evidence_limits_and_redaction(tmp_path: Path) -> None:
+    from appium_connect_agent.runtime._diagnostics import _Operation
+    from appium_connect_agent.runtime._inspection import path_evidence
+
+    operation = _Operation(OperationControl(), None)
+    operation.add("bounded", "unknown", "bounded", tuple("x" * 700 for _ in range(10)))
+    check = operation.report().checks[0]
+    assert len(check.evidence) == 8 and all(len(item) <= 512 for item in check.evidence)
+    assert "truncated" in check.evidence[-1]
+    assert "SECRET" not in path_evidence(tmp_path / "token=SECRET")
+
+
+def test_partial_read_can_grow_past_size_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "small"
+    path.write_bytes(b"x")
+    monkeypatch.setattr(os, "read", lambda fd, size: b"x" * size)
+    with pytest.raises(Finding) as error:
+        Reader(lambda: None).read(path)
+    assert error.value.reason == "file_too_large"
+
+
+@pytest.mark.parametrize("access", ["read", "stat"])
+@pytest.mark.parametrize("control_change", ["timeout", "cancel"])
+def test_io_interrupt_identity_overrides_budget_and_releases_resources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    access: str,
+    control_change: str,
+) -> None:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None
+    executable = config.appium_executable.resolve(strict=True)
+    interrupt = KeyboardInterrupt("same interrupt")
+    cancellation = Event()
+    ticks = [0.0]
+    open_descriptors: set[int] = set()
+    opened_descriptors: list[int] = []
+    actual_open, actual_close = os.open, os.close
+    actual_stat = Path.stat
+    actual_read = os.read
+
+    def tracked_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        descriptor = actual_open(path, flags, *args, **kwargs)
+        open_descriptors.add(descriptor)
+        opened_descriptors.append(descriptor)
+        return descriptor
+
+    def tracked_close(descriptor: int) -> None:
+        actual_close(descriptor)
+        open_descriptors.remove(descriptor)
+
+    def change_control_and_interrupt() -> None:
+        if control_change == "cancel":
+            cancellation.set()
+        else:
+            ticks[0] = 11.0
+        raise interrupt
+
+    def interrupted_read(descriptor: int, size: int) -> bytes:
+        if access == "read":
+            change_control_and_interrupt()
+        return actual_read(descriptor, size)
+
+    def interrupted_stat(path: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+        if access == "stat" and path == executable:
+            change_control_and_interrupt()
+        return actual_stat(path, *args, **kwargs)
+
+    runtime = Runtime(config)
+    with monkeypatch.context() as patch:
+        patch.setattr(time, "monotonic", lambda: ticks[0])
+        patch.setattr(os, "open", tracked_open)
+        patch.setattr(os, "close", tracked_close)
+        patch.setattr(os, "read", interrupted_read)
+        patch.setattr(Path, "stat", interrupted_stat)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            runtime.diagnose(control=OperationControl(cancellation=cancellation))
+        assert caught.value is interrupt
+        assert opened_descriptors and not open_descriptors
+    cancellation.clear()
+    # Retry the same instance and another instance: neither retains a busy lock.
+    assert runtime.diagnose().checks
+    assert Runtime(config).diagnose().checks
+
+
+@pytest.mark.parametrize("access", ["read", "stat"])
+@pytest.mark.parametrize("outcome", ["normal", "finding"])
+@pytest.mark.parametrize("control_change", ["timeout", "cancel"])
+def test_io_completion_and_findings_still_check_operation_control(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    access: str,
+    outcome: str,
+    control_change: str,
+) -> None:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None
+    executable = config.appium_executable.resolve(strict=True)
+    actual_stat, actual_read = Path.stat, os.read
+    cancellation = Event()
+    ticks = [0.0]
+
+    def change_control() -> None:
+        if control_change == "cancel":
+            cancellation.set()
+        else:
+            ticks[0] = 11.0
+        if outcome == "finding":
+            raise PermissionError("expected diagnostic finding")
+
+    def completed_read(descriptor: int, size: int) -> bytes:
+        if access == "read":
+            # Returning EOF follows the successful return/finally path.
+            change_control()
+            return b""
+        return actual_read(descriptor, size)
+
+    def completed_stat(path: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+        result = actual_stat(path, *args, **kwargs)
+        if access == "stat" and path == executable:
+            change_control()
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(time, "monotonic", lambda: ticks[0])
+        patch.setattr(os, "read", completed_read)
+        patch.setattr(Path, "stat", completed_stat)
+        expected = (
+            OperationCancelledError
+            if control_change == "cancel"
+            else OperationTimeoutError
+        )
+        with pytest.raises(expected):
+            Runtime(config).diagnose(
+                control=OperationControl(cancellation=cancellation)
+            )
+    assert Runtime(config).diagnose().checks

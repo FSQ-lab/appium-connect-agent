@@ -45,3 +45,9 @@ addopts = "--import-mode=importlib"
 
 [tool.importlinter]
 root_package = "appium_connect_agent"
+
+[[tool.importlinter.contracts]]
+name = "Contracts cannot depend on Runtime"
+type = "forbidden"
+source_modules = ["appium_connect_agent.contracts"]
+forbidden_modules = ["appium_connect_agent.runtime"]
