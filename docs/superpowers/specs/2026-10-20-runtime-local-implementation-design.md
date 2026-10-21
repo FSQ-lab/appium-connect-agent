@@ -2,10 +2,10 @@
 
 ## 状态与依据
 
-- 日期：2026-10-20（Asia/Shanghai）。状态：独立设计审查及第1轮修复复审通过，2026-10-20用户明确确认本设计、锁实现和SPEC delta；实现Ready仍需工程/独审能力预检。
+- 日期：2026-10-20（Asia/Shanghai）。设计状态：独立设计审查及第1轮修复复审通过，2026-10-20用户明确确认本设计、锁实现和SPEC delta；当前实现、验收及待补证据状态仅见 [Runtime 交付台账](../../tasks/runtime-delivery-ledger.md)，本设计不维护当前进度。
 - 授权：用户显式 `/spec-driven docs/superpowers/specs/2026-10-19-runtime-python-interface-design.md`，网络中断后明确继续。
 - 上位设计：[Runtime 需求与 Python 调用接口设计](2026-10-19-runtime-python-interface-design.md)。已确认需求与原独审记录继续有效，本文件补充行为拆分和近期字段，不重开既定 macOS/Android/UiAutomator2、同步 Python、单活跃实例、安装/进程所有权决策。
-- 基线：master / `80d6594c25aaf8e97df3121440b7744f82298d89`。Python 基础已验收；工作区原有 `.codex/config.toml`、`.codex/README.md` 修改保留。当前无产品模块源码。
+- 原设计基线：master / `80d6594c25aaf8e97df3121440b7744f82298d89`。当时 Python 基础已验收，尚无产品模块源码；工作区原有 `.codex/config.toml`、`.codex/README.md` 修改保留。此为设计历史，不表示当前实现状态。
 - 固定根 SPEC SHA-256 `431d4f23d79f1951fd6d8f42df8839ddfeffafc63c15909de0d78402944071e4`；上位设计 SHA-256 `6a9d1bb8eaf4621e288ae87bbb3a9645278857afc6427fc2b03d6963fe188c47`。
 - 产品批次始终聚焦 Runtime；Contracts 仅提供已确认的最小共享设置值接缝，不同时交付 Configuration、Automation 或 Integrations feature。
 
@@ -115,4 +115,4 @@ RT-LOCAL-01 依赖只含已验收工程基础和本次确认的契约；不要�
 
 独立审查上下文runtime_design_gate_review：首轮full/findings（DR-01声明兼容性与实测支持区分，DR-02设备归属）；第1轮repair-only/pass，两项关闭无直接回归。修复清单SHA-256 `2e1fb6deff1187d3f37dbfa16883ec0b2f0b31cddcaafa887ad8d5eca0f2bd1b`，已审四文件固定快照保留会话证据；本次仅更新确认状态和正式SPEC归档。
 
-当前状态：RT-LOCAL-01待能力预检；02–06未开始，各自仍须对应feature的接口/SPEC及实际资源门槛。
+当前进度不在本文维护；请读取 [Runtime 交付台账](../../tasks/runtime-delivery-ledger.md) 中的 feature 总览、能力分项与证据登记。后续 feature 仍须各自的接口/SPEC 及实际资源门槛；设计审查通过不替代实现验收。

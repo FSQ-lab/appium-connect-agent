@@ -2,7 +2,7 @@
 
 ## 状态与授权
 
-- 日期：2026-10-21（Asia/Shanghai）。状态：独立设计审查通过；2026-10-21 用户确认设计和根 SPEC delta，明确工具仅供本机主动运行，保留 CI 静态检查及隔离测试，不执行真实环境体检。实现、验证和最终交付状态在本批会话任务包及差异证据中维护。
+- 日期：2026-10-21（Asia/Shanghai）。设计状态：独立设计审查通过；2026-10-21 用户确认设计和根 SPEC delta，明确工具仅供本机主动运行，保留 CI 静态检查及隔离测试，不执行真实环境体检。当前实现、验证与交付状态仅见 [Runtime 交付台账](../../tasks/runtime-delivery-ledger.md)；原会话证据保留为历史审查依据。
 - 授权：用户显式 `/spec-driven 增加仓库内测试专用诊断 CLI，供我手动体验和 Agent 重复测试现有的本地静态诊断能力` 及该请求附带的一至八节完整范围。原始请求随会话保存，不把本设计视为额外授权。
 - 基线：仓库 `FSQ-lab/appium-connect-agent`，分支 `master`，HEAD `3cb2e3c3c5a497cd776303bca5da6ff47f3a88e2`；初始暂存、未暂存及未跟踪文件均为空，无用户已有改动。
 - 现有依据：[根 SPEC](../../../SPEC.md)、[Runtime SPEC](../../../modules/runtime/SPEC.md)、[Contracts SPEC](../../../modules/contracts/SPEC.md)、[Integrations SPEC](../../../modules/integrations/SPEC.md) 和[静态诊断设计](2026-10-20-runtime-local-implementation-design.md)，固定于上述 HEAD。实现任务须另固定确认后文档的内容哈希。
@@ -12,7 +12,7 @@
 
 | FeatureID | 可验证行为 | 依赖 | 实现规模预算 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| DEV-DIAG-01 | 人与 Agent 从同一个仓库命令获得既有静态诊断的文本或 JSON 结果，区分检查失败与执行异常 | HEAD 中已有 Python 工程和 Runtime 公开诊断实现 | 工具代码新增加删除预计 200–350 行，目标小于 1200 行；测试约 300–500 行，文档另计 | 设计及 SPEC gate 已确认；执行状态见本批任务包 |
+| DEV-DIAG-01 | 人与 Agent 从同一个仓库命令获得既有静态诊断的文本或 JSON 结果，区分检查失败与执行异常 | HEAD 中已有 Python 工程和 Runtime 公开诊断实现 | 工具代码新增加删除预计 200–350 行，目标小于 1200 行；测试约 300–500 行，文档另计 | 设计及 SPEC gate 的确认依据保留；当前交付状态见台账 |
 
 - 本批只有这一个开发辅助 feature，不推进 Runtime 后续 feature，也不交付 Integrations 产品能力。
 - 适用环境：macOS 宿主 / CPython 3.11；报告目标沿用 Android / UiAutomator2。设备交互与服务端到端验收不适用：本工具只包装静态诊断，不能据此声称 Runtime 首批整体验收完成。
@@ -119,7 +119,7 @@ uv run python tools/diagnose.py --help
 ## DEV-TOOLS-02 内部工具验证范围调整（已确认）
 
 - 新授权：用户显式 `/spec-driven 精简内部诊断辅助工具：删除 CLI 专用测试，保留诊断脚本、已有产品测试和 CI 静态检查；同步相关契约与说明，仅做必要的本地冒烟验证`，并强调 `tools/` 是内部使用的集成测试工具、不对外服务、不需要补充 tests。
-- 本节是对前序已验收 DEV-DIAG-01 验证范围的调整，不追溯否定此前测试与审查证据；取代本设计中维护 CLI 专用测试套件的要求。用户于 2026-10-21 明确确认根 SPEC delta；实施、验证和最终交付状态在本批会话任务包中维护。
+- 本节是对前序已验收 DEV-DIAG-01 验证范围的调整，不追溯否定此前测试与审查证据；取代本设计中维护 CLI 专用测试套件的要求。用户于 2026-10-21 明确确认根 SPEC delta；实施、验证和最终交付状态仅在 [Runtime 交付台账](../../tasks/runtime-delivery-ledger.md) 维护。
 - 本批仅一个工程维护 feature；不新增产品行为或平台，设备/服务端到端不适用。产品源码和工具代码规模预算均为 0；删除约 475 行 CLI 专用测试，文档变更单列。
 - 本批删除 `tests/test_diagnose_cli.py`，更新 README 的内部工具定位及验证说明；`tools/diagnose.py`、原有产品测试、CI 静态检查、依赖与打包规则保持不变，不将专用测试迁移到其他位置。
 - 验证限于必要的本地冒烟：帮助入口、一次真实 JSON 诊断及一次参数错误调用，核对通道、返回码与结果结构；允许环境观测为 fail/unknown，不将其视为工具验证失败。不新增替身或专用回归套件。

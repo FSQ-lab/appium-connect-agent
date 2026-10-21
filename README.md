@@ -9,6 +9,12 @@ Appium 服务管理、安装、设备操作、MCP 或正式产品 CLI；没有�
 Android Session 验证的兼容组合。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见
 [AGENTS.md](AGENTS.md)。
 
+## Runtime 进度入口
+
+当前 feature、平台组合、能力分项、未覆盖范围、待决事项及验收证据统一维护在
+[Runtime 交付台账](docs/tasks/runtime-delivery-ledger.md)。
+它是唯一当前进度来源；下文是使用与能力边界说明，不替代逐 feature 验收状态。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。
