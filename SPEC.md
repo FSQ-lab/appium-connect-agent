@@ -52,6 +52,20 @@
 - 只有一条规则涉及的真实 source/target 产品包均存在时，才启用对应生产 import-linter 契约；至少一条生产契约可执行后，`uv run lint-imports` 才纳入强制验证。隔离正反例只能验证契约模板，不能代替生产图检查。
 - 模块首次出现时须由相应模块 SPEC 确认 Python 包映射及实际依赖。公开/私有入口规则须待模块 SPEC 定义后启用，不从工程骨架推断业务 API。
 
+## Repository Diagnostic Tool
+
+本节定义仓库测试辅助工具的工程契约，不改变上述产品能力。
+
+- `tools/` 仅存放团队内部使用的集成测试与本地验证辅助工具，不对外提供服务，不作为产品接口、正式 CLI 或发行包内容。
+- 仓库内 `tools/diagnose.py` 仅用于开发者和 Agent 测试既有静态诊断，不是正式产品 CLI，不创建 Integrations 产品包、安装命令或发布承诺；不进入 wheel 或 sdist，不新增第三方依赖。
+- 工具仅调用 Runtime 公开入口；提供 `--json`、六项与 `LocalSettings` 同名的连字符路径参数和 `--timeout-seconds`。路径必须为绝对路径，超时必须为有限正数，默认沿用 Runtime 的 10 秒预算。未指定值沿用 Runtime 行为，不增加配置文件、环境变量读取或路径回退。
+- 文本默认呈现报告全部字段；JSON 的固定顶层为 `execution`、`error`、`report`。`execution` 为 `completed`、`error` 或 `cancelled`；`error` 为 null 或含 `code`、`message` 的对象；`report` 为 null 或完整诊断报告，时间使用带 UTC 时区的 ISO 8601 字符串，tuple 转为 JSON 数组。不增加总体 ready 或兼容通过结论。
+- 除 `--help` 的正常帮助输出外，`--json` 调用的受控结果（包括参数错误、既有操作异常和取消）在 stdout 输出单个 JSON 文档；进度及文本错误说明写 stderr，不污染 JSON。未知程序缺陷不得兜底伪装成已知结果。
+- 退出码：0 为诊断完成且无 fail 检查项（允许 unknown，不表示就绪）；1 为诊断完成且存在 fail；2 为参数错误；3 为超时、环境忙等其他已定义操作异常；130 为取消或 Ctrl+C。已定义操作异常保留其 `partial_report`；原生 KeyboardInterrupt 无报告时使用 null，不伪造已完成检查。
+- 保持 Runtime 的组件只读及协调资源写入边界；不执行组件命令、HTTP 或设备请求。工具供开发者和 Agent 在各自环境主动运行，保留 Ruff 和 strict mypy 静态检查。
+- 不为 `tools/` 下的工具新增或维护独立的 `tests/` 测试套件；工具只做必要的本地冒烟验证，不要求不同机器得到相同的环境体检结果。
+- CI 不运行真实环境体检，也不要求环境检查全通过。既有产品测试、包导入测试及其 CI 检查保持不变，不因内部工具策略而降低产品验证要求。
+
 ## Runtime Local Scope
 
 已确认约束依据：[近期实施设计](docs/superpowers/specs/2026-10-20-runtime-local-implementation-design.md) 与已确认的 Runtime 上位设计。
