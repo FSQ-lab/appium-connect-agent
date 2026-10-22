@@ -10,7 +10,7 @@ from appium_connect_agent.contracts import LocalSettings
 @dataclass(frozen=True, slots=True)
 class SettingSource:
     field: str
-    source: Literal["file", "default"]
+    source: Literal["file", "override", "default"]
     config_file: Path | None
 
 

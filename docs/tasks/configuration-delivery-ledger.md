@@ -7,8 +7,8 @@
 - 更新日期：2026-10-22；TaskID `CFG-DESIGN-01`；主会话 `/root` 承担 Tech Lead，工具为 Codex，本机 worktree `/Users/qunmi/Documents/FSQ_LAB/Appium_connect_agent`，分支 `master`。
 - 初始设计授权：`$requirements-to-design 按本次访谈已确认范围，整理 Configuration 整体设计、CFG-01/CFG-02 拆分及台账计划，不扩展范围`。后续显式 spec-driven 的产品实施授权与 SPEC 确认见下方记录。
 - 文档基线：`75c1737d95cacad2a8a104337fa988bed48aeb17`；已跟踪内容干净，已有未跟踪 Runtime 库迁移设计属于其他任务，保留且不混入交付。
-- 当前状态：**CFG-01 Done；CFG-02 awaiting-spec-confirmation**。CFG-01 的95项针对性/492项整体回归、质量/打包及full独审均通过，Tech Lead判定在该feature范围内验收；CFG-02准备独立SPEC delta，模块整体尚未完成。
-- 文件负责人：工程师拥有 Configuration 源码/测试/示例，Tech Lead 拥有契约、台账及已分配共享文件；Runtime 任务外内容保持不变。独审新上下文只读。用户本次要求“先提交，然后可以确认spec”，据此仅提交 CFG-01，不推送；CFG-02 尚待确认。
+- 当前状态：**CFG-01 Done（已提交）；CFG-02 Done；CFG-M01 已验收**。CFG-02 的229项针对性/626项全回归、质量/打包、模块组合及独立full/pass均通过，Tech Lead 判定本批项目级local Configuration完成。CFG-02尚未提交或推送。
+- 文件负责人：工程师拥有 Configuration 源码/测试/示例，Tech Lead 拥有契约、台账及已分配共享文件；Runtime 任务外内容保持不变。独审新上下文只读。用户要求先提交CFG-01，已照办；后续确认CFG-02 SPEC并完成实施验收，未将前次单步提交请求扩大到本步提交/推送。
 
 ## 平台、范围与顺序
 
@@ -17,8 +17,8 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 | FeatureID | 可验证交付 | 状态 / 前置 | 预算：产品 / 测试 / 文档（新增＋删除） |
 | --- | --- | --- | --- |
 | CFG-01 | 明确 TOML 文件加载、基本校验、路径转换、不可变设置与来源、最小示例；允许空配置 | Done；95 targeted /492回归、质量/依赖/打包及full/pass，产品294/测试476/示例59行 | 400–700 / 400–700 / 80–160 行 |
-| CFG-02 | Python 具体参数逐字段覆盖；分别校验、来源准确；空文件可通过参数提供设置；无临时清除或写回 | awaiting-spec-confirmation；前序已验收，候选契约待用户确认，尚未实现 | 150–300 / 200–400 / 40–100 行 |
-| CFG-M01 | 两步组合回归，设置经公开 Runtime 构造可消费；无额外真实连接/设备验收 | 未开始；依赖两项 feature 验收 | 验证里程碑，不另建产品 feature |
+| CFG-02 | Python 具体参数逐字段覆盖；分别校验、来源准确；空文件可通过参数提供设置；无临时清除或写回 | Done；229targeted/626全回归及集成验证/full独审通过，产品154/测试246/示例46行 | 150–300 / 200–400 / 40–100 行 |
+| CFG-M01 | 两步组合回归，设置经公开 Runtime 构造可消费；无额外真实连接/设备验收 | 已验收；两产物隔离安装执行通过，原始脚本/结果经独审核验 | 验证里程碑，不另建产品 feature |
 
 每个 feature 开始前另固定起点和文件白名单；修复仍计累计规模，文档/测试单列，约 1200 行以内目标不通过净增长或拆任务规避。CFG-01 的实际规模及验证结果见下方验收记录。
 
@@ -103,3 +103,33 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 
 - 沿原用户授权继续，前序CFG-01已验收，不重复索取开发/选型入口。候选仅扩展同一加载入口的Python关键字参数和override来源，保持文件必需、文件/参数分别校验、相对路径基准及无临时清除/写回。
 - 本阶段主会话只编辑Configuration SPEC的待确认追加节及本台账，不改已验收源码/测试；具体候选见模块SPEC。确认后另固定CFG-02起始快照，按新增+删除累计统计。
+
+用户要求先提交 CFG-01，主会话以白名单提交 `9b49d0a58f851d30d47345a2a8f913e2f4ff64c5`，未推送。提交13文件与已审index逐字节匹配；原独审另核验两文档记录增量，record-only/pass。CFG-02候选与任务外Runtime设计未入提交。随后用户明确回复“确认”，关闭 CFG-02 SPEC gate；移除待确认并将同一入口/来源的旧描述对齐，不改变展示的语义。
+
+## CFG02-IMPL-01
+
+- 以 CFG-01 已验收提交 `9b49d0a58f851d30d47345a2a8f913e2f4ff64c5` 为起点；本轮原有模块SPEC候选及Runtime迁移设计未提交，前者已获确认，后者任务外保留。逐文件基线与原文保存在 `/var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/cfg02-implementation-y1h093_3`。
+- task-package.json SHA-256 `e9d1a894c9ad80f2dbc4898383c2e35a1d7bcd0fd309dd648196f024b613db94`（7120bytes）；preflight-manifest.json `ddfd73f3e9750ee43b2fd09c746925dc470ee7f41c9f4885643bdb950d87b28e`（3762bytes）。用户批准的标准库/原用途复用沿CFG-01原文证据，无新增依赖/例外自研。
+- 工程上下文沿用 `/root/cfg01_configuration_engineer`，核验20项hash/bytes，新唯一临时probe写读通过（23bytes / `56119a5f649fb9c07abf502f3a641b5c452a6dec35c39f7655ddb4bb8151f3c9`）。
+- 新独审 `/root/cfg02_independent_audit` 未参与本批实现或测试，实际完整读9701bytes/2diff（`fcdd71e6b770308904cefa77e4bb726eb7f8c0a4614a8f3ce444b0d7f3ac4493`），核验14项原文、5产物、79项baseline和3项标准库源码，独立重建一致；仅能力预检，不是产品full/pass。
+- 两角色真实工具为 functions.functions__exec → tools.exec_command，无CUA/UI探针；主会话实际读取固定依据/完整差异并验hash后派发，预检完成才宣布Ready。
+- 工程师只拥有_loader/_models、Configuration测试及示例README；主会话拥有根README/模块SPEC/台账。标准库解析及已有读取逻辑复用，不改Runtime/Contracts/依赖/CI/锁文件，禁止嵌套委派和自动提交推送。
+- 实施按产品150–300累计新增+删除预算；既有CFG-01代码/95测试作为依赖，不计为本步新交付。模块整体验收由主会话在两步验证/独审通过后按原简化接缝执行，不增加真实服务设备义务。
+
+### CFG-02 实现和验证
+
+- 工程冻结pending-review：_loader新增107/删除45、_models新增1/删除1，产品累计154行；新测试246行、示例README新增44/删除2共46行，原95测试文件逐字节保留；无移动/生成排除项。
+- 针对性pytest229 passed（原95+新134）、Ruff格式/lint与strict mypy6文件通过。预期red及首轮mypy标注问题保留日志，修正后无剩余失败，日志engineer-*.log位于本步证据目录。
+- 主会话全仓Ruff format/check、strict mypy src/tests/tools25文件、生产import-linter3kept/0broken、完整pytest626 passed均通过；uv build、已有wheel/sdist内容/元数据/py.typed和隔离安装验证通过。日志integration-01–07.log。
+- CFG-M01实际执行：两种产物各自在独立环境安装后，真实临时TOML文件+Python参数→来源/路径/优先级→唯一LocalSettings→Runtime构造；同时验证原文件未改、空文件加地址、错误文件不能被覆盖掩盖。无网络/命令/工具目标I/O守卫通过；无diagnose/connect/Session/设备请求。脚本module-acceptance.py和完整module-acceptance.json保留身份，待独审核对后才最终判定模块完成。
+- CFG-02完整差异、正式SPEC、基线及上述验证/包身份交新上下文full审查；当前不以测试/集成执行替代独审，暂不提交或推送本步。
+
+### CFG02-FULL-AUDIT-01 与模块验收
+
+- 新上下文 `/root/cfg02_independent_audit` 未参与本批实现或测试，完成 full/pass、问题清单为空，无audit-blocked，无修复轮；全程只读，未重跑测试/构建/服务设备。
+- 固定 review-1/manifest.json SHA-256 `e20746dbba324928b892d4f5f1ef7695f2ff37bb80046c432810bfc4e2540592`（11827bytes）；head.diff `a603688192a88efe3deaee1fa10c4b098a80799f06d943a7f97490d19565f039`（26512bytes/6diff）；untracked.diff `f3bc53f3936776165a40f15f3e9c1f34c05dcc1ad83fc9e9021267df08caf80a`（9758bytes/1diff）。
+- 独审实际读取完整7路径差异/源码/测试/原始日志，重建差异逐字节一致，核验7current/snapshot、32产物、79基线以及两包各15源码身份；Runtime迁移任务外文件未变。正式Configuration SPEC `000d4ab2aceb49a8bee6fb93a3a00c503ee03c97d9976105d192947c9a7c9fd0`。完整原始FINAL_ANSWER保留于当前会话对应TaskID，不以台账摘要代替原文。
+- 审查确认参数省略/None区分、路径和优先级、独立聚合失败、不可变准确来源、无写回及已批准成熟能力复用符合契约，229/626测试、质量和包验证证据充分。模块验收脚本及两包实际执行覆盖约定接缝，可建议完成本批验收。
+- Tech Lead采纳：CFG-02 Done；CFG-01及CFG-02均验收后，CFG-M01实际执行和独审核对通过，本批项目级local Configuration完成。只代表已确认文件加载/参数覆盖及Runtime构造接缝，不表示Runtime服务/设备整体验收或任何remote/自管/机器级配置支持。
+- 规模分别保留：CFG-01产品294/测试476/示例59；CFG-02产品154（108新增+46删除）/测试246/示例46，无移动生成排除项。不能将两项净增长混为feature累计统计。
+- 最终只同步台账与设计状态，不改已审源码/测试/正式SPEC；记录增量另行限定核验。CFG-01已提交9b49d0a；CFG-02本步仍未提交/推送，用户任务外设计保持原身份。

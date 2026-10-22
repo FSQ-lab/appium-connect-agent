@@ -4,7 +4,7 @@
 
 本模块维护配置相关职责的边界。
 
-当前确认显式项目 TOML 文件加载、静态校验与 LocalSettings 输出契约；参数覆盖及其他来源不在当前契约内。
+当前确认显式项目 TOML 文件加载、Python 参数覆盖、静态校验与 LocalSettings 输出契约；其他来源不在当前契约内。
 
 ## Responsibilities
 
@@ -36,9 +36,9 @@
 
 ### Public Interface
 
-- `load_configuration(config_file: str | Path) -> LoadedConfiguration`：同步显式加载一份 TOML。没有默认文件、自动搜索、环境变量来源、参数覆盖或写回。导入模块和构造返回值不隐式加载文件。
+- `load_configuration(config_file: str | Path, ...) -> LoadedConfiguration`：同步显式加载一份 TOML，关键字覆盖参数由下文 Python Parameter Overrides 定义。没有默认文件、自动搜索、环境变量来源或写回。导入模块和构造返回值不隐式加载文件。
 - `LoadedConfiguration` 为不可变快照，公开 `config_file: Path`（本次选定文件的绝对路径）、`settings: LocalSettings`、`sources: tuple[SettingSource, ...]`。七个设置字段均有唯一来源记录，顺序与下方字段清单一致。
-- `SettingSource` 为不可变值，公开 `field: str`、`source: Literal["file", "default"]`、`config_file: Path | None`；file 来源指向所选文件，default 来源无文件。只记录来源，不复制原始字段值；用户无须为来源增加配置项。
+- `SettingSource` 为不可变值，公开 `field: str`、`source: Literal["file", "override", "default"]`、`config_file: Path | None`；file 来源指向所选文件，default/override 来源无文件。只记录来源，不复制原始字段值；用户无须为来源增加配置项。
 - `ConfigurationError` 继承 `ValueError`，公开非空不可变 `issues: tuple[ConfigurationIssue, ...]`；`ConfigurationIssue` 为不可变问题，含 `source: Literal["file", "argument"]`、`field: str | None`、`code: str`、`message: str`，用于区分文件定位、读取、语法和字段校验失败。不返回部分成功的 LoadedConfiguration。
 - 调用方在应用启动时调用并持有快照，修改文件后重启读取配置的应用再加载。库不监听、不缓存全局配置、不重启任何进程；旧快照不受文件修改影响。
 
@@ -62,3 +62,14 @@
 - 验证最小/完整/空配置、默认值和来源；路径定位与不存在的工具路径、未知/错误字段的聚合失败、文件读取边界及资源关闭、结果不可变与文件修改后的快照行为。
 - 验证无工具/环境发现、网络、组件命令或配置写回。输出复用唯一 LocalSettings，可交给公开 Runtime 构造使用；本契约不新增真实 Appium 连接或设备验收义务。
 - 产品包出现后启用生产依赖约束，只允许 Configuration 使用 Contracts，不允许 Contracts 反向依赖 Configuration，也不允许 Configuration 依赖其他产品模块。
+
+## Python Parameter Overrides
+
+本节为已确认的参数覆盖契约；未传覆盖参数的文件加载行为保持。
+
+- 扩展同一个 `load_configuration(config_file: str | Path, *, appium_executable=..., appium_home=..., node_executable=..., npm_executable=..., java_home=..., android_sdk_root=..., server_url=...) -> LoadedConfiguration`。前六个覆盖参数接受 `str | Path`，server_url 接受 str；省略由私有缺省标记区别，不把 None 当成省略或清除。
+- 明确传入参数值覆盖同名文件字段；未传字段保留文件值，否则使用现有LocalSettings默认值。显式None、空字符串、错误类型均整份失败。参数路径与文件路径采用同一配置目录基准及已确认的缩写/占位拒绝规则，路径对象不触发目标存在性检查。
+- config_file 仍为必需，必须存在且可读；空文件加参数可产生设置。先按既有规则读取/解析文件；无法读取/解析时报告该问题。文件可解析后独立校验文件和参数，聚合两处可确定问题，不能用正确覆盖掩盖文件错误；任何问题均不返回设置。
+- `SettingSource.source` 扩展为 `Literal["file", "override", "default"]`；override记录字段名、source=override且config_file=None，指明值来自本次调用而非文件；LoadedConfiguration.config_file仍定位所加载文件。七字段记录唯一、顺序不变。
+- 覆盖参数问题的 ConfigurationIssue.source 为 argument，field 使用对应字段名；文件问题沿既有file来源/字段定位。URL继续使用公开LocalSettings校验，所有结果/问题/来源及已确认读取/错误/快照边界保持。
+- 本步仅扩展Python调用，不修改TOML schema、不持久化覆盖、不增加其他来源，不改变应用启动加载/重启生效方式或Runtime行为；无新增依赖/平台承诺。须验证逐字段优先级、混合来源、错误不可掩盖、None/空串拒绝、相对参数路径、空文件加参数、文件不变和CFG-01回归。模块整体验收仍为真实临时配置到公开Runtime构造的接缝，不操作服务或设备。

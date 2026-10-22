@@ -29,7 +29,11 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 配置文件路径相对加载时的工作目录，内部工具路径相对配置文件目录。
 修改文件后重启读取配置的应用生效，不自动重启 Appium。
 
-首批 CFG-01 仅文件加载；Python 参数覆盖由 CFG-02 在独立验收后提供。
+可通过 Python 关键字参数覆盖本次设置，例如
+`load_configuration("config/appium.toml", server_url="http://127.0.0.1:4724")`。
+参数优先于文件，未传字段保留文件值；两处分别校验，错误不能被覆盖掩盖。
+不提供临时清除，显式 `None` 或空字符串报错；参数不写回文件。
+通过 `loaded.sources` 查询 `file`、`override` 或 `default` 来源。
 
 ## 开发与验证
 

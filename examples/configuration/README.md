@@ -45,13 +45,55 @@ for source in loaded.sources:
 
 配置文件路径可为字符串或 `Path`，相对路径以调用加载入口时的工作目录为准。
 只读取明确指定的一份 UTF-8 普通文件，最大 1 MiB；文件缺失或不可读时明确报错。
-不会搜索配置、读取环境变量、写回文件或监听变更；当前入口没有参数覆盖。
+不会搜索配置、读取环境变量、写回文件或监听变更。
 
 未知字段、非字符串值、空字符串和非法 URL 都会整份加载失败。TOML 语法或编码错误
 先报告解析问题；语法正确时，`issues` 集中列出能够确定的字段问题。问题仅包含来源、
 字段、错误码和修正提示，不复制字段原值。
 
 `loaded.config_file` 是所选文件的绝对路径；`settings` 是唯一 Contracts `LocalSettings`。
-`sources` 为七个字段各保存一条来源，`file` 指向该文件，`default` 没有文件。
+`sources` 为七个字段各保存一条来源，`file` 指向该文件，`default`/`override` 没有文件。
 返回值、设置和来源均不可变。修改 TOML 不会改变已持有的快照；重启读取配置的应用时
 重新加载即可，不需要由本库重启 Appium。
+
+## Python 参数覆盖
+
+同一入口支持七个同名关键字参数，优先级为：明确参数值 ＞ 文件值 ＞ 默认 `None`。
+只传需要替换的字段，其他字段保留文件值；文件仍必须存在且可读。
+
+```python
+from pathlib import Path
+
+from appium_connect_agent.configuration import load_configuration
+
+loaded = load_configuration(
+    "appium.toml",
+    appium_home=Path("./tools/appium"),
+    server_url="http://localhost:4724/",
+)
+assert loaded.settings.server_url == "http://127.0.0.1:4724"
+source = next(item for item in loaded.sources if item.field == "server_url")
+assert source.source == "override"
+assert source.config_file is None
+```
+
+前六个路径参数接受字符串或 `Path`，`server_url` 只接受字符串。
+相对参数路径仍以指定配置文件的目录为基准，不受调用时其他路径值影响；
+路径对象同样不检查存在性，不解析符号链接，不展开 home 或变量占位。
+
+省略参数表示保留原值。显式 `None`、空字符串和错误类型都会报错，
+不能通过它们临时清除文件设置；无需覆盖时直接省略该参数。
+
+文件先读取并解析；读取、编码或 TOML 语法错误会先停止加载。
+文件可解析后，文件和参数各自校验，`issues` 聚合两处能够确定的问题；
+正确参数不能掩盖错误文件。参数问题的来源为 `argument`，字段名不带 `runtime.` 前缀。
+
+空文件也可以通过参数提供设置：
+
+```python
+# empty.toml 是调用方已创建的空文件。
+loaded = load_configuration("empty.toml", server_url="http://127.0.0.1:4723")
+```
+
+覆盖只作用于本次返回的快照，不写入 TOML。无 `server_url` 时仍不提供默认地址；
+空文件加参数加载成功同样不表示服务或设备就绪。

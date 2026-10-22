@@ -5,6 +5,7 @@ import re
 import stat
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from appium_connect_agent.contracts import LocalSettings
 
@@ -29,6 +30,13 @@ _VARIABLE = re.compile(
     r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
     r"|%[A-Za-z_][A-Za-z0-9_]*%"
 )
+
+
+class _Omitted:
+    """Private marker; explicit None remains an invalid argument."""
+
+
+_OMITTED = _Omitted()
 
 
 def _file_issue(code: str, message: str) -> ConfigurationError:
@@ -124,8 +132,76 @@ def _parse(data: bytes) -> dict[str, object]:
         ) from None
 
 
+def _validate_fields(
+    values: dict[str, object],
+    config_file: Path,
+    source: Literal["file", "argument"],
+    issues: list[ConfigurationIssue],
+) -> tuple[dict[str, Path], str | None]:
+    paths: dict[str, Path] = {}
+    server_url: str | None = None
+    for name in _FIELDS:
+        if name not in values:
+            continue
+        value = values[name]
+        field = f"runtime.{name}" if source == "file" else name
+        if source == "argument" and name in _PATH_FIELDS and isinstance(value, Path):
+            value = str(value)
+        if not isinstance(value, str):
+            issues.append(
+                ConfigurationIssue(
+                    source,
+                    field,
+                    "invalid_type",
+                    "Use a TOML string for this runtime field."
+                    if source == "file"
+                    else "Provide a string (or Path for tool paths), or omit the argument.",
+                )
+            )
+        elif not value:
+            issues.append(
+                ConfigurationIssue(
+                    source,
+                    field,
+                    "empty_value",
+                    "Provide a nonempty value, or omit this field.",
+                )
+            )
+        elif name == "server_url":
+            try:
+                server_url = LocalSettings(server_url=value).server_url
+            except ValueError:
+                issues.append(
+                    ConfigurationIssue(
+                        source,
+                        field,
+                        "invalid_url",
+                        "Use a complete HTTP loopback URL with an explicit port and safe base path.",
+                    )
+                )
+        elif value.startswith("~") or _VARIABLE.search(value):
+            issues.append(
+                ConfigurationIssue(
+                    source,
+                    field,
+                    "unsupported_path",
+                    "Use a concrete path without home shorthand or variable placeholders.",
+                )
+            )
+        elif "\0" in value:
+            issues.append(
+                ConfigurationIssue(
+                    source, field, "invalid_path", "Use a path without NUL characters."
+                )
+            )
+        else:
+            # An absolute base preserves symlink paths and literal parent segments.
+            paths[name] = config_file.parent / Path(value)
+    return paths, server_url
+
+
 def _settings(
-    document: dict[str, object], config_file: Path
+    document: dict[str, object], config_file: Path, overrides: dict[str, object]
 ) -> tuple[LocalSettings, tuple[SettingSource, ...]]:
     issues: list[ConfigurationIssue] = []
     for key in document:
@@ -156,63 +232,15 @@ def _settings(
                     "Remove this unknown runtime field; use the documented seven fields.",
                 )
             )
-    paths: dict[str, Path] = {}
-    server_url: str | None = None
-    for name in _FIELDS:
-        if name not in runtime:
-            continue
-        value = runtime[name]
-        field = f"runtime.{name}"
-        if not isinstance(value, str):
-            issues.append(
-                ConfigurationIssue(
-                    "file",
-                    field,
-                    "invalid_type",
-                    "Use a TOML string for this runtime field.",
-                )
-            )
-        elif not value:
-            issues.append(
-                ConfigurationIssue(
-                    "file",
-                    field,
-                    "empty_value",
-                    "Provide a nonempty value, or omit this field.",
-                )
-            )
-        elif name == "server_url":
-            try:
-                server_url = LocalSettings(server_url=value).server_url
-            except ValueError:
-                issues.append(
-                    ConfigurationIssue(
-                        "file",
-                        field,
-                        "invalid_url",
-                        "Use a complete HTTP loopback URL with an explicit port and safe base path.",
-                    )
-                )
-        elif value.startswith("~") or _VARIABLE.search(value):
-            issues.append(
-                ConfigurationIssue(
-                    "file",
-                    field,
-                    "unsupported_path",
-                    "Use a concrete path without home shorthand or variable placeholders.",
-                )
-            )
-        elif "\0" in value:
-            issues.append(
-                ConfigurationIssue(
-                    "file", field, "invalid_path", "Use a path without NUL characters."
-                )
-            )
-        else:
-            # An absolute base preserves symlink paths and literal parent segments.
-            paths[name] = config_file.parent / Path(value)
+    paths, server_url = _validate_fields(runtime, config_file, "file", issues)
+    override_paths, override_url = _validate_fields(
+        overrides, config_file, "argument", issues
+    )
     if issues:
         raise ConfigurationError(tuple(issues))
+    paths.update(override_paths)
+    if "server_url" in overrides:
+        server_url = override_url
     settings = LocalSettings(
         appium_executable=paths.get("appium_executable"),
         appium_home=paths.get("appium_home"),
@@ -225,17 +253,51 @@ def _settings(
     sources = tuple(
         SettingSource(
             field=name,
-            source="file" if name in runtime else "default",
-            config_file=config_file if name in runtime else None,
+            source="override"
+            if name in overrides
+            else "file"
+            if name in runtime
+            else "default",
+            config_file=config_file
+            if name in runtime and name not in overrides
+            else None,
         )
         for name in _FIELDS
     )
     return settings, sources
 
 
-def load_configuration(config_file: str | Path) -> LoadedConfiguration:
+def load_configuration(
+    config_file: str | Path,
+    *,
+    appium_executable: str | Path | _Omitted = _OMITTED,
+    appium_home: str | Path | _Omitted = _OMITTED,
+    node_executable: str | Path | _Omitted = _OMITTED,
+    npm_executable: str | Path | _Omitted = _OMITTED,
+    java_home: str | Path | _Omitted = _OMITTED,
+    android_sdk_root: str | Path | _Omitted = _OMITTED,
+    server_url: str | _Omitted = _OMITTED,
+) -> LoadedConfiguration:
     """Load one explicit TOML file; success does not imply runtime readiness."""
     selected_file = _locate(config_file)
     document = _parse(_read_file(selected_file))
-    settings, sources = _settings(document, selected_file)
+    arguments = dict(
+        zip(
+            _FIELDS,
+            (
+                appium_executable,
+                appium_home,
+                node_executable,
+                npm_executable,
+                java_home,
+                android_sdk_root,
+                server_url,
+            ),
+            strict=True,
+        )
+    )
+    overrides: dict[str, object] = {
+        name: value for name, value in arguments.items() if value is not _OMITTED
+    }
+    settings, sources = _settings(document, selected_file, overrides)
     return LoadedConfiguration(selected_file, settings, sources)
