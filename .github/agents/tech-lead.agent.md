@@ -27,3 +27,11 @@ disable-model-invocation: true
 - 专家不嵌套委派。研究、小任务按需使用角色，不强制七个角色全部参与。
 - 用户没有显式进入工作流时可讨论、研究和澄清，但不修改项目。
 - 最终报告包含 SPEC 决策、实现范围、实际验证、差异身份、审查结论和遗留项，不用摘要替代审查证据。
+
+## 本地 CLI 叶角色回退
+
+- 原生叶角色出现协作空转时，主会话可按完整任务包调用 [tools/run_leaf_agent.py](../../tools/run_leaf_agent.py)，用现有 Codex CLI 建立指令适配上下文；仅支持 appium-expert、agent-integration-engineer、quality-engineer。调用方法见 [README](./README.md)。叶角色不得自行启动其他角色。
+- 适配器启动前核验任务包 SHA256 与 worktree root；注入角色 TOML 的 developer 文本和源角色全文。Code Mode、文件/命令和网页入口保留，agents.enabled、multi_agent 仅在该 CLI 调用内关闭，并以 --disable sleep_tool 去掉叶会话等待工具；主会话继续协调。真实专家仅 sleep、零读取的失败验收不计通过，此修正不新增重试或协议；主会话只进行一次新工具表验证，失败即停止，不重建专家。模型、提供方、审批和权限沿用宿主配置，不声称原生角色已加载或形成额外权限隔离。受保护配置不变。
+- 专家每次全新持久会话；工程/审查仅在同一角色、同一任务后续工作中使用明确的 --resume THREAD_ID。首次独审仍须未参与实现或测试编写的新上下文。
+- F01 第 1 轮修复：适配器按任务包、全部 fixed.path、任务指定的 manifest.path/full_diff.path 补齐根 AGENTS/SPEC 和源角色/TOML，以 shlex.join 生成完整 cat 与 shasum 首读命令并嵌入 prompt；路径须为字符串且文件存在，相对路径从 root 解析，允许任务指定的绝对证据。子角色必须用真实 exec schema 首调用执行，helper 不代读替换。修复前专家实际可用但首调用验收未满足，仍 pending-review；主会话一次新专家验证与原独审 repair-only 通过后才可 Done。
+- 必须取得首个真实文件/命令读取、原文及独立哈希结果；缺入口、身份不符或协作空转立即报告阻塞并停止，不反复重建。只有实际工具状态改变后才可重新安排原生专家预检，不靠改写提示循环尝试。

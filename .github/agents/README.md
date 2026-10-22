@@ -51,6 +51,42 @@
 - 每次交接应包含目标、已确认约束、输入、负责文件、验收标准、验证结果和阻塞项。
 - 真实设备、Appium 服务或目标 Agent 不可用时明确报告，不将模拟测试通过描述为端到端通过。
 
+## EXPERT-USABLE-01 CLI 叶角色适配（pending-review）
+
+原生专家出现协作空转时，由主会话调用 [tools/run_leaf_agent.py](../../tools/run_leaf_agent.py)。它仅支持 appium-expert、agent-integration-engineer、quality-engineer：读取角色 TOML 的 `developer_instructions` 并附上源角色全文，交给现有 `codex exec`。这是指令适配的独立 CLI 上下文，不表示加载了原生角色。叶角色不能用此入口再委派。
+
+需要 Python **>=3.11**（标准库 `tomllib`）和现有 Codex CLI；本机核对版本为 Python 3.11.16、Codex 0.163.0。默认 `python3` 为 3.9，应明确选择 `python3.11`；若 PATH 未提供，可使用已核验的 `/Users/qunmi/.local/share/uv/python/cpython-3.11.16-macos-aarch64-none/bin/python3.11`。无需安装依赖。
+
+主会话准备完整 JSON 任务包，至少含非空 `root`、`authorization_original`、`goal`、`ownership`、`fixed`、`stop`；仍须满足 AGENTS 的完整任务包要求。`root` 为脚本所在 worktree 的绝对根路径，`ownership` 为对象，`fixed` 为固定证据清单。下面路径、哈希及线程 ID 均需替换为本轮固定材料，从仓库根执行：
+
+```bash
+shasum -a 256 /absolute/path/expert-task.json
+python3.11 tools/run_leaf_agent.py --role appium-expert \
+  --task-package /absolute/path/expert-task.json --sha256 SHA256_FROM_ABOVE
+```
+
+启动 CLI 前检查任务文件、JSON、必需字段、64 位 SHA256、worktree root 及角色文件；无效输入返回 2，不启动 CLI。cwd 固定为脚本所在仓库，不取任务包中的任意目录。适配器按任务包与全部 `fixed.path`，加上任务指定的 `manifest.path`、`full_diff.path` 生成首读清单，并补齐根 AGENTS、SPEC、源角色和角色 TOML。证据路径必须为非空字符串且文件存在；相对路径从 root 解析，允许任务明确指定的绝对证据路径。
+
+首读命令由标准库 `shlex.join` 分别编码 cat 和 shasum 的 argv，形成 `cat <全部文件> && shasum -a 256 <全部文件>` 并嵌入 prompt。叶角色首个工具调用必须选用其真实 exec schema 完整执行，保留全部原文及哈希并独立核验。适配器只生成命令，不代读证据替代子角色，不增加执行层或协议；缺入口一次报告阻塞并停止。
+
+每次专家调用使用全新持久 `codex exec`，不使用 `--ephemeral` 或父会话历史，禁止专家 `--resume`。工程/审查后续工作可显式恢复同角色、同任务的已有线程；调用方负责核实线程身份，不能将参与实现或测试的线程恢复为独审：
+
+```bash
+python3.11 tools/run_leaf_agent.py --role agent-integration-engineer \
+  --task-package /absolute/path/engineer-followup.json --sha256 SHA256_FROM_ABOVE \
+  --resume SAME_ENGINEER_THREAD_ID
+```
+
+CLI 调用保留 `--enable code_mode_host`，通过 `--disable multi_agent -c agents.enabled=false` 关闭叶角色协作入口，并以 `--disable sleep_tool` 关闭叶会话等待工具；保留文件/命令及网页入口，根会话协调继续启用。此修正来自真实专家仅调用 sleep、零读取的失败验收，该次已中断且不计通过；不新增重试或协议。主会话随后只进行一次新工具表验证，失败即停止，不重建专家。不覆盖模型、提供方、沙箱、审批或认证，不读取凭据；角色 TOML 仅提供 developer 文本，不应用其中的权限字段。源角色和任务包仍约束行为，注入指令不能充当权限隔离。`.codex/.agents/.git/.aws` 配置保持原样。
+
+原生专家仅在实际工具状态改变后重新预检；缺入口、哈希不符或无实际读取的协作声明应一次报告阻塞并停止，不重复重建。独立审查仍须新建未参与实现或测试编写的上下文，证据不足报告 `audit-blocked`。
+
+参数通过 argv 且 `shell=False` 传递，developer 文本用 `json.dumps(ensure_ascii=True)` 编码为 TOML 字符串，任务提示经 stdin 输入。stdout/stderr 继承调用方，CLI stdout 为 `--json` 事件；证据由主会话外部捕获。适配器不写日志、不自动重试；传递 CLI 退出码，信号退出按 128+信号号映射，Ctrl+C 返回 130。
+
+本轮读取/哈希及授权临时 marker 写回读预检已实际通过。真实专家已完成全部原文/哈希和 UiAutomator2 v8.7.0 官方查询，可用性已有实证；独立 full 审查 F01 指出其首调用漏读配置、后续补读不满足严格首读验收。本轮第 1 次修复通过按证据清单自动生成完整首读命令补齐入口，交付仍为 `pending-review`。主会话须完成一次新专家验证及原独立上下文的 repair-only 复审，通过后才可判定 Done。产品和测试改动为 0，根 SPEC 保持原哈希，源工作区已有改动不在本 worktree 修改。
+
+复用依据（2026-10-22）：Python 3.11 官方 [subprocess.run](https://docs.python.org/3.11/library/subprocess.html#subprocess.run) 的 argv、stdin、继承输出、退出码与取消处理，[tomllib.loads](https://docs.python.org/3.11/library/tomllib.html#tomllib.loads) 与 TOMLDecodeError，[argparse](https://docs.python.org/3.11/library/argparse.html#the-parse-args-method) 的参数校验及错误退出；已核对本机 3.11.16 签名/源码。Codex 参数以本机 0.163.0 的 `codex exec --help`、`codex exec resume --help` 为版本依据，官方 [CLI 参考](https://developers.openai.com/codex/cli/reference) 和 [配置参考](https://developers.openai.com/codex/config-reference) 为补充。
+
 ## 当前未决定
 
 目标用户、首个场景、首批 Agent 与设备平台、接入形式、技术栈和 MVP 验收标准。团队建立后再逐项确认。
