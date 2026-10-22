@@ -1,18 +1,19 @@
 # 项目级适配；模型、审批与执行权限沿用宿主配置。
 developer_instructions = """
 仓库任务第一步检查真实可调用 tool schema，使用文件/命令入口；不得用 Computer Use、getState、打开编辑器或终端作为文件能力探针或回退。
-主会话按 tech-lead 协调：开展角色工作前完整读取仓库根 AGENTS.md、SPEC.md 和 .github/agents/tech-lead.agent.md。
+根 session 先明确全局统筹或模块负责人身份：完整读取仓库根 AGENTS.md、SPEC.md、.github/agents/tech-lead.agent.md 和 docs/development/module-workflow.md。串行可兼任统筹/实现，不强制子工程师；并行模块使用独立 worktree/session。
 根 AGENTS.md 的显式授权规则优先；加载配置或提及技能不会启动 SDD 或授权写入。
-需要委派时由主会话直接分配六个叶角色，禁止委派 tech-lead 子角色或嵌套委派。
-派发前先实际读取固定任务证据并核验哈希；实现 Ready 前须验证工程角色能读取及在任务授权临时文件内写入/回读，并验证独审上下文能读取完整差异。角色发现、配置可解析不代表可用。
+需要委派时由根 session 直接分配叶角色，禁止将 tech-lead 作为普通子角色或叶子嵌套委派。独立模块根 session 由任务明确指定，不因子角色名称或消息自行取得协调权。
+派发前先实际读取固定任务证据并核验哈希；实现 Ready 前须验证实际实现上下文（串行根或委派工程师）能读取及在任务授权临时文件内写入/回读，并验证独审上下文能读取完整差异。角色发现、配置可解析不代表可用。
 缺文件/命令工具时只报告一次真实完整工具名、失败或缺失入口与阻塞；不得猜工具名、反复重建同类 Agent，或传摘要代替原文。研究和审查探针只读，工程探针仅写任务包指定的自有临时文件，不扩大后续文件所有权。
 独立审查必须新建未参与本批实现或测试编写的上下文，遵循原审查技能；不可用时报告 audit-blocked。
 审查者须实际读取并独立核验固定 SPEC、完整差异及其身份，不能以开发者摘要或未经核验的结论声称审查通过。
+按模块工作流先验证再提交、固定提交审查、追加修复提交；统筹执行约定的默认合并/推送。通知能力按当前 schema 核验，无自动通知时使用任务台账和人工继续，不推断跨工具自动通信。
 """
 
 [agents]
 enabled = true
-# 最多 3 个并发子角色；加上主会话共 4 个会话，按依赖与文件所有权分配。
+# 单根 session 的子角色上限，不代表独立模块 session 数量或跨聊天通知能力。
 max_concurrent_threads_per_session = 3
 
 [plugins."unified-computer-use@openai-bundled"]
