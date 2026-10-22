@@ -16,6 +16,21 @@ Android Session 验证的兼容组合。工程与模块约束见 [SPEC.md](SPEC.
 [Runtime 交付台账](docs/tasks/runtime-delivery-ledger.md)。
 它是唯一当前进度来源；下文是使用与能力边界说明，不替代逐 feature 验收状态。
 
+## 项目配置
+
+Configuration 提供显式项目 TOML 加载，当前验收状态见
+[Configuration 台账](docs/tasks/configuration-delivery-ledger.md)。
+[最小示例与字段说明](examples/configuration/README.md)帮助用户或 Coding Agent
+准备配置；使用 `load_configuration("config/appium.toml")` 取得不可变结果，
+把其 `settings` 传给 Runtime。
+
+只需填写当前用途所需的 `[runtime]` 字段；空配置有效，未填写字段保持默认。
+连接已有 Appium 时必须显式填写 `server_url`；加载成功不表示环境或连接就绪。
+配置文件路径相对加载时的工作目录，内部工具路径相对配置文件目录。
+修改文件后重启读取配置的应用生效，不自动重启 Appium。
+
+首批 CFG-01 仅文件加载；Python 参数覆盖由 CFG-02 在独立验收后提供。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。

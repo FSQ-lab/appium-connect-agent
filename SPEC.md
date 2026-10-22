@@ -28,7 +28,7 @@
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
 - 当前没有产品运行依赖；工程验证入口由下方 Tooling and Verification Constraints 定义，兼容性只按实际验证证据声明。
-- Runtime/Contracts 的当前公开契约由对应模块 SPEC 维护；其他模块仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
+- Runtime、Contracts、Configuration 的当前公开契约由对应模块 SPEC 维护；Automation、Integrations 仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
 ## Python Architecture
@@ -86,3 +86,11 @@
 - 外部服务仅按已确认主版本策略检查；不从本机静态包推断服务版本，不创建 Session，不取得进程所有权，不在退出时停止服务器。
 - 本连接能力无新增运行依赖，不改变 `diagnose()` 的静态只读语义或默认测试无需真实服务/设备的约束。详细 Interface、失败行为、资源限制与验证义务由相关模块 SPEC 定义。
 - 上述协议、地址和路径限制仅定义本轮已有本地连接能力，不预设后续本地自管、远程、HTTPS 或其他 feature 的支持规则；扩展仍须对应设计与 SPEC 确认。
+
+## Project Configuration Loading
+
+本节为已确认的项目配置文件加载契约；契约确认不表示实现已验收。
+
+- Configuration 首批增加同步项目 TOML 加载，公开映射 `appium_connect_agent.configuration`，源码位于 `src/appium_connect_agent/configuration/`；只依赖 Contracts 的唯一 LocalSettings 和 Python 3.11 标准库，无新增第三方依赖。
+- 仅显式文件、local 已有环境，返回不可变设置与字段来源；Configuration 不导入 Runtime 或启动任何环境/服务操作。详细输入、错误和边界由 Configuration SPEC 维护。
+- 原 Runtime 及 Contracts 契约保持；本契约不新增 remote、自管安装、真实服务/设备验证或新的平台支持承诺。

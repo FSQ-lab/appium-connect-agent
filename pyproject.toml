@@ -51,3 +51,15 @@ name = "Contracts cannot depend on Runtime"
 type = "forbidden"
 source_modules = ["appium_connect_agent.contracts"]
 forbidden_modules = ["appium_connect_agent.runtime"]
+
+[[tool.importlinter.contracts]]
+name = "Configuration cannot depend on Runtime"
+type = "forbidden"
+source_modules = ["appium_connect_agent.configuration"]
+forbidden_modules = ["appium_connect_agent.runtime"]
+
+[[tool.importlinter.contracts]]
+name = "Contracts cannot depend on Configuration"
+type = "forbidden"
+source_modules = ["appium_connect_agent.contracts"]
+forbidden_modules = ["appium_connect_agent.configuration"]
