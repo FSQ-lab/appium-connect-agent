@@ -7,8 +7,8 @@
 - 更新日期：2026-10-22；TaskID `CFG-DESIGN-01`；主会话 `/root` 承担 Tech Lead，工具为 Codex，本机 worktree `/Users/qunmi/Documents/FSQ_LAB/Appium_connect_agent`，分支 `master`。
 - 初始设计授权：`$requirements-to-design 按本次访谈已确认范围，整理 Configuration 整体设计、CFG-01/CFG-02 拆分及台账计划，不扩展范围`。后续显式 spec-driven 的产品实施授权与 SPEC 确认见下方记录。
 - 文档基线：`75c1737d95cacad2a8a104337fa988bed48aeb17`；已跟踪内容干净，已有未跟踪 Runtime 库迁移设计属于其他任务，保留且不混入交付。
-- 当前状态：**CFG-01 Done（已提交）；CFG-02 Done；CFG-M01 已验收**。CFG-02 的229项针对性/626项全回归、质量/打包、模块组合及独立full/pass均通过，Tech Lead 判定本批项目级local Configuration完成。CFG-02尚未提交或推送。
-- 文件负责人：工程师拥有 Configuration 源码/测试/示例，Tech Lead 拥有契约、台账及已分配共享文件；Runtime 任务外内容保持不变。独审新上下文只读。用户要求先提交CFG-01，已照办；后续确认CFG-02 SPEC并完成实施验收，未将前次单步提交请求扩大到本步提交/推送。
+- 当前状态：**F01/F02及CFG-01包身份阻塞已关闭，Configuration/CFG-M01验收恢复**。修复交付身份为包含下方“修复提交交接”记录的提交，可用 `git log -1 --format=%H -- tests/configuration/test_parser_limits.py` 定位；其父基线为 `c97600bcaf778a343f8793faa5d2da43c10dd6f3`（CFG-02），再前为 `9b49d0a58f851d30d47345a2a8f913e2f4ff64c5`（CFG-01）。本轮修复经240配置/637全回归、包验证及独立repair-only/pass，用户已明确要求提交；不推送，不把基线旧缺陷描述成已修复。
+- 文件负责人：工程师仅修复Configuration解析适配与回归测试，Tech Lead拥有台账/设计记录与包证据恢复；Runtime任务外内容保持不变。用户此前分别要求提交CFG-01和CFG-02，已照办；本次修复不自动提交/推送。独审新上下文只读。
 
 ## 平台、范围与顺序
 
@@ -16,9 +16,9 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 
 | FeatureID | 可验证交付 | 状态 / 前置 | 预算：产品 / 测试 / 文档（新增＋删除） |
 | --- | --- | --- | --- |
-| CFG-01 | 明确 TOML 文件加载、基本校验、路径转换、不可变设置与来源、最小示例；允许空配置 | Done；95 targeted /492回归、质量/依赖/打包及full/pass，产品294/测试476/示例59行 | 400–700 / 400–700 / 80–160 行 |
-| CFG-02 | Python 具体参数逐字段覆盖；分别校验、来源准确；空文件可通过参数提供设置；无临时清除或写回 | Done；229targeted/626全回归及集成验证/full独审通过，产品154/测试246/示例46行 | 150–300 / 200–400 / 40–100 行 |
-| CFG-M01 | 两步组合回归，设置经公开 Runtime 构造可消费；无额外真实连接/设备验收 | 已验收；两产物隔离安装执行通过，原始脚本/结果经独审核验 | 验证里程碑，不另建产品 feature |
+| CFG-01 | 文件加载及F01修复通过，原提交9b49d0a | 修复验收恢复；产品累计331/测试575，原示例59行；交付提交定位见首节 | 400–700 / 400–700 / 80–160 行 |
+| CFG-02 | 参数覆盖原提交c97600b，组合回归通过 | 组合F01已关闭；原产品154/测试246/示例46行不重复计修复 | 150–300 / 200–400 / 40–100 行 |
+| CFG-M01 | 修复两产物配置至Runtime构造及F01反例执行通过 | 经独立repair-only核验，约定接缝验收恢复；不包含服务或设备就绪 | 验证里程碑，不另建产品 feature |
 
 每个 feature 开始前另固定起点和文件白名单；修复仍计累计规模，文档/测试单列，约 1200 行以内目标不通过净增长或拆任务规避。CFG-01 的实际规模及验证结果见下方验收记录。
 
@@ -26,13 +26,13 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 
 | 项 | 当前依据与下一动作 | 负责人 |
 | --- | --- | --- |
-| 当前契约 | CFG-01 根/Configuration SPEC 已确认；Contracts/Runtime 契约未变，CFG-02 独立 gate 待确认 | Tech Lead |
+| 当前契约 | CFG-01及CFG-02 SPEC gate均已由用户确认；根/Contracts/Runtime契约保持，本次F01为恢复已有解析错误契约的no-delta修复 | Tech Lead |
 | Runtime 既有能力 | 原 Runtime 台账记载 RT-LOCAL-01/02 已验收；本轮不重审或重新声明其真实服务证据 | Runtime 负责人 |
 | 空配置 | 用户已确认允许；Runtime 可静态诊断，未配置 server_url 时不能连接；CFG-02 必须验证空文件＋参数。配置成功不代表环境就绪 | Configuration 负责人 |
 | U01 运行可执行性 | Runtime 尚未完整交付，继续归原 Runtime 台账跟踪；不搬入 Configuration 预算或验收 | Runtime Tech Lead / 用户决策 |
 | 成熟库复用 | 已按本次显式请求批准 Python 3.11 tomllib/pathlib/普通文件读取、3.11.16验证及现有LocalSettings/必要薄适配；原文见设计选型节。无新第三方依赖 | 用户已批准，Tech Lead 记录 |
 | 独立设计审查 | CFG-DESIGN-REVIEW-01 full-design/pass，新上下文读取固定原文、完整两文件差异并重算身份；仅覆盖固定快照，见下方记录 | 独立 quality-engineer |
-| 正式 SPEC gate | CFG-01 增文件加载/包映射，CFG-02 增覆盖语义；Contracts/Runtime 预计 no-delta；实施前确认 | 用户 / Tech Lead |
+| 正式 SPEC gate | 两步均已确认；下方候选/待确认文字属于当时历史时点，不表示当前仍待确认；本次不改SPEC | 用户 / Tech Lead |
 | 并发与共享基线 | 目标为 Runtime＋Configuration 独立模块推进；但本地根规则仍为旧串行约束，并发流程尚在独立任务分支且交付记录有阻塞。实施前核对正式采用、最新主分支、独立 worktree/session；不依赖未合入任务分支 | 项目统筹 |
 | 共享文件 | 根 SPEC、Contracts、依赖/锁文件、CI/流程只由统筹指定唯一修改者；Runtime 迁移与本模块不并写 | 项目统筹 |
 
@@ -93,6 +93,8 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 
 ### CFG01-FULL-AUDIT-01 与验收
 
+以下为原验收时点记录，不覆盖后续新独审反例；当前状态以本页首节及最新修复记录为准。
+
 - 新上下文 `/root/cfg01_independent_implementation_audit` 未参与实现或测试编写，完成 full/pass，无问题、无需修复轮，无audit-blocked；只读实际读取完整13路径差异/源码/测试与日志，未重跑产品。
 - 固定 review-1/manifest.json SHA-256 `41733da10257cf72cbc16958a83108a6f312910a59061d163df208930c17f547`（13074bytes）；head.diff `48de0981c8f655ccd1b25affc150d6be791aca2a673062db700f6a861c34e01c`（11144bytes/4diff）；untracked.diff `d9245703b92e6b2b5e1e5db9f82bf643fe8dcf41df815578c857bc28e08b8811`（69680bytes/9diff）。
 - 审查者独立核验13 current/snapshot、26产物、72基线及重建完整差异；确认获准标准库/公开LocalSettings复用，无TOML/URL grammar重写、无新依赖或Runtime操作。实际原始FINAL_ANSWER在当前会话对应TaskID，证据快照在上述目录。
@@ -100,6 +102,8 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 - 验收后仅更新台账及下一feature待确认契约，不将本轮旧哈希用于声称新契约已审或CFG-02已实现。CFG-M01仍等待CFG-02。
 
 ## CFG02-SPEC-GATE-01
+
+以下候选/待确认描述记录当时gate准备状态；用户随后明确确认，当前正式契约与实际提交见首节。
 
 - 沿原用户授权继续，前序CFG-01已验收，不重复索取开发/选型入口。候选仅扩展同一加载入口的Python关键字参数和override来源，保持文件必需、文件/参数分别校验、相对路径基准及无临时清除/写回。
 - 本阶段主会话只编辑Configuration SPEC的待确认追加节及本台账，不改已验收源码/测试；具体候选见模块SPEC。确认后另固定CFG-02起始快照，按新增+删除累计统计。
@@ -126,6 +130,8 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 
 ### CFG02-FULL-AUDIT-01 与模块验收
 
+以下为CFG-02提交前历史验收时点；“未提交”仅对该快照成立，之后用户已要求提交并形成c97600b。
+
 - 新上下文 `/root/cfg02_independent_audit` 未参与本批实现或测试，完成 full/pass、问题清单为空，无audit-blocked，无修复轮；全程只读，未重跑测试/构建/服务设备。
 - 固定 review-1/manifest.json SHA-256 `e20746dbba324928b892d4f5f1ef7695f2ff37bb80046c432810bfc4e2540592`（11827bytes）；head.diff `a603688192a88efe3deaee1fa10c4b098a80799f06d943a7f97490d19565f039`（26512bytes/6diff）；untracked.diff `f3bc53f3936776165a40f15f3e9c1f34c05dcc1ad83fc9e9021267df08caf80a`（9758bytes/1diff）。
 - 独审实际读取完整7路径差异/源码/测试/原始日志，重建差异逐字节一致，核验7current/snapshot、32产物、79基线以及两包各15源码身份；Runtime迁移任务外文件未变。正式Configuration SPEC `000d4ab2aceb49a8bee6fb93a3a00c503ee03c97d9976105d192947c9a7c9fd0`。完整原始FINAL_ANSWER保留于当前会话对应TaskID，不以台账摘要代替原文。
@@ -133,3 +139,32 @@ Configuration 首批服务于 macOS / Android / UiAutomator2、同步 Python、�
 - Tech Lead采纳：CFG-02 Done；CFG-01及CFG-02均验收后，CFG-M01实际执行和独审核对通过，本批项目级local Configuration完成。只代表已确认文件加载/参数覆盖及Runtime构造接缝，不表示Runtime服务/设备整体验收或任何remote/自管/机器级配置支持。
 - 规模分别保留：CFG-01产品294/测试476/示例59；CFG-02产品154（108新增+46删除）/测试246/示例46，无移动生成排除项。不能将两项净增长混为feature累计统计。
 - 最终只同步台账与设计状态，不改已审源码/测试/正式SPEC；记录增量另行限定核验。CFG-01已提交9b49d0a；CFG-02本步仍未提交/推送，用户任务外设计保持原身份。
+
+## CFG-REPAIR-01：外部独审F01/F02与证据恢复
+
+- 用户带回新独立完整审查：范围 `75c1737→9b49d0a→c97600b`，完整差异104681bytes/1694行/14路径，SHA-256 `10a24f83698848b098214badf201ce718113957a7a4ffdbccd9c618283628dae`。原始审查全文在当前会话用户消息，本页仅摘要；主会话实际复现两输入异常。
+- F01：真实CPython3.11.16对5000位十进制整数抛普通ValueError、600层嵌套数组抛RecursionError，均远低于1MiB，缺少结构化错误。违反现有Reading And Failure Behavior；按原spec-driven授权no-delta修复，不放宽Python限制、不重写grammar、不改变SPEC或库选型。修复归属CFG-01，CFG-02做组合回归。
+- F02：首节“CFG02未提交”、契约表“gate待确认”与实际c97600b冲突；本轮绑定两真实提交，标注提交前及候选记录为历史时点，保留原快照/hash，不覆盖历史结论身份。
+- 包证据缺口：旧CFG01 manifest引用同名dist，后被CFG02覆盖；历史安装现场已清理。不得用新包哈希替换旧manifest或把日志当现场。恢复/重建结果单独记来源，安装复验另记时间。
+- 本轮证据目录：`/var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/cfg-review-repair-k5oj4356`，固定干净tracked基线为c97600b，Runtime迁移设计是唯一原有未跟踪文件。任务包SHA-256 `5410500293914d5e0800add6dfe39c71b7ec6242dde3175e0d03dbd232db15db`，预检manifest `af263eea50da8af2681ebef0fa9f2d070f5465711e6467445a9bfd742950f041`。
+- 工程预检核验19项身份/产物、80项基线，唯一授权probe写读28bytes/`73dedb0895042bf063a978fa21fb419e731f630ab5bd9a46f142effffa62827e`；新独审 `/root/cfg_repair_independent_review` 核验14原文/4产物/80基线并完整读取重建104681bytes差异，能力通过后才判Ready。真实入口均为functions.functions__exec→tools.exec_command，无UI/CUA探针。
+- 工程只拥有_loader及必要解析回归测试；主会话只更新台账/设计及临时证据/隔离重建，不改SPEC/依赖/Runtime/Contracts。独审只读，后续repair-only只核对F01/F02、修复直接回归及证据恢复，最多两轮。
+- 已从uv缓存恢复CFG01 wheel，SHA-256 `5aa7cefbcd3c086d0c66d315b512133c2dc28d52305ba25d0fbcc29a656cde70`，28931bytes，与原manifest完全一致。固定源码重建wheel同hash、sdist为 `796a9eb8e4ac57b4af25f87f27a08a67bf68fe2a1ed7e7a71a8363dc1e2cd89b`，23315bytes，也与原manifest完全一致。缓存恢复和现在重建的来源分开保留，不声称找回已清理的原安装现场。证据为package-search/uv-package-search/package-reconstruction-result.json及artifacts/分目录归档。
+- 工程冻结pending-review：_parse仅对来源和特征均符合实际CPython3.11.16解析器的整数限制ValueError/数组递归RecursionError映射 `parser_limit`，其他异常原对象传播；只读取公开异常traceback识别来源，不调用私有parser，不改变安全限额。产品新增37行、测试新增99行；CFG-01产品保守累计331、测试575行，CFG-02原154/246不重复计入。
+- 实际red为4 failed/7 passed；修复后Configuration240 passed（原229保留），全仓637 passed，Ruff格式/lint、strict mypy26文件、import-linter3kept/0broken通过。日志repair-engineer-*.log及repair-integration-01–06.log；未改任何SPEC/依赖或任务外源码。
+- 新修复wheel/sdist写独立 artifacts/repaired-c97600b，不覆盖旧dist或旧manifest；分别SHA-256 `bc117bd20a59a64c89e5b7350d2b2a8a64766fabd8259c37bd92a24d28f1538c`、`32d370b596d15fb753a41e6e80dffc61f3027d13ecb885d0b0c1024d63f17888`。各15源码/类型标记与冻结实现一致、无运行依赖元数据；隔离安装后真实F01两反例plain/override和CFG-M01脚本均通过。复验结果是本轮新执行，不冒充历史现场。
+- 旧CFG01恢复wheel/重建同hash sdist另做隔离安装及公开配置→Runtime构造，均通过（cfg01-recovery-install.json）。本轮恢复了历史包字节身份的可核验对象；原安装现场仍未恢复。全部证据保持来源区分并交独审核验，尚不自行将历史身份阻塞或F01/F02记为关闭。
+
+### CFG-REPAIR-AUDIT-01
+
+- 新独立上下文 `/root/cfg_repair_independent_review` 完成 repair-only/pass，F01、F02及CFG-01包身份阻塞均关闭，限定范围无新增findings或audit-blocked，无第二轮修复。完整原始返回位于当前会话对应TaskID；本节为可定位摘要。
+- 审查manifest SHA-256 `cbe87e3dccc985f029faf89557731c25840466f01a8b5602d41e341540db510b`（13028bytes），head.diff `ff41f8400c4422255691b63130530e2b2daf8d1bfdff9e1153f681da487fda68`（18858bytes/3diff），untracked.diff `16be81f9946bfdc887c1eaad479b2eabee0cf41f74301ae67cd0f0f626852408`（3845bytes/1diff）。固定4文件快照及37产物独立匹配，完整差异由Git重建一致，全部SPEC及任务外基线未变。
+- 独审实际读取转存完整用户报告、CPython源码及修复/回归，确认已知限制精准映射、未知异常原对象传播、资源关闭/安全限额保持。真实240/637测试和质量/依赖/两包F01及模块验收日志支持关闭修复，不以摘要代替证据。
+- 全部7包开包核对15源码/类型标记及无依赖元数据；旧CFG01恢复/重建包与旧manifest字节/hash一致，原包身份阻塞关闭。旧历史安装现场和本轮临时安装目录均按临时环境清理，不可现场检查；固定包、脚本和完整命令输出已核验，此局限如实保留且不阻塞限定复审。
+- Tech Lead采纳限定结论，恢复本批Configuration/CFG-M01验收，保持纯项目local及已确认接缝范围。此验收时点本轮代码37/测试99行尚未提交；随后用户已要求提交，交付身份见首节与下方交接，不将本段历史状态误作当前Git状态。
+
+### 修复提交交接
+
+- 用户在修复与限定复审通过后明确要求“提交”。本提交仅包含Configuration解析修复、新增回归测试、设计状态及本台账；Runtime迁移设计不纳入，不推送。
+- 源码及测试按CFG-REPAIR-AUDIT-01固定快照核验；验收后两文档记录已通过record-only核验。提交前另核对状态定位记录增量，不重跑已通过且未变化的产品验证。
+- 父提交固定为c97600bcaf778a343f8793faa5d2da43c10dd6f3；用本节所属提交及新增测试的Git历史定位修复，旧manifest和历史提交身份不改写。

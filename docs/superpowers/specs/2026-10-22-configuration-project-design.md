@@ -2,7 +2,7 @@
 
 ## 状态与授权
 
-- 日期：2026-10-22；设计 TaskID：`CFG-DESIGN-01`。用户已确认本文、CFG-01→CFG-02顺序、具体复用及两步SPEC；两步实现/验证/full独审和CFG-M01组合验收均通过。逐feature交付身份、范围和Git状态以 [Configuration 台账](../../tasks/configuration-delivery-ledger.md)为准。
+- 日期：2026-10-22；设计 TaskID：`CFG-DESIGN-01`。用户已确认本文、CFG-01→CFG-02顺序、具体复用及两步SPEC；外部独审F01/F02按现有契约修复并通过限定复审，包身份恢复后本批验收已恢复，用户已明确要求提交修复。逐feature当前状态、提交定位和固定身份以 [Configuration 台账](../../tasks/configuration-delivery-ledger.md)为准，历史快照及安装现场局限分别保留。
 - 原始授权：用户显式调用 `$requirements-to-design 按本次访谈已确认范围，整理 Configuration 整体设计、CFG-01/CFG-02 拆分及台账计划，不扩展范围`。只写本设计及配套计划记录，不改 SPEC、源码、测试、依赖、Runtime 台账或正在推进的迁移设计，不提交或推送。
 - 仓库：`/Users/qunmi/Documents/FSQ_LAB/Appium_connect_agent`；分支 `master`；文档起点 `75c1737d95cacad2a8a104337fa988bed48aeb17`。初始已跟踪文件无差异，已有未跟踪文件 `2026-10-22-runtime-library-migration-design.md` 属于其他任务，本轮保留。后续每个产品 feature 另固定实施基线。
 - 本文维护设计与确认依据，正式契约由 [Configuration SPEC](../../../modules/configuration/SPEC.md)维护。当前设计确认、具体复用批准与显式 spec-driven 授权均已记录；后续 feature 仍须各自 SPEC gate、验证和独审。

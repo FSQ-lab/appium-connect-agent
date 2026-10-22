@@ -130,6 +130,43 @@ def _parse(data: bytes) -> dict[str, object]:
         raise _file_issue(
             "invalid_toml", "Correct the TOML syntax, including any duplicate keys."
         ) from None
+    except (ValueError, RecursionError) as error:
+        if not _known_parser_limit(error):
+            raise
+        raise _file_issue(
+            "parser_limit",
+            "Reduce integer digit counts or array nesting to fit the Python parser limits.",
+        ) from None
+
+
+def _known_parser_limit(error: ValueError | RecursionError) -> bool:
+    # Attribute only the verified CPython failures, using public traceback data.
+    # These names identify frames; no private parser entry point is called.
+    directory = Path(tomllib.__file__).parent
+    frames: list[tuple[Path, str]] = []
+    trace = error.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        frames.append((Path(code.co_filename), code.co_name))
+        trace = trace.tb_next
+    if not frames or frames[-1][0].parent != directory:
+        return False
+    if type(error) is ValueError:
+        return frames[-1] == (directory / "_re.py", "match_to_number") and bool(
+            re.fullmatch(
+                r"Exceeds the limit \([0-9]+ digits\) for integer string conversion: "
+                r"value has [0-9]+ digits; use sys\.set_int_max_str_digits\(\) to increase the limit",
+                str(error),
+            )
+        )
+    parser = directory / "_parser.py"
+    return (
+        type(error) is RecursionError
+        and str(error) == "maximum recursion depth exceeded"
+        and frames[-1][0] == parser
+        and frames.count((parser, "parse_array")) > 1
+        and frames.count((parser, "parse_value")) > 1
+    )
 
 
 def _validate_fields(
