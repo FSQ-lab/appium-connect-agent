@@ -1,6 +1,6 @@
 ---
 name: spec-driven
-description: "仅在用户显式调用 /spec-driven 时执行项目 SDD：SPEC 门槛、限定实现、验证与独立差异审查。"
+description: "仅在用户显式调用 /spec-driven 或 $spec-driven 时执行项目 SDD：SPEC 门槛、限定实现、验证与独立差异审查。"
 ---
 
 # Codex 适配
@@ -9,7 +9,7 @@ description: "仅在用户显式调用 /spec-driven 时执行项目 SDD：SPEC �
 
 下面的仓库路径均从仓库根解析；源正文的内部相对链接仍按源文件所在目录解析，不能相对于本适配目录解析。
 
-用户显式 /spec-driven <已确认设计文档路径或直接变更请求> 是项目开发唯一写入入口。$spec-driven 技能选择、自然语言请求或一般同意本身不代替该授权；子任务仅继承完整任务包中的可核验授权范围。
+用户显式调用 `$spec-driven <已确认设计文档路径或直接变更请求>` 或 `/spec-driven <已确认设计文档路径或直接变更请求>` 是项目开发唯一写入工作流，二者授权等价，无需补发另一种形式。引用或举例命令、仅提及技能名称、模型自动加载技能、自然语言请求或一般同意不代替该授权；任务不明确时先澄清。子任务仅继承完整任务包中的可核验授权范围。
 由主会话承担 tech-lead，先读取 .github/agents/tech-lead.agent.md；按源流程核对基线、SPEC delta/no-delta 和 Ready，直接分配叶角色。需要 SPEC delta 时先展示并等待用户确认，不自行扩大原始范围。
 源流程引用的模板是 .github/skills/spec-driven/references/spec-templates.md。首次独立审查须 full，后续 repair-only，最多自动修复两轮；不能用实现/测试编写上下文自审，不可独立审查时报告 audit-blocked。
 

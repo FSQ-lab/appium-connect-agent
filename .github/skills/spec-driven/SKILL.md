@@ -1,6 +1,6 @@
 ---
 name: spec-driven
-description: "Use when the user explicitly invokes /spec-driven to implement a project change through SPEC confirmation, bounded implementation, verification, and independent diff audit. SDD 项目开发唯一入口。"
+description: "Use when the user explicitly invokes /spec-driven or $spec-driven to implement a project change through SPEC confirmation, bounded implementation, verification, and independent diff audit. SDD 项目开发唯一入口。"
 argument-hint: "<confirmed-design-document-path | direct-project-change-request>"
 user-invocable: true
 disable-model-invocation: true
@@ -10,9 +10,9 @@ disable-model-invocation: true
 
 ## Entry
 
-遵循根 [AGENTS.md](../../../AGENTS.md)。只有用户显式调用本入口才允许开始项目写入；子任务继承任务包中可核验的授权范围，不得自行触发工作流。
+遵循根 [AGENTS.md](../../../AGENTS.md)。只有用户显式调用 `/spec-driven <已确认设计文档路径或直接变更请求>` 或 `$spec-driven <已确认设计文档路径或直接变更请求>` 才允许开始项目写入，二者授权等价；引用命令、仅提及技能名称或模型自动加载技能不构成授权，任务不明确时先澄清。子任务继承任务包中可核验的授权范围，不得自行触发工作流。
 
-由 `tech-lead` 协调。可以直接接收变更请求；产品 feature 实现前须有充分澄清的当前单平台单模块范围、经独立审查并由用户确认的设计和 feature 拆分。缺少设计时只在授权范围内先完成设计工作，不直接实现，必要时建议 `/requirements-to-design`。小型直接流程/文档变更或恢复已确认契约的缺陷修复可使用完整任务包，不强制造新设计文档；仍须 SPEC 判定、验证与独立审查。读到设计文件不等于设计已获批准。
+由 `tech-lead` 协调。可以直接接收变更请求；产品 feature 实现前须有充分澄清的当前单平台单模块范围、经独立审查并由用户确认的设计和 feature 拆分。缺少设计时只在授权范围内先完成设计工作，不直接实现，必要时建议 `/requirements-to-design` 或 `$requirements-to-design`。小型直接流程/文档变更或恢复已确认契约的缺陷修复可使用完整任务包，不强制造新设计文档；仍须 SPEC 判定、验证与独立审查。读到设计文件不等于设计已获批准。
 
 ## 1. Intake and baseline
 
@@ -57,7 +57,7 @@ disable-model-invocation: true
 
 ## 5. Independent audit and repair
 
-1. 将根/模块 SPEC、任务包、验证证据和完整差异产物交给独立的质量工程师审查上下文，按 `/spec-implementation-audit` 规则执行。
+1. 将根/模块 SPEC、任务包、验证证据和完整差异产物交给独立的质量工程师审查上下文，按 `/spec-implementation-audit` 或 `$spec-implementation-audit` 对应的同一规则执行。
 2. 第一轮 `audit_mode=full`；审查者必须建立完整范围清单，不依赖开发者“已完成”的判断。
 3. 证据缺失、截断、哈希或范围不一致时为 `audit-blocked`，先补证据，不声称通过。
 4. 有缺陷时按文件所有权合并分派修复，不逐条无边界循环。修复后重新验证并生成修复差异。

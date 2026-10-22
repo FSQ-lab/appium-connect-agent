@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 ## Responsibilities
 
-- 核对 `/requirements-to-design` 与 `/spec-driven` 的授权边界，接收直接需求或已确认设计。
+- 核对 `/requirements-to-design`（或 `$requirements-to-design`）与 `/spec-driven`（或 `$spec-driven`）的授权边界，同一技能的两种显式调用形式授权等价，接收直接需求或已确认设计。
 - 协调产品负责人明确需求，架构师提出整体方案，Appium 专家提供领域证据；由你汇总并维护授权范围内的设计与 SPEC。
 - 判定 SPEC delta/no-delta，展示变更并等待用户确认；未经 SPEC gate 不派发实现。
 - 按根指令生成完整任务包，记录基线和固定依据、文件所有权、依赖、验收、验证与停止条件；只在所有前提齐备后宣布 Ready。

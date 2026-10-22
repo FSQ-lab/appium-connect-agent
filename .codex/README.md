@@ -20,17 +20,17 @@
 
 ## 日常入口
 
-在本项目的新 Codex 聊天中输入以下明确入口及实际任务：
+在本项目的新 Codex 聊天中使用原生 `$` 技能入口，并提供实际任务：
 
 ```text
-/requirements-to-design <需求>
-/spec-driven <已确认设计文档路径或直接变更请求>
-/spec-implementation-audit <任务包与差异清单> [full|repair-only]
+$requirements-to-design <需求>
+$spec-driven <已确认设计文档路径或直接变更请求>
+$spec-implementation-audit <任务包与差异清单> [full|repair-only]
 ```
 
-`/requirements-to-design` 仅授权需求和设计文档写入。`/spec-driven` 是项目开发唯一写入入口：先核对 SPEC delta/no-delta、基线和任务包，再实现、验证及独立审查。`/spec-implementation-audit` 只读审查，不授权修复；主会话 tech-lead 可在已授权的 SDD 任务内明确委派审查，不要求用户为每次复审重复输入命令。
+上述入口与 `/requirements-to-design`、`/spec-driven`、`/spec-implementation-audit` 的对应显式调用授权等价，无需补发 `/` 命令。`$requirements-to-design` 仅授权需求澄清和设计文档写入，不授权修改 SPEC 或实现。`$spec-driven` 是项目开发唯一写入工作流：先核对 SPEC delta/no-delta、基线和任务包，再实现、验证及独立审查。`$spec-implementation-audit` 只读审查，不授权修复；主会话 tech-lead 可在已授权的 SDD 任务内明确委派审查，不要求用户为每次复审重复输入命令。
 
-Codex 的原生技能选择形式是 `$spec-driven` 等；三份 `agents/openai.yaml` 保留原技能的显式选择策略，设置 `allow_implicit_invocation: false`。选择技能、提及角色或一般同意本身不代替上述授权入口。若宿主不把项目 `/...` 当成原生命令，应将完整入口作为用户消息文本发送，由主会话读取对应技能正文核对；不能声称已经注册宿主斜杠命令。
+用户通过原生技能入口显式选择对应技能并明确任务范围，即按上述边界授权；三份 `agents/openai.yaml` 保留显式选择策略，设置 `allow_implicit_invocation: false`。引用或举例命令、仅提及技能或角色、模型自动加载技能、自然语言请求或一般同意不构成授权；任务不明确时先澄清。使用宿主实际支持的入口；兼容 `/...` 不表示已向 Codex 注册斜杠命令，文件变更也不代表既有会话已重新加载技能。
 
 技能适配：[spec-driven](../.agents/skills/spec-driven/SKILL.md)、[requirements-to-design](../.agents/skills/requirements-to-design/SKILL.md)、[spec-implementation-audit](../.agents/skills/spec-implementation-audit/SKILL.md)。执行前必须完整读取适配所指向的 `.github/skills/` 正文；不以适配摘要代替完整流程。
 

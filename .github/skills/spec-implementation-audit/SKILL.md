@@ -1,6 +1,6 @@
 ---
 name: spec-implementation-audit
-description: "Use for an explicitly requested or SDD-delegated independent audit of root/module SPEC against complete implementation diffs; supports full and repair-only modes. 独立规格实现审查。"
+description: "Use for an independent audit explicitly invoked via /spec-implementation-audit or $spec-implementation-audit, or delegated within authorized SDD, of root/module SPEC against complete implementation diffs; supports full and repair-only modes. 独立规格实现审查。"
 argument-hint: "<task-package-and-diff-manifest> [full|repair-only]"
 user-invocable: true
 disable-model-invocation: true
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # SPEC Implementation Audit
 
-遵循根 [AGENTS.md](../../../AGENTS.md)。只读审查，不修复、不编辑测试或实现、不执行未经授权的设备操作。可由用户显式调用，或由 Tech Lead 在已授权的 SDD 任务内委派。
+遵循根 [AGENTS.md](../../../AGENTS.md)。只读审查，不修复、不编辑测试或实现、不执行未经授权的设备操作。可由用户显式调用 `/spec-implementation-audit <任务包与差异清单> [full|repair-only]` 或 `$spec-implementation-audit <任务包与差异清单> [full|repair-only]`，二者授权等价；也可由 Tech Lead 在已授权的 SDD 任务内委派。引用命令、仅提及技能名称或模型自动加载技能不构成授权；任务不明确时先澄清。
 
 ## Required inputs
 

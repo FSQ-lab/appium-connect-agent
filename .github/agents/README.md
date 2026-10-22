@@ -35,11 +35,11 @@
 
 ### SDD 入口
 
-- `/requirements-to-design <需求>`：可选，生成经审查和用户确认的设计，不改 SPEC 或实现。
-- `/spec-driven <已确认设计文档路径或直接变更请求>`：项目开发唯一入口；先判定并确认 SPEC delta，或提供 no-delta 证据，再实现、验证和独立审查。
-- `/spec-implementation-audit <任务包与差异清单> [full|repair-only]`：只读审查，不自动授权修复。
+- `/requirements-to-design <需求>` 或 `$requirements-to-design <需求>`：可选，生成经审查和用户确认的设计，不改 SPEC 或实现。
+- `/spec-driven <已确认设计文档路径或直接变更请求>` 或 `$spec-driven <已确认设计文档路径或直接变更请求>`：项目开发唯一写入工作流；先判定并确认 SPEC delta，或提供 no-delta 证据，再实现、验证和独立审查。
+- `/spec-implementation-audit <任务包与差异清单> [full|repair-only]` 或 `$spec-implementation-audit <任务包与差异清单> [full|repair-only]`：只读审查，不自动授权修复。
 
-对应技能位于 [skills](../skills)。若宿主尚未发现新技能，需重开聊天或检查技能加载状态；不能将自然语言同意当作显式开发授权。首次审查覆盖完整差异，后续仅复核问题与修复增量，最多自动修复两轮。
+同一技能的 `/` 与 Codex `$` 显式调用形式授权等价，无需同时发送；须由用户发起工作流并明确任务范围，引用命令、仅提及技能名称、模型自动加载技能或一般同意不构成授权。对应技能位于 [skills](../skills)，Codex 适配见 [.codex/README.md](../../.codex/README.md)。若宿主尚未发现新技能，需重开聊天或检查技能加载状态。首次审查覆盖完整差异，后续仅复核问题与修复增量，最多自动修复两轮。
 
 这套配置从 FSQ 的工作流适配，保留其 SPEC 所有权、授权、任务包和完整 Git 差异审查门槛；保留本项目专业角色，新增 Tech Lead。不复制 FSQ 业务模块、版权声明或尚未选定的 Python/前端规则。跨角色共同规则集中在根 AGENTS，避免多份常驻指令相互漂移。
 
