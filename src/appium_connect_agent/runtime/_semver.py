@@ -1,55 +1,52 @@
-"""Partial npm comparison: unsupported syntax deliberately stays unknown."""
+"""Bounded project input policy over the approved public npm-semver API."""
 
-import re
+from dataclasses import dataclass
 
-Version = tuple[int, int, int]
-_VERSION = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+import nodesemver
+
+
+@dataclass(frozen=True)
+class Version:
+    text: str
+    major: int
 
 
 def version(value: object) -> Version | None:
-    if not isinstance(value, str) or len(value) > 128:
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > 128
+        or not value.isascii()
+        or value.startswith(("v", "="))
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in value
+        )
+    ):
         return None
-    match = re.fullmatch(_VERSION, value)
-    if match is None:
-        return None
-    a, b, c = map(int, match.groups())
-    return a, b, c
+    parsed = nodesemver.valid(value, loose=False)
+    return Version(value, parsed.major) if parsed is not None else None
 
 
-def satisfies(actual: str, expression: str) -> bool | None:
-    parsed = version(actual)
-    if parsed is None or not expression or len(expression) > 256:
+def constraint(value: object) -> str | None:
+    if not isinstance(value, str) or len(value) > 256:
         return None
-    branches: list[bool | None] = []
-    for branch in expression.split("||"):
-        comparisons: list[bool] = []
-        tokens = branch.strip().split()
-        for token in tokens:
-            match = re.fullmatch(r"(\^|~|>=|<=|>|<|=)?" + _VERSION, token)
-            if match is None:
-                branches.append(None)
-                break
-            operator = match[1] or "="
-            a, b, c = map(int, match.groups()[1:])
-            minimum = (a, b, c)
-            if operator == "^":
-                maximum = (
-                    (a + 1, 0, 0) if a else ((0, b + 1, 0) if b else (0, 0, c + 1))
-                )
-                result = minimum <= parsed < maximum
-            elif operator == "~":
-                result = minimum <= parsed < (a, b + 1, 0)
-            else:
-                result = {
-                    "=": parsed == minimum,
-                    ">=": parsed >= minimum,
-                    "<=": parsed <= minimum,
-                    ">": parsed > minimum,
-                    "<": parsed < minimum,
-                }[operator]
-            comparisons.append(result)
-        else:
-            branches.append(all(comparisons) if tokens else None)
-    if None in branches:
+    normalized = " ".join(value.split())
+    if (
+        not normalized
+        or not normalized.isascii()
+        or any(ord(character) < 32 or ord(character) == 127 for character in normalized)
+        or any(not branch.strip() for branch in normalized.split("||"))
+    ):
         return None
-    return any(branches)
+    if nodesemver.valid_range(normalized, loose=False) is None:
+        return None
+    return normalized
+
+
+def satisfies(actual: object, expression: object) -> bool | None:
+    observed = version(actual)
+    declared = constraint(expression)
+    if observed is None or declared is None:
+        return None
+    return nodesemver.Range(declared, loose=False).test(observed.text)

@@ -63,7 +63,7 @@
 - 必须验证构造零I/O、静态事实/缺失/未知区分、显式路径优先/歧义、有界文件读取与证据、实际跨进程锁互斥、取消/预算/观察者失败及资源释放。
 - 真实本机静态读取应验证不写组件目录、不发起服务或设备请求。无需设备才能验收该feature，但不能把静态检查通过代替首批真实Android Session创建关闭整体验收。
 
-## Shared Version And Range Semantics — 待确认（RT-LIB-02）
+## Shared Version And Range Semantics
 
 - 直接运行依赖 node-semver==0.9.1（导入 nodesemver，无 extras），静态诊断与连接共用其公开严格版本校验和 npm 范围能力；不自行解析版本/范围 grammar，不执行 Node/npm，不改变静态诊断只读与同步公开接口。
 - 观测版本必须是最多128字符的完整 ASCII SemVer，拒绝空白/控制字符、v/=前缀及不完整版本；允许有效 prerelease/build。以公开 valid(..., loose=False) 验证，展示保留已验证原字符串（含build），不用会省略build的库格式化属性代替观测值。

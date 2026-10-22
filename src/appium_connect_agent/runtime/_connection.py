@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import platform
-import re
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from threading import Lock, get_ident
@@ -27,27 +26,9 @@ from ._models import (
     ServiceConnectionError,
     UnsupportedVersionError,
 )
-from ._semver import _VERSION
+from ._semver import version as parse_version
 
 Compatibility = Literal["declared_compatible", "unverified"]
-
-
-def _version(value: object) -> str | None:
-    if not isinstance(value, str) or len(value) > 128:
-        return None
-    match = re.fullmatch(
-        _VERSION + r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
-        value,
-    )
-    if match is None:
-        return None
-    if match[4] and any(
-        part.isdigit() and len(part) > 1 and part.startswith("0")
-        for part in match[4].split(".")
-    ):
-        return None
-    return value
 
 
 def _reject_constant(value: str) -> None:
@@ -177,10 +158,11 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 raise operation.error(ServiceConnectionError, failure)
             operation.add("service", "pass", "service_ready")
             build = value.get("build")
-            version = _version(
+            observed = parse_version(
                 build.get("version") if isinstance(build, dict) else None
             )
-            compatible = version is not None and int(version.split(".")[0]) == 3
+            version = observed.text if observed is not None else None
+            compatible = observed is not None and observed.major == 3
             operation.add(
                 "declared_compatibility",
                 "pass" if compatible else "unknown" if version is None else "fail",

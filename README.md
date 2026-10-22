@@ -117,6 +117,10 @@ ANDROID_HOME 或 ANDROID_SDK_ROOT 作为设置。版本及布局存在不证明�
 Node 实际版本、服务和设备状态不检查；报告没有总体 ready 布尔值。
 
 声明约束已知不匹配时 declared_compatibility 为 fail；无法可靠解析则为 unknown。
+Runtime 使用 node-semver 0.9.1 的严格公开版本/范围能力；支持经验证的 AND/OR、
+caret/tilde、部分版本、x 和 hyphen 范围，并采用默认 prerelease 规则。
+非法声明仍为 unknown；有效声明的识别扩展可能将原 unknown 变为明确匹配或不匹配。
+报告保留已验证版本的 build 信息；匹配不执行 Node/npm，也不表示设备或组合已实测。
 qualified_support 独立保持 unknown，直到后续获授权的真实 Android Session 资格验证。
 当前 Appium 3.7.0 / UiAutomator2 8.7.0 仅为观测候选，不构成支持承诺。
 

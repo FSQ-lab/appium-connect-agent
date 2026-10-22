@@ -27,7 +27,7 @@
 ## Development Rules
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
-- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1 与 httpcore==1.0.9。HTTPX 继续负责已有本地连接 HTTP 请求，AnyIO 仅用于操作内受管异步桥接；HTTPcore 仅用于公开异常类型识别及 HTTPX 公开 trace 事件集合的版本固定，不直接建立另一套客户端或 Transport。其余传递依赖由 uv.lock 固定；发行元数据同样固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。 **待确认（RT-LIB-02）：** 增加无 extras 的 node-semver==0.9.1，供 Runtime 静态诊断及连接共用版本识别和 npm 范围匹配；不执行 Node/npm，不增加实测兼容组合。
+- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1 与 httpcore==1.0.9。HTTPX 继续负责已有本地连接 HTTP 请求，AnyIO 仅用于操作内受管异步桥接；HTTPcore 仅用于公开异常类型识别及 HTTPX 公开 trace 事件集合的版本固定，不直接建立另一套客户端或 Transport。其余传递依赖由 uv.lock 固定；发行元数据同样固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。 增加无 extras 的 node-semver==0.9.1，供 Runtime 静态诊断及连接共用版本识别和 npm 范围匹配；不执行 Node/npm，不增加实测兼容组合。
 - Runtime/Contracts 的当前公开契约由对应模块 SPEC 维护；其他模块仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 

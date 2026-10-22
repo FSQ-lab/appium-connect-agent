@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from ._semver import version
+
 MAX_BYTES = 1024 * 1024
 
 
@@ -33,17 +35,6 @@ def path_evidence(path: Path) -> str:
         r"(?i)(token|password|secret|key|credential)[=:][^/\s]+", r"\1=[redacted]", text
     )
     return "path=" + "".join(c if c.isprintable() else "?" for c in text)
-
-
-def constraint(value: object) -> str | None:
-    # Metadata may contain arbitrary user text: only accept range characters.
-    if (
-        isinstance(value, str)
-        and len(value) <= 256
-        and re.fullmatch(r"[0-9v.^~<>=|*xX+\-\s]+", value)
-    ):
-        return value
-    return None
 
 
 def mapping(value: object) -> dict[str, object]:
@@ -200,10 +191,8 @@ class Reader:
 
 
 def package_value(root: Path, data: dict[str, object]) -> Package:
-    from ._semver import version
-
-    raw = data.get("version")
-    actual = raw if isinstance(raw, str) and version(raw) is not None else None
+    observed = version(data.get("version"))
+    actual = observed.text if observed is not None else None
     engines = data.get("engines", {})
     peers = data.get("peerDependencies", {})
     return Package(

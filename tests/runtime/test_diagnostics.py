@@ -582,14 +582,12 @@ def test_control_validation(value: Any) -> None:
         ("3.7.0", "^3.0.0 || || ^2.0.0", None),
         ("3.7.0", "^2.0.0 || >", None),
         ("3.7.0", "||", None),
-        ("3.7.0", "3.x", None),
-        ("3.7.0", "^3.0.0-rc.2", None),
-        ("3.7.0-rc.2", "^3.0.0", None),
+        ("3.7.0", "3.x", True),
+        ("3.7.0", "^3.0.0-rc.2", True),
+        ("3.7.0-rc.2", "^3.0.0", False),
     ],
 )
-def test_conservative_ranges(
-    actual: str, expression: str, expected: bool | None
-) -> None:
+def test_approved_ranges(actual: str, expression: str, expected: bool | None) -> None:
     assert satisfies(actual, expression) is expected
 
 
@@ -766,3 +764,244 @@ def test_io_completion_and_findings_still_check_operation_control(
                 control=OperationControl(cancellation=cancellation)
             )
     assert Runtime(config).diagnose().checks
+
+
+@pytest.mark.parametrize(
+    "actual,expression,expected",
+    [
+        ("3.7.0", "3.x", "pass"),
+        ("3.7.0", "^3.0.0-rc.2", "pass"),
+        ("3.7.0-rc.2", "^3.0.0", "fail"),
+        ("3.7.0+build.5", "^3.0.0", "pass"),
+        ("3.7.9", "~3.7.1", "pass"),
+        ("3.8.0", "~3.7.1", "fail"),
+        ("0.2.9", "^0.2.3", "pass"),
+        ("0.3.0", "^0.2.3", "fail"),
+        ("0.0.3", "^0.0.3", "pass"),
+        ("0.0.4", "^0.0.3", "fail"),
+        ("3.7.0", "3.0.0 - 3.9.0", "pass"),
+        ("4.0.0", "3.0.0 - 3.9.0", "fail"),
+        ("3.7.0", "3", "pass"),
+        ("3.7.0", "3.7", "pass"),
+        ("3.7.0", "^2.0.0 || ^3.0.0", "pass"),
+        ("3.7.0", ">=3.0.0\t<4.0.0\n", "pass"),
+        ("3.7.0", ">=3.0.0\u2003<4.0.0", "pass"),
+        ("3.7.0", "3.0.0 - >", "unknown"),
+        ("3.7.0", "> || ^3.0.0", "unknown"),
+        ("3.7.0", "^3.0.0 ||", "unknown"),
+    ],
+)
+def test_lib02_public_diagnostics_ranges(
+    tmp_path: Path,
+    actual: str,
+    expression: str,
+    expected: str,
+) -> None:
+    config, metadata = declaration_layout(tmp_path)
+    appium = json.loads(metadata["appium"].read_text())
+    appium["version"] = actual
+    metadata["appium"].write_text(json.dumps(appium))
+    driver = json.loads(metadata["driver"].read_text())
+    driver["peerDependencies"]["appium"] = expression
+    metadata["driver"].write_text(json.dumps(driver))
+    result = checks(Runtime(config))
+    assert result["declared_compatibility"].status == expected
+    assert f"version={actual}" in result["appium_installation"].evidence
+    assert result["qualified_support"].status == "unknown"
+    assert (
+        result["service"].reason_code == result["device"].reason_code == "not_checked"
+    )
+    declaration = (
+        " ".join(expression.split())
+        if expected != "unknown"
+        else "unsupported_constraint"
+    )
+    assert (
+        f"driver.appium={declaration}; observed={actual}"
+        in result["declared_compatibility"].evidence
+    )
+
+
+@pytest.mark.parametrize("bad_range", ["3.0.0 - >", "> || ^3.0.0", "^3.0.0 ||"])
+def test_lib02_unknown_does_not_override_known_fail(
+    tmp_path: Path, bad_range: str
+) -> None:
+    result = checks(Runtime(settings(tmp_path, peer=bad_range, npm="<10.0.0")))
+    assert result["declared_compatibility"].status == "fail"
+    assert result["qualified_support"].status == "unknown"
+
+
+@pytest.mark.parametrize("entry", ["valid", "valid_range"])
+def test_lib02_unknown_exception_propagates_and_unlocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+) -> None:
+    import nodesemver
+
+    config = settings(tmp_path)
+    original = AttributeError("real unknown defect")
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise original
+
+    with monkeypatch.context() as patch:
+        patch.setattr(nodesemver, entry, broken)
+        with pytest.raises(AttributeError) as caught:
+            Runtime(config).diagnose()
+        assert caught.value is original
+    assert Runtime(config).diagnose().checks
+
+
+@pytest.mark.parametrize(
+    "actual,expression,expected",
+    [
+        ("3.7.0+" + "a" * 122, "*", True),
+        ("3.7.0+" + "a" * 123, "*", None),
+        ("3.7.0", "^3.0.0" + " " * 250, True),
+        ("3.7.0", "^3.0.0" + " " * 251, None),
+        ("v3.7.0", "*", None),
+        ("=3.7.0", "*", None),
+        ("3.7", "*", None),
+        ("3.7.0\n", "*", None),
+        ("3.7.0\x00", "*", None),
+        ("3.7.\uff10", "*", None),
+        (None, "*", None),
+        (5, "*", None),
+        ("3.7.0", None, None),
+        ("3.7.0", "\t\n", None),
+        ("3.7.0", "3.0.0\x00", None),
+    ],
+)
+def test_lib02_input_bounds_without_io(
+    actual: object,
+    expression: object,
+    expected: bool | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("Version/range validation attempted I/O")
+
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(os, "open", forbidden)
+    assert satisfies(actual, expression) is expected
+
+
+def test_lib02_metadata_evidence_is_validated_and_bounded(tmp_path: Path) -> None:
+    config, metadata = declaration_layout(tmp_path)
+    driver = json.loads(metadata["driver"].read_text())
+    driver["peerDependencies"]["appium"] = "^3.0.0\x00PRIVATE-CREDENTIAL"
+    metadata["driver"].write_text(json.dumps(driver))
+    result = checks(Runtime(config))
+    assert result["declared_compatibility"].status == "unknown"
+    assert "PRIVATE-CREDENTIAL" not in repr(result)
+    appium = json.loads(metadata["appium"].read_text())
+    appium["version"] = "v3.7.0+PRIVATE-CREDENTIAL"
+    metadata["appium"].write_text(json.dumps(appium))
+    result = checks(Runtime(config))
+    assert result["appium_installation"].status == "unknown"
+    assert "PRIVATE-CREDENTIAL" not in repr(result)
+
+
+@pytest.mark.parametrize("entry", ["valid", "valid_range"])
+@pytest.mark.parametrize("kind", [KeyError, OSError])
+@pytest.mark.parametrize("active", [False, True])
+def test_lib02_f1_unknown_errors_keep_identity_and_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+    kind: type[Exception],
+    active: bool,
+) -> None:
+    from contextlib import nullcontext
+
+    import nodesemver
+
+    from appium_connect_agent.runtime import EnvironmentBusyError, _connection, _http
+
+    config = replace(settings(tmp_path), server_url="http://127.0.0.1:1")
+    runtime = Runtime(config)
+    original = kind("library defect")
+    monkeypatch.setattr(
+        _connection,
+        "get_status",
+        lambda *args: _http.HTTPResult(body=b'{"value":{"ready":true}}'),
+    )
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise original
+
+    with runtime.connect() if active else nullcontext():
+        with monkeypatch.context() as patch:
+            patch.setattr(nodesemver, entry, broken)
+            with pytest.raises(kind) as caught:
+                runtime.diagnose()
+            assert caught.value is original
+        assert runtime.diagnose().checks
+        if active:
+            with pytest.raises(EnvironmentBusyError):
+                Runtime(config).diagnose()
+    assert Runtime(config).diagnose().checks
+
+
+@pytest.mark.parametrize("kind", [KeyError, OSError])
+def test_lib02_f1_library_error_retains_actual_lock_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: type[Exception],
+) -> None:
+    import nodesemver
+
+    original = kind("library defect")
+    cleanup = OSError("descriptor cleanup")
+    actual_close = os.close
+    closed: list[int] = []
+
+    def fail_close(fd: int) -> None:
+        actual_close(fd)
+        closed.append(fd)
+        if len(closed) == 1:
+            raise cleanup
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise original
+
+    config = settings(tmp_path)
+
+    # Fail only lock descriptors by installing close injection when validation starts.
+    def validate(*args: object, **kwargs: object) -> None:
+        monkeypatch.setattr(os, "close", fail_close)
+        broken()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(nodesemver, "valid", validate)
+        with pytest.raises(kind) as caught:
+            Runtime(config).diagnose()
+        assert caught.value is original
+        assert caught.value.__dict__["runtime_cleanup_error"] is cleanup
+    monkeypatch.setattr(os, "close", actual_close)
+    assert len(closed) > 1
+    assert Runtime(config).diagnose().checks
+
+
+@pytest.mark.parametrize(
+    "failure", [KeyError("account lookup"), OSError("account access")]
+)
+def test_lib02_f1_actual_account_failures_still_map(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    from appium_connect_agent.runtime import RuntimeOperationError
+
+    actual_home = _coordination._account_home
+
+    def fail_home() -> Path:
+        raise failure
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_coordination, "_account_home", fail_home)
+        with pytest.raises(RuntimeOperationError, match="coordination_unavailable"):
+            Runtime(LocalSettings()).diagnose()
+    assert _coordination._account_home is actual_home
+    assert Runtime(LocalSettings()).diagnose().checks

@@ -27,6 +27,7 @@ dependencies = [
     { name = "anyio" },
     { name = "httpcore" },
     { name = "httpx" },
+    { name = "node-semver" },
 ]
 
 [package.dev-dependencies]
@@ -42,6 +43,7 @@ requires-dist = [
     { name = "anyio", specifier = "==4.15.1" },
     { name = "httpcore", specifier = "==1.0.9" },
     { name = "httpx", specifier = "==0.28.1" },
+    { name = "node-semver", specifier = "==0.9.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -522,6 +524,15 @@ source = { registry = "https://packagefeedproxy.microsoft.io/pypi/simple/" }
 sdist = { url = "https://ms-feed-25.pkgs.visualstudio.com/6f084628-a36d-42cb-934d-057357e379dc/_packaging/49d7402f-07bb-4b18-a9ce-086e6e98a554/pypi/download/mypy-extensions/1.1/mypy_extensions-1.1.0.tar.gz", hash = "sha256:52e68efc3284861e772bbcd66823fde5ae21fd2fdb51c62a211403730b916558", size = 6343, upload-time = "2026-08-05T23:58:53Z" }
 wheels = [
     { url = "https://ms-feed-25.pkgs.visualstudio.com/6f084628-a36d-42cb-934d-057357e379dc/_packaging/49d7402f-07bb-4b18-a9ce-086e6e98a554/pypi/download/mypy-extensions/1.1/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2026-07-24T02:44:44Z" },
+]
+
+[[package]]
+name = "node-semver"
+version = "0.9.1"
+source = { registry = "https://packagefeedproxy.microsoft.io/pypi/simple/" }
+sdist = { url = "https://ms-feed-25.pkgs.visualstudio.com/6f084628-a36d-42cb-934d-057357e379dc/_packaging/49d7402f-07bb-4b18-a9ce-086e6e98a554/pypi/download/node-semver/0.9.1/node_semver-0.9.1.tar.gz", hash = "sha256:f052dbdcbc42dd5a0c04b22829a3af98c1f29e4675cc6d88db24250a3f7f8ec7", size = 12828, upload-time = "2026-06-23T03:06:50Z" }
+wheels = [
+    { url = "https://ms-feed-25.pkgs.visualstudio.com/6f084628-a36d-42cb-934d-057357e379dc/_packaging/49d7402f-07bb-4b18-a9ce-086e6e98a554/pypi/download/node-semver/0.9.1/node_semver-0.9.1-py3-none-any.whl", hash = "sha256:47669dc0f7e104cc482f69fda53c04fbe34ce9b7c9d6990e43c99a028d1628bd", size = 12051, upload-time = "2026-10-22T07:10:37Z" },
 ]
 
 [[package]]

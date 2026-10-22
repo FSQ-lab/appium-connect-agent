@@ -1931,3 +1931,58 @@ def test_ext_f1_protocol_failure_keeps_mapping_on_portal_close(
             c.reason_code == "service_ready" for c in caught.value.partial_report.checks
         )
     Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize(
+    "raw,expected,compatible",
+    [
+        ("3.7.0+build.5", "3.7.0+build.5", True),
+        ("3.7.0-rc.2+build.5", "3.7.0-rc.2+build.5", True),
+        ("2.0.0+build.5", "2.0.0+build.5", False),
+        ("v3.7.0", None, True),
+        ("=3.7.0", None, True),
+        ("3.7.0\n", None, True),
+        ("3.7", None, True),
+    ],
+)
+def test_lib02_connection_uses_shared_version(
+    raw: str, expected: str | None, compatible: bool
+) -> None:
+    body = json.dumps({"value": {"ready": True, "build": {"version": raw}}}).encode()
+    with server(response(body)) as (url, requests):
+        scope = Runtime(LocalSettings(server_url=url)).connect()
+        if not compatible:
+            with pytest.raises(UnsupportedVersionError) as caught:
+                scope.__enter__()
+            assert (
+                f"version={expected}" in caught.value.partial_report.checks[-1].evidence
+            )
+        else:
+            with scope as connection:
+                assert connection.appium_version == expected
+                assert connection.compatibility == (
+                    "declared_compatible" if expected else "unverified"
+                )
+                if expected:
+                    assert f"version={expected}" in connection.report.checks[2].evidence
+        assert len(requests) == 1
+
+
+def test_lib02_connection_unknown_version_defect_is_not_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import nodesemver
+
+    original = AttributeError("version defect")
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise original
+
+    with server(response()) as (url, _):
+        with monkeypatch.context() as patch:
+            patch.setattr(nodesemver, "valid", broken)
+            with pytest.raises(AttributeError) as caught:
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+            assert caught.value is original
+        with Runtime(LocalSettings(server_url=url)).connect():
+            pass

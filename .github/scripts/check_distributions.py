@@ -11,7 +11,13 @@ from email import message_from_bytes
 from pathlib import Path
 
 PACKAGE = "appium_connect_agent"
-DEPENDENCIES = {"httpx==0.28.1", "anyio==4.15.1", "httpcore==1.0.9"}
+DEPENDENCIES = {
+    "httpx==0.28.1",
+    "anyio==4.15.1",
+    "httpcore==1.0.9",
+    "node-semver==0.9.1",
+}
+STUB = "typings/nodesemver/__init__.pyi"
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = """
 import sys
@@ -32,7 +38,7 @@ assert metadata['Name'] == 'appium-connect-agent'
 assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
 assert set(metadata.get_all('Requires-Dist')) == {
-    'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9'
+    'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1'
 }
 if sys.platform == 'darwin':
     from appium_connect_agent.runtime import LocalSettings as RuntimeSettings
@@ -110,7 +116,8 @@ def main() -> None:
                 names = [m.name for m in members if m.isfile()]
                 source_names = {f"{stem}/src/{name}" for name in expected}
                 metadata_names = {
-                    f"{stem}/{n}" for n in ("PKG-INFO", "README.md", "pyproject.toml")
+                    f"{stem}/{n}"
+                    for n in ("PKG-INFO", "README.md", "pyproject.toml", STUB)
                 }
                 allowed = (
                     source_names | metadata_names | {f"{stem}/pyproject.toml.orig"}
@@ -133,6 +140,10 @@ def main() -> None:
                         f"Sdist source differs: {name}",
                     )
                 metadata = contents[f"{stem}/PKG-INFO"]
+                require(
+                    contents[f"{stem}/{STUB}"] == (ROOT / STUB).read_bytes(),
+                    "Sdist local type declaration differs",
+                )
         parsed = message_from_bytes(metadata)
         require(parsed["Name"] == project["name"], "Incorrect distribution name")
         require(parsed["Version"] == version, "Incorrect version")

@@ -10,7 +10,7 @@
 ## RT-LIB-01 / RT-LIB-02 库迁移
 
 - 当前授权：本会话用户显式调用 $spec-driven，采纳 Runtime 库迁移设计并要求 RT-LIB-01 → RT-LIB-02 顺序；随后对已展示的根/Runtime SPEC delta 回复“确认”，再明确“那我们使用独立的worktree 进行开发？”。沿用原库版本及 G1–G6，不自动提交/推送或扩大服务设备操作。
-- 当前状态：**RT-LIB-01 Done（EXT-F1 已关闭）；RT-LIB-02 awaiting-spec-confirmation**。外部审查问题经本次修复、473项验证及新独立复审通过；第二步候选与未实现状态保持。
+- 当前状态：**RT-LIB-01 / RT-LIB-02 均 Done，本批库迁移验收通过**。第二步完整实现及F1修复经独审通过；534项整体回归、质量/分发及限定真实GET链路通过，不表示Runtime/M01 Android整体完成。
 - 本会话为 Runtime 根协调 session /root；唯一工作区 /Users/qunmi/.codex/worktrees/runtime-rt-lib-01/Appium_connect_agent，任务分支 codex/runtime-rt-lib-01，起点 75c1737d95cacad2a8a104337fa988bed48aeb17。用户本轮独立 worktree 指示适用于跨模块并行；Runtime 内仍一次一个 feature，不借此合入尚有验证缺口的流程分支或采用其自动提交/推送规则。
 - 原主工作区的 Configuration 改动不复制、不修改、不暂存；共享根 SPEC、依赖配置与分发脚本仅在本任务分支修改，后续集成需分别核对其他模块增量，不更新被占用的主分支引用。产品规模从固定起点累计新增+删除；目标350–800行、约1200行门槛，测试/文档另计，修复不以净增长抵消。
 - 设计原文固定 SHA-256 e26edd1de51a9676198495ddc1f41dd9ac6b9a3126499ece83ca628013070c3f；保留设计历史草案与访谈记录，本次最终采纳/实施状态以本节为准。RT-LIB-01 固定 httpx==0.28.1、anyio==4.15.1，无 extras，仅已批准 HTTP/受管桥接用途；node-semver 留待第二步。
@@ -53,6 +53,25 @@
 
 - 新独立上下文 /root/rtlib01_extf1_audit repair-only/pass：EXT-F1关闭，无确认直接回归。已读全3文件19447字节差异（SHA-256 26bc3b7b3f14d554361fafa4a826b3eb4f627a69ea21dc7c5bb73c6a3c207f7e），70文件/快照及包身份核验；独立纯内存重验原反例和18组阶段/错误、4组优先级，验证主对象与独立清理信息。review/manifest.json SHA-256 be35d725a87d42be23194c6b326d9abca4705f7087773984c53f1efedaa4c555。TL再次核验全部已审文件一致后判定本修复Done；本文随后仅同步验收状态，旧hash不冒称覆盖后续台账。
 - 最终实际修复规模产品40、测试262、审时文档13行；任务包文档14是已核实笔误。保留473测试、质量/分发及限定真实链路证据。真实命令补证为从原工具调用事后恢复，完整继承环境与时间戳未保存，不虚构。此次未提交/推送，RT-LIB-02 SPEC及源码未修改。
+
+## RT-LIB-02 限定实现
+
+- 用户先说明“HTTPX 这个部分通过了，我们来进行下一项开发吧”，再对明确展示的第二步根/Runtime SPEC回复“确认”。沿原$spec-driven授权，固定node-semver==0.9.1（无extras）、G5输入/范围与最小类型声明边界；不重复选型，HTTPX前序功能不重新设计。
+- 实施起点为独立Runtime worktree / codex/runtime-rt-lib-01 / 3ef4e954b5461efb493218349bf781303089ea40，初始干净，前序代码/提交保留。两份SPEC仅移除已审候选待确认标签，完整3364字节/2diff独立重建一致。暂存/提交/推送未授权自动执行。
+- 资格52项及原始代码/发行物/类型/命令证据已重新核验，未重跑未变资格；工程新probe写读31字节SHA-256 417bb19e065d9d3d0b3873dcadea63e73ff44d2e9f439bd817aed07b308afb0f，新产品独审上下文沿只读资格角色保持独立并核验70文件基线与完整差异，产品首审须full。Tech Lead据此判定Ready。
+- 任务证据目录 /var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/aca-rtlib02-impl-u_jk04w6；工程唯一所有权为_semver/_connection/_inspection/必要_diagnostics、诊断/连接测试、pyproject/lock、分发验证与typings/nodesemver最小stub；Tech Lead独占SPEC/README/台账。产品150–450行目标、约1200行门槛从3ef4e95累计新增+删除，测试/文档另计。
+- 本轮验证公开diagnose及connect共用版本/范围、FD-01非法为unknown且已知fail优先、原build保留、未知异常原对象传播、输入边界/规范化/证据脱敏和原静态副作用守卫；质量/类型/依赖边界、构建与隔离安装按已有入口。受控资源沿G6.1，真实4723每轮最多两次GET仅TL在冻结后执行；不执行Node/npm、Session或设备、不扩大模块/平台。
+
+- RT-LIB-02工程冻结后验证：510项定向、522项完整测试、Ruff、strict mypy、import-linter、构建和wheel/sdist四项直接依赖隔离安装/uv pip check通过；sdist含准确最小本地stub，wheel不发布第三方类型包。锁只新增已批准node-semver0.9.1，原依赖版本保持。前序HTTPX传输/协调/错误实现未改。
+- TL本轮G6.2实际只对127.0.0.1:4723执行两次GET/status，均Appium3.7.0/external/declared_compatible，socket/portal在active前结束、退出URL视图失效且服务保留；命令/退出码/结果保存在本任务real/。无Session/组件/设备调用。当前待RT-LIB-02独立full产品审查，不据测试通过自报Done。
+
+- RT-LIB-02首次full独审发现1项RTLIB02-F1/P2：diagnose整体except把nodesemver.valid/valid_range未知KeyError误映射coordination_unavailable并丢原对象；现有AttributeError用例未覆盖。审查独立核验71文件/44证据/双包及完整差异，review-1/manifest SHA-256 7650fb2f5ca6bb266b9022eb40ac1e635a3f1ac2f71889f2dfc2e9527c937b3c；其余未发现确认缺陷。TL按共享版本未知异常传播/协调错误来源契约判no-delta，派发仅_diagnostics及诊断测试的修复1，保持SPEC/依赖/HTTP/锁实现不变；后续仅F1与修复直接回归repair-only，不提前验收。
+
+- RTLIB02-F1修复1验证：两个库入口的KeyError/OSError原对象传播与协调释放回归red10 failed/2 passed，green12 passed；完整534 passed，Ruff/strict mypy/import-linter/构建及隔离分发验证通过。仅_diagnostics将协调捕获限定至取锁/正常释锁；主体异常原样进入清理、不再误分类。旧coordination测试全局os.close注入误打driver读取，TL实际读堆栈及夹具后仅授权修正一个旧用例，隔离driver并确认6锁描述符关闭，保持原coordination_unavailable断言；生产_coordination未变。
+- 修复冻结后TL在repair-1-real目录执行原同一G6.2脚本，仅两次GET/status通过；服务3.7.0/external保留、socket/portal在active前结束。原测试失败与前次真实日志均保留，当前待原独审repair-only，未宣称02或本批完成。
+
+- RTLIB02-F1原独审repair-only/pass，问题关闭，无确认直接回归；独立核验4修复增量、71文件/快照、48验证记录与双包，并纯内存复验8原反例及21异常来源/清理场景。任务SHA-256 417e6cc3cc878af1d4e49460374d67bf4ba2619d16fbf266fcb9ef8aeb3bbb61，审查manifest906e0ac60c91120619fe38cde4f322ef26c65d36a938292abd32b4c88247f81a。TL再次核验已审文件和包身份未变，判定RT-LIB-02 Done；累计产品193行（含最小stub）、测试311行、工程39行。本条仅同步审后验收，不以旧哈希声明覆盖新增记录。
+- 本批RT-LIB-01→02顺序交付完成，534项完整Runtime/Contracts/包测试作为两步合并回归，原有质量/import边界/构建及四直接依赖隔离安装通过，获准真实GET-only链路通过。未提交/推送第二步成果；Windows CI未本地执行，无Android Session/M01或后续Runtime平台/服务能力验收承诺。
 
 ## 状态与范围的读法
 
