@@ -3,7 +3,7 @@
 ## 状态、授权与范围
 
 - 日期：2026-10-22。用户已逐项确认本设计的决策，最终显式授权：`/spec-driven 按本次访谈确认的方案，在已创建的独立 worktree 中落实模块并行开发模式，支持 Codex 和 GitHub Copilot，兼容单 session 串行开发，完成设计、独立审查、实现及适用验证。`
-- 本文整理访谈已确认事项；初始状态为待独立设计审查。非实质性澄清不重复询问，改变已确认决策则返回用户。实现与演练证据见 [交付记录](../../tasks/module-workflow-delivery.md)。
+- 本文整理访谈已确认事项；独立设计审查已通过，固定身份见交付记录。非实质性澄清不重复询问，改变已确认决策则返回用户。实现与演练证据见 [交付记录](../../tasks/module-workflow-delivery.md)。
 - 唯一修改工作区：`/Users/qunmi/.codex/worktrees/module-parallel-workflow/Appium_connect_agent`；分支 `codex/module-parallel-workflow`；起点 `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始干净。主工作区有其他 session 的 Runtime 未提交工作，禁止修改、暂存、复制、提交或切换它的分支。
 - FeatureID / TaskID：`FLOW-01`。纯流程、技能及工具适配，不新增产品模块、运行依赖或后台调度。产品平台/driver/设备链路不适用；实际宿主为 macOS，工具目标为 Codex 与 GitHub Copilot。
 - SPEC 判定：流程类 **no-delta**。根 SPEC 的 Project Specification Ownership 将流程所有权交给 AGENTS 与技能；本次只修正全项目串行限制和未提交差异审查流程，不改变任何根/模块产品契约。六份 SPEC 固定哈希另存任务证据。
