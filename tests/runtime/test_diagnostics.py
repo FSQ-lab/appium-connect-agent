@@ -4,7 +4,7 @@ import platform
 import socket
 import subprocess
 import time
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -17,6 +17,7 @@ from appium_connect_agent.runtime import (
     OperationCancelledError,
     OperationControl,
     OperationTimeoutError,
+    ProgressEvent,
     Runtime,
     _coordination,
 )
@@ -141,6 +142,137 @@ def test_declarations_match_without_unobservable_constraints(tmp_path: Path) -> 
     del data["engines"]["node"]
     metadata.write_text(json.dumps(data))
     assert checks(Runtime(config))["declared_compatibility"].status == "pass"
+
+
+def declaration_layout(tmp_path: Path) -> tuple[LocalSettings, dict[str, Path]]:
+    config = settings(tmp_path / "components")
+    assert config.appium_executable is not None and config.appium_home is not None
+    metadata = {
+        "appium": config.appium_executable.parent.parent / "package.json",
+        "driver": config.appium_home
+        / "node_modules/appium-uiautomator2-driver/package.json",
+    }
+    data = json.loads(metadata["appium"].read_text())
+    del data["engines"]["node"]
+    metadata["appium"].write_text(json.dumps(data))
+    return config, metadata
+
+
+_INVALID_CONTAINERS: tuple[object, ...] = (None, [], True, 42, "TOP-SECRET")
+_INVALID_MEMBERS: tuple[object, ...] = (*_INVALID_CONTAINERS, {})
+
+
+@pytest.mark.parametrize("incompatible", [False, True])
+@pytest.mark.parametrize(
+    "package,field,key,value",
+    [
+        (package, field, key, value)
+        for package, field, key in (
+            ("appium", "engines", None),
+            ("driver", "engines", None),
+            ("appium", "engines", "node"),
+            ("driver", "engines", "node"),
+            ("appium", "engines", "npm"),
+            ("driver", "engines", "npm"),
+            ("appium", "peerDependencies", None),
+            ("driver", "peerDependencies", None),
+            ("driver", "peerDependencies", "appium"),
+        )
+        for value in (_INVALID_CONTAINERS if key is None else _INVALID_MEMBERS)
+    ],
+)
+def test_malformed_declarations(
+    tmp_path: Path,
+    package: str,
+    field: str,
+    key: str | None,
+    value: object,
+    incompatible: bool,
+) -> None:
+    config, metadata = declaration_layout(tmp_path)
+    data = json.loads(metadata[package].read_text())
+    if key is None:
+        data[field] = value
+    else:
+        data.setdefault(field, {})[key] = value
+    data["private"] = "TOP-SECRET"
+    metadata[package].write_text(json.dumps(data))
+    if incompatible:
+        other = metadata["driver" if package == "appium" else "appium"]
+        data = json.loads(other.read_text())
+        data["engines"] = {"npm": "<10.0.0"}
+        other.write_text(json.dumps(data))
+
+    result = checks(Runtime(config))
+    assert result["appium_installation"].status == "pass"
+    assert result["driver_installation"].status == "pass"
+    check = result["declared_compatibility"]
+    assert check.status == ("fail" if incompatible else "unknown")
+    assert check.reason_code == (
+        "declared_incompatible" if incompatible else "compatibility_unknown"
+    )
+    assert "TOP-SECRET" not in repr(result)
+    assert result["qualified_support"].status == "unknown"
+
+
+@pytest.mark.parametrize("package", ["appium", "driver"])
+@pytest.mark.parametrize("mode", ["absent", "empty", "matching", "unrelated"])
+def test_declaration_defaults_and_matching(
+    tmp_path: Path, package: str, mode: str
+) -> None:
+    config, metadata = declaration_layout(tmp_path)
+    data = json.loads(metadata[package].read_text())
+    for field in ("engines", "peerDependencies"):
+        data.pop(field, None)
+    if mode == "empty":
+        data.update(engines={}, peerDependencies={})
+    elif mode == "matching":
+        data.update(engines={"npm": ">=10.0.0"}, peerDependencies={"appium": "^3.0.0"})
+    elif mode == "unrelated":
+        data.update(
+            engines={"private": "TOP-SECRET"},
+            peerDependencies={"private": "TOP-SECRET"},
+        )
+    metadata[package].write_text(json.dumps(data))
+    result = checks(Runtime(config))
+    check = result["declared_compatibility"]
+    assert check.status == "pass" and check.reason_code == "declarations_match"
+    assert "TOP-SECRET" not in repr(result)
+
+
+@pytest.mark.parametrize("incompatible", [False, True])
+@pytest.mark.parametrize(
+    "peer,expected",
+    [
+        ("^3.0.0 || >", "unknown"),
+        ("> || ^3.0.0", "unknown"),
+        ("^3.0.0 ||", "unknown"),
+        ("|| ^3.0.0", "unknown"),
+        ("^3.0.0 || || ^2.0.0", "unknown"),
+        ("^2.0.0 || ^3.0.0", "pass"),
+        ("^1.0.0 || ^2.0.0", "fail"),
+    ],
+)
+def test_or_declaration_report(
+    tmp_path: Path, peer: str, expected: str, incompatible: bool
+) -> None:
+    config, metadata = declaration_layout(tmp_path)
+    data = json.loads(metadata["driver"].read_text())
+    data["peerDependencies"] = {"appium": peer}
+    metadata["driver"].write_text(json.dumps(data))
+    if incompatible:
+        data = json.loads(metadata["appium"].read_text())
+        data["engines"]["npm"] = "<10.0.0"
+        metadata["appium"].write_text(json.dumps(data))
+    check = checks(Runtime(config))["declared_compatibility"]
+    expected_status = "fail" if incompatible else expected
+    assert check.status == expected_status
+    reasons = {
+        "pass": "declarations_match",
+        "unknown": "compatibility_unknown",
+        "fail": "declared_incompatible",
+    }
+    assert check.reason_code == reasons[expected_status]
 
 
 def test_explicit_missing_does_not_fallback(
@@ -283,17 +415,87 @@ def test_bounded_reader_and_partial_read_failures(
     assert error.value.reason == "file_unreadable" and "SECRET" not in str(error.value)
 
 
-def test_java_sdk_explicit_layout(tmp_path: Path) -> None:
-    java, sdk = tmp_path / "jdk", tmp_path / "sdk"
+@pytest.mark.parametrize("root_form", ["direct", "parent", "symlink"])
+def test_java_sdk_explicit_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_form: str
+) -> None:
+    component = tmp_path / "token=SECRET"
+    java, sdk = component / "jdk", component / "sdk"
     (java / "bin").mkdir(parents=True)
     (java / "release").write_text('JAVA_VERSION="21"\nSECRET="hidden"')
     (java / "bin/java").write_text("do not execute")
     (sdk / "platform-tools").mkdir(parents=True)
     (sdk / "platform-tools/adb").write_text("do not execute")
     (sdk / "platform-tools/source.properties").write_text("Pkg.Revision=1")
-    result = checks(Runtime(LocalSettings(java_home=java, android_sdk_root=sdk)))
+    java_input, sdk_input = java, sdk
+    if root_form == "parent":
+        (java / "child").mkdir()
+        (sdk / "child").mkdir()
+        java_input, sdk_input = java / "child/..", sdk / "child/.."
+    elif root_form == "symlink":
+        java_input, sdk_input = tmp_path / "java-alias", tmp_path / "sdk-alias"
+        java_input.symlink_to(java, target_is_directory=True)
+        sdk_input.symlink_to(sdk, target_is_directory=True)
+    before = snapshot(component)
+    config = LocalSettings(java_home=java_input, android_sdk_root=sdk_input)
+    result = checks(Runtime(config))
     assert result["java_layout"].status == result["android_sdk_layout"].status == "pass"
-    assert "hidden" not in repr(result)
+    for check_id, root in (("java_layout", java), ("android_sdk_layout", sdk)):
+        expected = str(root.resolve(strict=True)).replace(
+            "token=SECRET", "token=[redacted]"
+        )
+        assert result[check_id].evidence == (
+            f"path={expected}",
+            "execution=not_checked",
+        )
+    assert snapshot(component) == before
+    assert "hidden" not in repr(result) and "SECRET" not in repr(result)
+    monkeypatch.setenv("JAVA_HOME", str(java))
+    monkeypatch.setenv("ANDROID_HOME", str(sdk))
+    monkeypatch.setenv("ANDROID_SDK_ROOT", str(sdk))
+    missing = tmp_path / "missing"
+    result = checks(
+        Runtime(replace(config, java_home=missing, android_sdk_root=missing))
+    )
+    for check_id in ("java_layout", "android_sdk_layout"):
+        assert result[check_id].status == "fail"
+        assert result[check_id].reason_code == "missing"
+    assert snapshot(component) == before
+
+
+def test_callback_cancellation_propagates_unchanged_and_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = settings(tmp_path / "components")
+    partial_report = replace(Runtime(config).diagnose(), checks=())
+    cancellation = OperationCancelledError(
+        "callback_cancelled", partial_report.operation_id, partial_report
+    )
+    events: list[ProgressEvent] = []
+
+    def cancel_once(event: ProgressEvent) -> None:
+        events.append(event)
+        if len(events) == 1:
+            raise cancellation
+
+    def unexpected_check(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("diagnosis continued after callback cancellation")
+
+    runtime = Runtime(config, on_progress=cancel_once)
+    with monkeypatch.context() as patch:
+        patch.setattr(Reader, "candidate", unexpected_check)
+        with pytest.raises(OperationCancelledError) as caught:
+            runtime.diagnose()
+    assert caught.value is cancellation
+    assert caught.value.code == "callback_cancelled"
+    assert caught.value.operation_id == partial_report.operation_id
+    assert caught.value.partial_report is partial_report
+    assert partial_report.checks == () and partial_report.observer_errors == ()
+    assert len(events) == 1 and events[0].check_id == "host"
+    recovered = runtime.diagnose()
+    assert recovered.checks and recovered.observer_errors == ()
+    assert len(events) == 1 + len(recovered.checks)
+    assert Runtime(config).diagnose().checks
 
 
 def test_cancel_timeout_observer_and_release(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -372,6 +574,14 @@ def test_control_validation(value: Any) -> None:
         ("2.1.0", "~2.0.0", False),
         ("3.7.0", ">=3.0.0 <4.0.0", True),
         ("3.7.0", "^2.0.0 || ^3.0.0", True),
+        ("3.7.0", "^1.0.0 || ^2.0.0", False),
+        ("3.7.0", "^3.0.0 || >", None),
+        ("3.7.0", "> || ^3.0.0", None),
+        ("3.7.0", "^3.0.0 ||", None),
+        ("3.7.0", "|| ^3.0.0", None),
+        ("3.7.0", "^3.0.0 || || ^2.0.0", None),
+        ("3.7.0", "^2.0.0 || >", None),
+        ("3.7.0", "||", None),
         ("3.7.0", "3.x", None),
         ("3.7.0", "^3.0.0-rc.2", None),
         ("3.7.0-rc.2", "^3.0.0", None),

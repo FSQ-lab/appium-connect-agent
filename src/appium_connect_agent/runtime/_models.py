@@ -77,3 +77,15 @@ class OperationTimeoutError(RuntimeOperationError):
 
 class OperationCancelledError(RuntimeOperationError):
     """The caller requested cancellation."""
+
+
+class ServiceConnectionError(RuntimeOperationError):
+    """The explicitly configured service could not be reused."""
+
+
+class UnsupportedVersionError(RuntimeOperationError):
+    """The observed service violates the confirmed major-version policy."""
+
+
+class InvalidStateError(RuntimeOperationError):
+    """A consumed scope or closed connection view was used."""

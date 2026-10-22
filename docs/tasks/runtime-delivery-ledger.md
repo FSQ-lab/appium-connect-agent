@@ -2,10 +2,10 @@
 
 本页是 Runtime 的唯一当前进度来源。设计维护需求、方案及 feature 拆分，SPEC 维护已确认契约；代码、测试存在和历史聊天中的“完成”都不能单独替代验收证据。
 
-- 更新日期：2026-10-21。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
-- 本次核对基线：`master` / `4a3640eef5be3704874b22f0d1a1a91015258287`，初始工作区干净。
+- 更新日期：2026-10-22。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
+- 本轮验收恢复基线：`master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始工作区干净；台账初建时的核对基线为 `4a3640eef5be3704874b22f0d1a1a91015258287`。
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
-- 当前结论：**RT-LOCAL-01 静态能力已实现，完整实现验收证据待补；RT-LOCAL-02 尚未实现、未 Ready；Runtime 首批尚未整体验收。**
+- 当前结论：**RT-LOCAL-01 静态诊断和 RT-LOCAL-02 已有本地外部 Appium 连接均已在各自范围内验收。02 的 full 审查四项问题已修复并通过一轮 repair-only，397 项测试及真实 GET-only 链路通过，Tech Lead 判定 RT-LOCAL-02 Done。Runtime 首批及 M01 仍未整体验收，未推进 03–06。**
 
 ## 状态与范围的读法
 
@@ -14,6 +14,7 @@
 | 未实现 | 仅有需求或设计，不能按已提供的能力使用 |
 | 已实现、待验证 | 有实现，适用验证尚未形成通过记录 |
 | 已实现、待补证据 | 可核对实现及部分验证，但完整验收身份或证据缺失；不能推定 Done，也不等于已发现实现缺陷 |
+| 已实现、待修复及复审 | 已有独立审查确认的契约偏差；修复及限定复审通过前不能判定已验收 |
 | 已验收 | 指定平台和 feature 范围内的验证、独立实现审查及必要真实调用均有可追溯依据；不代表整个模块或其他平台通过 |
 | 当前承诺缺口 | 当前 feature 已确认的范围内尚未满足的事项，阻塞相应验收 |
 | 后续已规划 / 后续范围 | 分别指已分配到后续 feature，或尚未展开、未构成本批交付承诺的范围 |
@@ -26,7 +27,7 @@
 
 | 宿主 / 自动化目标 / driver | 当前范围与状态 | 后续归属 |
 | --- | --- | --- |
-| macOS / Android / UiAutomator2 | 本批唯一产品组合；静态诊断已实现、验收证据待补；运行链路未验收 | RT-LOCAL-01–06 |
+| macOS / Android / UiAutomator2 | 本批唯一产品组合；01 静态诊断及 02 已有外部连接已验收；自管/组件链路、设备资格与 M01 模块整体未验收 | RT-LOCAL-01–06 |
 | macOS / iOS / XCUITest | 后续范围，未实现；包括 Xcode/iOS 工具链检查，不能宣称已支持 | 后续平台批次，顺序和资源由用户确认 |
 | macOS / macOS 应用 / Mac2 | 后续范围，未实现；区别于“在 macOS 上运行本库” | 后续平台批次 |
 | Windows、Linux 宿主 / 可行目标组合 | 后续范围，未实现或验证 Runtime；Windows 打包检查不等于 Runtime 支持 | 后续宿主适配批次 |
@@ -38,8 +39,8 @@
 
 | FeatureID | 已做与当前状态 | 未做及明确非目标 | 依赖、下一门槛与规模 |
 | --- | --- | --- | --- |
-| RT-LOCAL-01 | 同步静态报告、设置、操作控制和协调锁已实现；**待补完整实现验收证据**。见能力分项及 E01–E07 | 不执行组件命令/HTTP，不安装、启停或创建 Session；这些不是该静态 feature 的遗漏实现 | 工程基础；先处理 G01。设计产品预算 850–1100 行；已核对提交增量见 E01 |
-| RT-LOCAL-02 | **未实现、未 Ready**；目前没有公开连接方法 | 待做：同步范围复用已启动本地 Server、返回 external 连接、退出保留 Server；不做自管启动、组件修改或远程 | 依赖 01 验收及 G02/G03；500–800 行 |
+| RT-LOCAL-01 | 同步静态报告、设置、操作控制和协调锁**已验收**；full 后两轮 repair-only/pass，F01–F03/Q01 均关闭。见能力分项及 E01–E08 | 不执行组件命令/HTTP，不安装、启停或创建 Session；这些不是该静态 feature 的遗漏实现 | 工程基础依赖已满足，G01 已关闭。产品原 767 行加两轮修复保守累计 810 行；测试 967 行，文档另计，见 E08 |
+| RT-LOCAL-02 | **已验收 / Done**；397 项测试、真实公开连接范围及服务保留通过，full 后四项修复经 repair-only/pass 全部关闭，见 E10 | 不做自管启动、组件修改、远程或 Session 管理；连接检查不保证设备/Session 可用 | 01 已验收，G02/G03 已关闭；产品保守累计 575 行、测试 1157 行，文档单列，产品目标 500–800 行 |
 | RT-LOCAL-03 | **未实现** | 待做：显式按精确组合准备独立 Appium/UiAutomator2 安装并复查；不更新/卸载已有组件、不隐式安装 | 依赖 02、G04/G05；900–1150 行 |
 | RT-LOCAL-04 | **未实现** | 待做：自管启动及就绪、占用保护、退出清理和失败恢复；不先交付无占用保护的启动路径、不共享多实例 | 依赖 03、G06；需真实 Android Session 验证；1000–1200 行，超预算先重拆 |
 | RT-LOCAL-05 | **未实现** | 待做：维护独立组件、为可识别已有环境补装缺失 driver、在用/未知空闲时拒绝；不迁移任意 npm 环境或升级已有组件 | 依赖 04；组件请求、权限及恢复行为仍须对应设计/SPEC gate；800–1100 行 |
@@ -47,7 +48,7 @@
 
 ### RT-LOCAL-01 能力分项
 
-这些分项表示核对到的实现，不单独宣称已完成全部验收；统一受 G01 约束。代码和现有产品测试入口见 E01/E02。
+这些分项说明已核对的静态实现及其边界；RT-LOCAL-01 的验收依据见 G01/E08，不单独证明服务、设备或后续 feature 已通过。代码和现有产品测试入口见 E01/E02。
 
 | 能力 ID | 已实现、可观察的行为 | 未覆盖与归属 |
 | --- | --- | --- |
@@ -63,7 +64,7 @@
 | RT01-C10 报告与边界 | operation_id、UTC 时间、固定目标、状态/原因/证据；有界读取、白名单提取、脱敏/截短；无总体 ready | 不返回整份元数据、不扫描全盘；不把未知输出成通过 |
 | RT01-C11 操作控制 | 默认 10 秒、有限正超时、跨线程取消、进度、观察者失败记录；已定义执行异常附部分报告 | 不承诺同步并发业务调用；普通诊断发现留报告，不与执行异常混淆 |
 | RT01-C12 协调资源 | 当前 macOS 登录账号范围的固定 flock/进程内互斥、锁权限和释放 | 不承诺跨账号互斥，也不能阻止外部手动命令；不是进程管理能力 |
-| RT01-C13 Server | 当前只返回 `service=unknown/not_checked` | 已规划由 02 承接已有本地服务检查；是否改变 diagnose 的静态契约须在 02 设计确认，不能直接改成联网 |
+| RT01-C13 Server | 静态 diagnose 仍只返回 `service=unknown/not_checked` | 02 已验收独立 connect 检查已有本地服务；不把 diagnose 改成联网 |
 | RT01-C14 设备 | 当前只返回 `device=unknown/not_checked` | 设备发现、就绪和 Session 操作归 Automation 或直接调用方；不因没有设备判 Runtime 服务失败 |
 | RT01-C15 实测支持 | 当前只返回 `qualified_support=unknown/not_qualified` | 精确组合资格与真实 Session 证据未有；由 G04/G06 和 M01 承接，不建立虚构支持条目 |
 | RT01-C16 组件与进程管理 | 当前无安装、维护、连接、自管启动或启停方法的占位实现 | 已规划行为分别见 02–06；不属于静态诊断验收范围 |
@@ -80,9 +81,9 @@ Runtime 不为此提前实现设备操作；Session 脚本是跨现有接缝的�
 
 | ID | 分类与事项 | 承接点、关闭条件或决定时点 |
 | --- | --- | --- |
-| G01 | 当前验收证据缺口：未恢复 RT-LOCAL-01 原始完整实现独审的范围、差异身份与结论 | Tech Lead 找回并核对原证据；找不回则在相应授权下安排针对固定实现的新独立审查及必要验证。关闭前不推定 01 Done、不宣告 02 Ready；本次台账审查不替代它 |
-| G02 | 02 实施前待决：外部兼容主版本、端点/loopback/base path 字段、连接结果及错误契约 | 已提出“首批已知版本仅接受 Appium 3”的建议，但用户尚未确认，不能作为当前契约；未知版本沿用上位设计未验证策略，细节经设计与 SPEC gate 确认 |
-| G03 | 02 真实调用资源待确认：获准的已有本地 Appium 地址及受控 HTTP 验证方案 | 用户确认实际资源与调用权限；本次未探测端口、联网或启动服务，不推断机器没有 Server |
+| G01 | **已关闭**：重新取得完整实现 full 独审；F01–F03 和用户确认的 Q01 均修复并通过两轮 repair-only，见 E08 | Tech Lead 已核对验证、固定差异与独立结论，判定 RT-LOCAL-01 静态 feature Done；不代表 02 Ready 或模块整体验收 |
+| G02 | **设计/契约 gate 已关闭**：独立设计审查通过，用户于 2026-10-22 10:39 在 Q1–Q17 及 Session 职责澄清后最终确认，根/Runtime/Contracts 已转为正式契约 | 保留已确认的主版本、显式 HTTP loopback URL、范围/错误/报告和单次检查语义；限制只针对 RT-LOCAL-02。契约确认不表示实现验收通过 |
+| G03 | **资源/权限 gate 已关闭**：受控临时 HTTP/隔离锁测试及获准真实地址已实际验证，C10 两次公开范围进入/退出及服务保留通过，full 加一轮修复复审通过，见 E10 | 不得借此创建 Session、启停真实 Appium、探测其他地址或操作设备。真实连接通过不等于 M01 或 Runtime 整体验收 |
 | G04 | 03/04 前置：精确 Appium/driver 组合资格未验证 | 3.7.0/8.7.0 只是既有候选，不是默认支持；Node/npm/JDK/SDK 与客户端约束按获准资格验证固定 |
 | G05 | 03 前置：统一独立根、安装授权和修改/中断复查参数未固定 | 用户确认根目录、精确目标及权限；不得隐式安装或修改已有环境 |
 | G06 | 04 与 M01 前置：具体真机/模拟器、JDK/SDK、端口、客户端和操作数据授权待固定 | 按既定单平台验收准备资源与证据；设备条件缺失应报验证阻塞，不绕过它扩平台 |
@@ -93,7 +94,7 @@ Runtime 不为此提前实现设备操作；Session 脚本是跨现有接缝的�
 
 ## 可追溯证据登记
 
-本节把已核对的历史证据摘要、固定身份及适用范围保留在仓库，不依赖读者找到旧聊天。历史记录不是本次新执行；本次未跑产品测试或真实诊断。原始全量会话差异未复制到仓库，只有摘要/哈希的条目不得被扩大解释为未覆盖范围的验收。
+本节把已核对的证据摘要、固定身份及适用范围保留在仓库，不依赖读者找到旧聊天。E01–E07 是台账初建时的历史核对，不是本轮新执行；E08 记录本轮验收恢复的实际验证及独审。原始全量会话差异未复制到仓库，只有摘要/哈希的条目不得被扩大解释为未覆盖范围的验收。
 
 ### E01：已提交实现与规模
 
@@ -136,7 +137,86 @@ Runtime 不为此提前实现设备操作；Session 脚本是跨现有接缝的�
 
 - [近期设计](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)保留 `runtime_design_gate_review` 设计审查记录；**设计审查不等于实现审查**。
 - 本次在已检查的仓库设计、提交元数据及当前会话材料中，未找到可恢复的 RT-LOCAL-01 原始 full 实现审查报告和完整差异清单；不推断历史上从未审查，也不虚构结论。
-- 由 G01 跟踪找回或重新取得固定范围证据。不能用 E03 的测试通过、E05/E06 的工具审查或本台账文档审查补写“已验收”。
+- 原 G01 要求找回或重新取得固定范围证据；本轮已按 E08 重新取得完整独审、完成必要修复复审后关闭。原始历史报告仍未恢复，不能用 E03、E05/E06 或台账文档审查冒充它。
+
+### E08：RT-LOCAL-01 验收恢复与完整独审
+
+- 授权：用户于 2026-10-21 显式 `/spec-driven`，要求先关闭 G01，再完成 RT-LOCAL-02 的设计和 SPEC gate，经确认后实现；范围限 macOS / Android / UiAutomator2，不推进后续 feature。
+- TaskID：`RT-G01-RECOVERY-AUDIT-1`；基线为本页首节的 `ff6acb6`，产品/测试及 Runtime/Contracts SPEC 与原 `4ff079c` 实现一致。固定审查范围为原起点 `80d6594` 至 `4ff079c` 的全部 17 文件，加原范围至本轮基线的三文件补充差异。
+- 会话证据目录：`/Users/qunmi/.copilot/session-state/a1ee122a-47e8-4d3c-919f-acf113a3104d/files/rt-g01/`。`manifest.json` SHA-256 `88927fe434affd55aa1253ef063c5e78a37afac6bae56fd73e7c296006d7c8e1`；原完整差异 93123 字节/17 文件，SHA-256 `6766549f146b495f632963ea929f488d0b76c0d468669377bd3d04b71c3f97a5`；补充差异 12683 字节/3 文件，SHA-256 `0ebf73d9f805116d81b5124f099387a0bec38c0e158388116ba7b6dcefc34e5e`。当时工作区差异及未跟踪清单均为空。
+- 环境：macOS arm64 / CPython 3.11.16 / uv 0.12.5。本轮实际验证：`uv run --locked --no-sync pytest tests/runtime tests/contracts tests/test_package_import.py` 为 **83 passed**；`uv run --locked --no-sync ruff format --check .`、`uv run --locked --no-sync ruff check .`、`uv run --locked --no-sync mypy src tests`、`uv run --locked --no-sync lint-imports` 均通过。未重复同步未改变的依赖。
+- `uv build --offline` 与 `UV_OFFLINE=1 .venv/bin/python -B .github/scripts/check_distributions.py` 通过；wheel/sdist 内容、元数据、隔离安装及 `py.typed` 均核验。会话 `static_smoke.py` 的真实本机静态调用通过：三个读取文件的内容/大小/mtime 不变，拒绝进程及网络请求，仅允许既定协调资源写入；service/device/qualified_support 仍为 unknown。无真实服务、设备或 Session 调用，不构成就绪或精确组合支持。
+- 新独立上下文 `rt-g01-independent-audit`，agent ID `141a7407-b710-4163-a576-41148d280d5e`：已完整读取并核对全部 17 文件及补充差异，`audit_mode=full`、`status=findings`。报告 `audit-full.txt` SHA-256 `13ccc87fd81fad3c5d93814bdb937a816803301c30d407726e0dc73703aead7a`。不以此前 83 项测试通过覆盖本轮新发现。
+
+| 问题 | 契约偏差与修复验收 | 当前处理 |
+| --- | --- | --- |
+| F01 / P2 | 损坏/null 的 engine/peer 声明被当作缺省，可能错误报告声明匹配；须区分缺省与不可解析，保留独立已知不兼容的 fail 优先级 | `RT-G01-REPAIR-AUDIT-1`：repair-only/pass，关闭 |
+| F02 / P2 | OR 范围含不可解析分支时，另一匹配分支仍返回 True；完整声明不能可靠解析应为 unknown，无须扩大 semver 语法 | 同上 |
+| F03 / P3 | Java/SDK 成功证据采用原始根路径；应返回规范化路径，并以实际临时布局覆盖 `..` 与符号链接别名 | 同上 |
+| Q01 / 已关闭 | 用户于 2026-10-21 15:27 明确认可：回调抛出的 `OperationCancelledError` 按取消处理并传播，终止诊断且释放锁；普通回调错误继续，KeyboardInterrupt 保持传播 | `RT-G01-Q01-AUDIT-2`：repair-only/pass；216 项测试通过 |
+
+- SPEC 判定：验收记录维护为流程类 no-delta；F01–F03 为恢复 Runtime SPEC 的“信息不足/不可可靠解析为 unknown”和“规范化路径”契约的缺陷修复 no-delta。不改支持范围、公共接口、依赖或验收标准。Tech Lead 负责台账；工程师仅负责三项相关 Runtime 私有实现文件及既有诊断测试。
+- `RT-G01-REPAIR-1` 工程师交付为 pending-review：三项私有实现的新增/删除合计 41 行，测试 184 行，无文档或任务外修改；产品按原 767 行加本轮保守累计 808 行，测试保守累计 931 行，均不以净增长代替规模。修复增量完整差异为四文件 13682 字节，SHA-256 `afbd1cc4858308f5b6c2aa8b65ec2dec066d73cd6fc106c44ba4618c9d20c1c7`。
+- 回归 red 为 37 failed / 146 passed，补齐后 green 为 **215 passed**。工程师执行同一产品 pytest 入口、限定 Runtime/测试的 Ruff 格式及 lint、`mypy src tests` 均通过。Tech Lead 另重验生产 import-linter、修复后的受保护真实静态调用、构建与既有 wheel/sdist 隔离安装，均通过；新日志以 `repair-` 前缀单列，未覆盖初始审查证据。
+- 首轮修复复审 `RT-G01-REPAIR-AUDIT-1`：原独立上下文仅阅读四文件修复及本页当时的进度增量，`audit_mode=repair-only`、`status=pass`，F01–F03 全部关闭，无新确认问题；AST 核实 Q01 相关观察者、构造及 diagnose 方法未改。复审完整差异 27829 字节/5 文件，SHA-256 `6423d60170c3538bd5cab186d2177da702c3c8fb9444faae5b4f0d1fc95d3304`；复审清单 SHA-256 `e2f83221025d704f94bcf87d1b09d611616cbf61baf59c245123c256fb677729`。会话结构化结论 `audit-repair-result.json` SHA-256 `564ab6866d6d2e01a241ac6612dd5b39454660a2e12be165106dacc85fe0bc56`。
+- Tech Lead 已采纳 F01–F03 修复通过结论；本页随后仅同步事实性状态，复审差异哈希仍指当时固定快照，不用于冒称后续文档已审。首轮通过时因 Q01 待决而保持 G01 开放，后续处理与最终结论见下文；尚未提交或推送。
+- Q01 确认依据：用户在查阅异常与原 SPEC 原则后，于 2026-10-21 15:27 回复“认可。确认”。`RT-G01-Q01-REPAIR-2` 判定为恢复 Runtime SPEC Coordination And Errors 的 no-delta：只对回调取消异常原样传播，不新增取消入口、不泛化全部操作异常传播；普通回调错误和 Event/KeyboardInterrupt 既有行为保持。工程师只改诊断实现及既有产品测试，Tech Lead 单独维护本页。
+- Q01 起点固定在会话 `q01-before/manifest.json`，SHA-256 `ab8f2ebd6a17c7254abc71a980895665297f31f99e7feb3327b41f6194707201`，含 HEAD 总差异与五文件快照，区分已通过的首轮修复和本次增量。此时无新增用户改动、暂存或未跟踪文件；本次为第二轮限定修复，若复审仍有问题交用户决定，不自动追加第三轮。
+- Q01 工程师交付 pending-review：诊断实现新增 2 行，既有诊断测试新增 36 行；产品保守累计 **810 行**，测试保守累计 **967 行**，文档另计。Q01 两文件差异 3521 字节，SHA-256 `49fe3195dd0dd4f410fb1284c6934a604123edb99b7b6ca298997d63855edbb7`。回归 red 为 1 failed / 8 passed，相关 green 为 9 passed，完整产品入口为 **216 passed**；限定两文件 Ruff 格式/lint 与 `mypy src tests` 通过，`git diff --check` 通过。回归覆盖同一异常及字段/部分报告保留、取消不继续检查、单次回调、锁释放后同/新实例重试，以及既有普通回调/Event/KeyboardInterrupt 行为。
+- 本轮实际命令与结果在 `q01-red.log`、`q01-green.log`、`q01-suite.log`、`q01-format.log`、`q01-ruff.log`、`q01-mypy.log`；Tech Lead 对最终源码执行 `uv build --offline` 及 `UV_OFFLINE=1 .venv/bin/python -B .github/scripts/check_distributions.py`，构建、两类分发包内容/元数据/隔离安装及 `py.typed` 均通过，见 `q01-distributions.log`。不把此前构建产物当作本次最终源码验证；无真实服务、设备或 Session 调用。
+- 第二轮复审 `RT-G01-Q01-AUDIT-2`：原独立上下文仅审 Q01 及直接影响，`audit_mode=repair-only`、`status=pass`，无新确认问题或阻塞。已审 `q01-after/manifest.json` SHA-256 `2f05739d29c5c71a3704bbc91f857eff9d2a6b39a0ab60e7af65c83b110a5f89`；HEAD 完整差异 33001 字节/5 文件，SHA-256 `45a973f13c7ff97ae6a0425313290839bfd5d574a354b14691104d41639cb766`。会话结构化结论 `q01-audit-result.json` SHA-256 `2f17253d85fdf9cc45cbb4b6f6f5f9fa99c2b5696c496dc450ae1d3a6a2c1a59`。
+- **Tech Lead 最终判定：Q01/G01 关闭，RT-LOCAL-01 静态 feature Done。** 原授权、已确认设计/SPEC、真实静态读取、216 项产品测试、必要质量/打包验证和 full 加两轮限定独审均已核对；产品及测试身份与第二轮复审一致，后续只更新本页验收状态。没有把静态验收扩大为已支持真实服务/设备/精确组合；Runtime 模块及 M01 仍未验收。下一步仅确认 02 的 G02/G03、完成设计与 SPEC gate，未获得新增服务/设备操作权限。
+
+### E09：RT-LOCAL-02 设计阶段确认
+
+- 用户于 2026-10-21 15:43 回复“确认你的建议没有问题”，确认 G02 的外部本地服务主版本策略：已知 Appium 3 可按兼容主版本处理，已知其他主版本拒绝；服务身份及可复用状态已确认而版本不足时，标为未验证并允许调用方尝试 Session。未知不是通过，也不包括连接失败、明确不就绪或无法确认 Appium 身份的服务。
+- “外部本地”表示已由调用方在当前 Mac 启动、不归 Runtime 管理的服务，不是远程批次；Runtime 仅检查/复用，退出保留服务。本次没有授权 Runtime 启动、停止或安装组件。
+- 用户于 15:45 在“提供授权用于只读状态检查的完整地址”询问后提供 `http://127.0.0.1:4723/`。Tech Lead 实际仅发一次 `GET http://127.0.0.1:4723/status`，禁用代理/重定向，连接超时 2 秒、总超时 5 秒、body 上限 64 KiB。退出 0，HTTP 200，199 字节，约 18 ms；返回 ready=true、版本 3.7.0，响应 Date 为 `2026-10-21 07:46:18 GMT`。原始头/body/执行摘要在会话 `files/rt02-design/`；未启动/停止服务、探测其他端口或创建 Session。
+- 当前仍是设计阶段：[连接候选设计](../superpowers/specs/2026-10-21-runtime-local-connection-design.md)及根/Runtime/Contracts SPEC 的明确待确认节已写，尚无 02 产品代码。G02 的详细 Interface、G03 的受控临时 HTTP 测试方案仍待独立设计审查和用户确认；版本策略确认及资源读取不等于全文或 SPEC gate 已通过。
+- 记录基线仍为 `master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`；前序已验收的五项未提交改动及其固定身份完整保留。新增范围仅为本候选设计、三份待确认 SPEC 和台账；不以候选契约声称连接能力已提供。
+- 首轮独立设计审查 `RT02-DESIGN-REVIEW-1`（新 architect 上下文）已完整阅读设计及候选契约，结果 `audit-blocked`：DR01 要求闭合 active 内静态诊断回调再次重入的忙错误及外层锁保持；AB01 为该只读角色没有命令工具，未能独立重算哈希/字节数。不得把其文本覆盖冒充身份核验已通过。
+- Tech Lead 已同步修订设计、Runtime 候选 SPEC 和 C07，保留顺序诊断、明确业务操作重入报忙及普通观察者错误规则；另将残缺定长/chunk 消息和头/trailer 完整性明确纳入 C04/C05。无新公开 Interface 或产品实现；后续限定复核仅针对这些修订及 AB01，不重新开启前序实现审查。
+- 新独立 QA 上下文 `rt02-design-fix-identity-review`（agent `88ff718e-bc15-4638-90a1-18a62977fff1`）完成 `RT02-DESIGN-REPAIR-REVIEW-1`，`review_mode=repair-only-design-and-identity`、`status=pass`：DR01 设计修订及 HTTP 完整性验收一致，AB01 经 74 项记录级 hash/bytes/路径/差异头核验和内存重建快照关闭。没有重做全文或冒称 architect 独立执行过哈希工具。
+- 复核身份：`v1-manifest.json` SHA-256 `4e8ec322caf7cb73d380ab4749b404d3349d1621bcdc8d542c2741cdcf2dab2f`；`v2-manifest.json` SHA-256 `cc2974750f4057126566b8ffce806b1a6f9f62e39e15dcdb194974c04b9f03ee`；三文件修订差异 15093 字节，SHA-256 `7ea643ee85e66a81e5ea750b8379ea6a8cb712b497b32119949a5b1c3021ade7`；结构化结论 `v2-review-result.json` SHA-256 `ccb8187fd4924a2f53213f1bdc7c6deb7e4578b8b2605c1a5c2c4096c8f26b49`，均在会话 `files/rt02-design/`。QA 身份核验环境为 CPython 3.11.8，不冒充此前产品验证的 3.11.16。
+- 设计审查通过时曾等待用户全文批准；该阶段 02 产品增量为 0，未执行产品协议/重入/性能测试，待确认节不生效。审查后只同步状态/历史依据，旧哈希对应固定已审快照，不冒称覆盖后续记录。
+- 用户于 2026-10-21–22 逐项完成 Q1–Q17：显式地址/端口、当前 HTTP loopback/无认证、localhost 固定 IPv4、普通 base path、无代理/重定向/猜路径、单次检查、视图有效性、预算、外部所有权与测试权限均已确认。保留后续自管计划，但 RT-LOCAL-02 不管理外部进程，也不创建/操作/关闭设备 Session；未来其他 feature 的协议/路径范围另行设计。
+- 10 秒经 Appium 专家核对后获用户采纳：这是沿用既有 OperationControl 的可配置准备总预算，不是 Appium 强制值；与 Session/业务时长分离，同步回调不能硬实时强制打断。专家来源与具体边界见已确认设计。
+- 2026-10-22 10:37 用户表示其他约定均无问题，仅询问 Session 含义；在解释由调用方/Automation 负责、退出 Runtime 不等于 quit 后，10:39 最终回复“OK，那我觉得没有问题了”。完整设计、三份 SPEC 和验证范围据此确认，移除待确认标记；继承原 `/spec-driven`，不重复索要入口。
+- 开工只读复查 `GET /status` 为 200/ready=true/3.7.0，约 12 ms；证据在会话 `files/rt02-implementation/ready.*`。这是资源检查，不是产品 C10。当前固定实现起点及任务包，不进入 03–06，所有前序未提交改动保留。
+
+### E10：RT-LOCAL-02 限定实现任务
+
+- `RT02-IMPL-1`：沿原 `/spec-driven` 及最终用户确认进入实现。Tech Lead 核对独立设计审查、正式 SPEC、01 验收、实际资源、文件负责人和可执行验证后判定 Ready。正式契约获批准不表示功能已实现。
+- 起点为会话 `rt02-implementation/baseline/manifest.json`，SHA-256 `e18c28eb35274ef3fb8cd22260134cbc88fa7e4739b5c3b24d96d401962febb4`；含完整 HEAD 差异、未跟踪补充、前序已验收的源码/测试及文档快照。02 产品规模从此累计新增+删除，不能把 HEAD 中前序 01 改动算作02或把后续修改仅报净增长。
+- 固定正式依据 SHA-256：根 SPEC `2de22905bcf327bb04047e4dd39ec6cb2dafbcc49f0d38cd9328098231e5660a`；Runtime SPEC `096af4abdf9a4b8e7261ab7ca5edbada5b382a4e76f4d21794bd54e3084ba011`；Contracts SPEC `5517ff27d92f283c2aaa953fc34c3fb10f50397c9369e52e26766c596ed1959f`；本 feature 设计 `f3c80af60becdb1cd83de7a92762babf0357b676bbae305fe159db8f44b1af0d`。
+- 唯一实现负责人为 Appium 工程师，仅 Runtime/Contracts 必要源码与对应产品测试；Tech Lead 单独维护 SPEC/设计/README/台账、真实 C10 和集成/差异证据。禁止嵌套委派、自动提交推送、安装工具链或修改现有 Appium/设备。
+- 产品目标 500–800 行，含共享控制提取及导出变更；测试/文档单列，明显超目标先停止重拆。交付状态只能 pending-review；适用验证及新上下文 full 实现审查通过后才可 Done。
+- 已派发新 Appium 工程师上下文 `rt02-connection-engineer`（agent `c009487c-d559-46c3-b72d-35aa1434a513`）。Tech Lead 并行维护 README 的已确认用法与边界，不编辑该工程师负责的源码/测试；真实产品 C10 和构建在实现交接后串行验证。
+- 工程师交接 `pending-review`：产品新增 523/删除 10，合计 **533 行**；测试新增 **891 行**，无移动、生成或排除项，按固定 02 起点统计，不包含前序 01 修复。所有源码/测试在允许范围内，三份正式 SPEC 及设计身份未改；未自行操作真实服务/设备、提交或推送。
+- 实际执行：新连接/设置相关选择器 **150 passed**；`uv run --locked --no-sync pytest tests/runtime tests/contracts tests/test_package_import.py` 和 `uv run --locked --no-sync pytest` 均为 **341 passed**，原 216 项保留。源码/测试 Ruff 格式、lint、strict mypy（18 files）、生产 import-linter（1 kept/0 broken）及 diff-check 通过；完整日志见 `implementation-12-tests-final.log`、`implementation-13-quality-final.log`。
+- Tech Lead 以已安装包公开 Interface 执行 `real_acceptance.py`：在获准地址依次两次进入/退出同一 Runtime，实际发送且仅发送两条 `GET /status HTTP/1.1`；观测 Appium3/external/declared_compatible，HTTP socket 在进入主体前关闭，视图退出失效但历史报告可读。第二次进入证明第一次退出后服务仍可用及锁已释放；active 内真实静态 diagnose 不增加 HTTP。socket 发送和审计守卫禁止其他地址、DNS、请求体、Session/进程命令，结果为 pass，见 `real-acceptance.json`、`integration-real.log`。
+- 构建/既有 wheel 与 sdist 内容、元数据、隔离安装及 `py.typed` 检查通过；现有诊断工具的 help/JSON/无效超时本地冒烟退出分别为 0/0/2，JSON 固定形状及静态 service=unknown 保持，未为 tools 增测试。工具/打包消费者 strict mypy 通过；真实静态副作用守卫仍验证三个读取文件内容/大小/mtime 不变且无网络/组件命令。上述事实不替代即将进行的独立 full 审查。
+- 完整审查身份已固定：`review-1/manifest.json` SHA-256 `9c75ea1a69e790f0ba0f9d5823f759c5bb3b9de15f53d033c41dbfbdcc53b3b4`；HEAD 差异 78444 字节/13 文件，SHA-256 `99366263040f926d7413557f762a2586f73b7c14d3d1cb76c12186fd4d9b72f7`，另含六份未跟踪补充。02 完整增量 81845 字节/12 文件，SHA-256 `63e85557ee8e4cee9abc44fb21d62fdb9f1c292086b24164bc43ea435da20cd6`。`validation-manifest-final.json` SHA-256 `fb50cb7e07cb3c5bc6ea3c77358394725d26fff8aaa47aa7f3ee108e2bc0a768` 固定全部日志、真实结果和最终包身份。
+- 新独立 QA 上下文 `rt02-independent-implementation-audit`（agent `10bf8004-7634-4889-adf2-7b8a50f9317a`）完成 `RT02-FULL-AUDIT-1`，`audit_mode=full`、`status=findings`。已核对全部差异/未跟踪补充、35 项当前/快照文件、30 项 baseline 快照、33 项验证证据及包身份，完整审查本 feature 实现/测试，未重开前序已验收范围。报告 `audit-full-1.txt` SHA-256 `7c5c87f984db03b4a091c86d670ec47322d19d5e663e763883a32ea40cf15656`。
+
+| 问题 | 已确认偏差及修复验收 | 当前状态 |
+| --- | --- | --- |
+| RT02-F01 / P2 | 共享协调锁清理失败覆盖原取消/KeyboardInterrupt；须保留同一原异常并另附清理错误、继续关闭其余资源和释放互斥，同时覆盖独立诊断及连接取锁准备，无原异常仍明确报失败 | `RT02-REPAIR-AUDIT-1` repair-only/pass，关闭 |
+| RT02-F02 / P2 | chunk 扩展 quoted-string 将被转义引号误当结束，接收未闭合字符串；数据/终止 chunk 均须正确验证 quoted-pair，非法明确失败、合法扩展仍通过 | 同上 |
+| RT02-F03 / P2 | 重复 Content-Encoding 后值覆盖前值，gzip 后 identity 错误放行；须完整校验编码声明，顺序不能改变是否需要不支持编码的判断 | 同上 |
+| RT02-F04 / P2 | 额外的数字文本 16 字符限制把合法前导零长度误判过大；按实际数值及已确认字节预算安全判断，保留非法数字拒绝及真实超限 | 同上 |
+
+- 四项均由纯内存/OS Seam 及公开入口隔离复现，未请求真实服务；341 tests/C10 的通过记录不覆盖新反例。RT02-F01 是本批共享清理改动造成的静态回归，不因 01 原固定快照已验收而忽略；修复前不能借旧验收标签宣称当前合并源码全部通过。
+- Tech Lead 判定为恢复现有正式契约的 **no-delta 缺陷修复**，不改设计/SPEC/公共 Interface 或权限。工程师只负责协调/HTTP 实现及必要异常边界和对应回归；Tech Lead 只更新本页和证据。第一轮修复后只做 repair-only，不重开全文；最多两轮后仍有问题交用户决定。
+- 原测试、真实结果和包证据不覆盖或删除；已审 wheel/sdist 副本保存在 `review-1/verified-packages/`，哈希仍与原验证索引一致，后续修复验证使用独立日志/目录。
+- 第一轮工程师交付 `RT02-REPAIR-1/pending-review`：仅 `_coordination.py`、`_http.py` 及对应两个 Runtime 测试；本轮产品新增 32/删除 10，合计 **42 行**，保守累计 **533+42=575 行**；测试新增 **266 行**，累计 **1157 行**。没有修改正式契约/设计或其他禁写文件，没有移动/生成排除项。
+- 有效 red 为 **19 failed/33 passed**，最终新增回归 **56 passed**；完整选择器及 `uv run --locked --no-sync pytest` 均 **397 passed**，保留原 341 项；Ruff 格式/lint、strict mypy（18 files）、import-linter、diffcheck 通过。原始迭代/有效 red/最终结果分别保留在 `repair1-*.log`，不覆盖旧记录。
+- Tech Lead 在 `repair1-validation/` 的独立目录重跑同一公开 Interface C10，仍仅两条 GET/status、external/Appium3、进入前关闭 socket、active 静态诊断无 HTTP、退出视图失效、第二次进入成功；重跑真实静态副作用守卫仍为三文件不变且无网络/组件命令。修复后 wheel/sdist 构建/既有内容与隔离安装检查通过，分别见 `repair1-real.log`、`repair1-static.log`、`repair1-distributions.log`。测试与正向链路通过仍不代替问题复审。
+- 原独立 QA 完成 `RT02-REPAIR-AUDIT-1`，`audit_mode=repair-only`、`status=pass`，RT02-F01–F04 全部关闭，无未决阻塞或确认的直接新增问题。仅审五文件修复和必要上下文，并独立执行 66 组纯内存场景/断言；没有重新全文、执行写入测试或请求真实服务。
+- 复审身份：`repair1-review/manifest.json` SHA-256 `3c24b680b1a8eb5888f4b3f252f7132b3a8eaa8076f386c8eb3982af211fe8c7`；修复索引 `repair1-review/repair-manifest.json` SHA-256 `e0007900f1c3b32d7f201250436ccd69f188b56c7b12180aa2978e2d29d2e79f`；五文件修复差异 27035 字节，SHA-256 `9c53090cf812ca0a56eeca2327b96a7a6bc116f7c07ab06c4cce2bbf21769d4b`；原始复审报告 `audit-repair-1.txt` SHA-256 `7384940935ef244da30dd62907a6a6389a1358a2308e40b615011da61d3222a7`，均在会话 `files/rt02-implementation/`。
+- 审查者核对全部 35 项当前文件/快照、14 项新验证证据和包身份，旧包映射也一致；Tech Lead 采纳结论前再次核对所有已审文件哈希匹配。预算采用保守累计产品 **575 行**，不以当前相对原起点的 555 行差异稀释修复历史；测试 **1157 行**。复审时完整文档 **364 行**，本页随后仅同步验收事实，最终文档统计与差异身份另存验收清单。
+- **Tech Lead 最终判定：RT-LOCAL-02 Done。** 授权、独立设计审查、用户最终确认、正式 SPEC、01 依赖、受控验证、真实 C10、分发包和 full 加一轮修复复审均已核对。本批共享协调改动的取消回归已恢复，未变代码仍适用前序固定验收，不将其重做一轮或混入02规模。
+- 验收后仅修改本页状态，源码/测试、三份正式 SPEC、设计及 README 保持复审时身份；旧哈希绑定已审快照，不冒称覆盖后续文档。本次不提交或推送，不进入 03–06；无 Android Session/设备/精确组合资格证明，Runtime/M01 仍未整体验收。
 
 ## 持续维护与下一步
 
@@ -145,9 +225,9 @@ Runtime 不为此提前实现设备操作；Session 脚本是跨现有接缝的�
 3. **实现/验证后**：分别更新实现状态、实际命令和结果、环境、未运行项、真实调用范围；版本/路径存在和模拟成功不得写成真实端到端通过。
 4. **独审及交付后**：更新 feature 状态、固定代码/差异身份、独立审查范围与结论、遗留项负责人及证据登记。证据失配或丢失时标明待补，不能仅沿用 Done 标签。
 5. **文档分工**：本页维护当前进度；设计只保留方案和历史依据并链接本页，README 提供入口；不向 SPEC 写待办或进度。新会话优先读取本页，不再从分散会话材料猜测状态。
-6. **下一步顺序**：先补 G01；然后确认 G02/G03 并完成 02 的设计/契约 gate，再进入实现。不要把当前这次记录补强理解为已启动 02 或扩展 iOS。
+6. **下一步顺序**：G01–G03 的相应 gate 及 RT-LOCAL-02 验收已完成，本次授权止于此；03–06 保留既定计划，但不得自动开工，后续另行确认范围、相应设计/契约及资源权限。不扩展 iOS 或其他模块/平台，不宣称 Runtime 首批完成。
 
-## 本次记录重建的范围
+## 台账初建的历史范围
 
 `DOC-RT-LEDGER-01` 是一次工程文档维护，**流程类 no-delta**。依据[根 SPEC](../../SPEC.md)的 Project Specification Ownership 与[AGENTS](../../AGENTS.md)的 Focused iteration / Authority：流程与进度属于设计/任务材料，SPEC 只维护契约。
 

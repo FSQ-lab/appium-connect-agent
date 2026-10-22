@@ -4,7 +4,7 @@
 
 本文件记录项目级已确认事实及模块索引，模块细节由对应模块 SPEC 维护。开发流程由 [AGENTS.md](AGENTS.md) 和相关技能定义，不在此重复。
 
-本项目已确认并验证 Python 工程基线，以及 Runtime 本地静态诊断契约；实现与兼容性以实际验收证据为准。项目目标是让 Appium 以更方便、友好的形式接入主流 AI Agent；这不表示已经支持任何具体接入方式或设备平台。
+本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断和已有本地 Appium 连接契约；实现与兼容性以实际验收证据为准。项目目标是让 Appium 以更方便、友好的形式接入主流 AI Agent；这不表示已经支持任何具体接入方式或设备平台。
 
 ## Module Table
 
@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断；后续服务与组件生命周期仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；自管服务与组件生命周期仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -75,3 +75,14 @@
 - 第一批公开静态诊断不安装组件、不执行子进程/HTTP/设备请求、不读取产品配置文件或环境变量作为设置；PATH和当前账号home仅用于有界发现/协调资源。
 - 用户已确认统一协调锁约束当前macOS登录账号的所有项目，不承诺跨登录账号互斥。诊断允许本库固定锁目录/文件写入，但不修改被诊断组件；锁位置与行为由Runtime SPEC定义。
 - 真实Runtime和Contracts包创建后启用可执行生产import-linter约束，禁止Contracts依赖Runtime。静态元数据观测不构成精确组合支持承诺；尚无经Android Session验证的组合。
+
+## Local External Connection
+
+本节定义已确认的已有本地连接契约，依据为[已有本地连接设计](docs/superpowers/specs/2026-10-21-runtime-local-connection-design.md)，不改变上文已确认的静态诊断契约；契约确认不表示实现已验收。
+
+- Runtime 增加同步 `connect()` 使用范围，复用调用方显式声明、已启动的本地 Appium；首批仍只覆盖 macOS / Android / UiAutomator2。
+- Contracts 的唯一 LocalSettings 增加可选纯值 `server_url`；Runtime 拥有连接范围视图、协议检查、报告与操作异常，不引入 Contracts 反向依赖。
+- 仅 HTTP loopback、明确端口和 base path；不自动发现端口、回退端点、读取代理环境、跟随重定向或处理认证/远程/TLS。
+- 外部服务仅按已确认主版本策略检查；不从本机静态包推断服务版本，不创建 Session，不取得进程所有权，不在退出时停止服务器。
+- 本连接能力无新增运行依赖，不改变 `diagnose()` 的静态只读语义或默认测试无需真实服务/设备的约束。详细 Interface、失败行为、资源限制与验证义务由相关模块 SPEC 定义。
+- 上述协议、地址和路径限制仅定义本轮已有本地连接能力，不预设后续本地自管、远程、HTTPS 或其他 feature 的支持规则；扩展仍须对应设计与 SPEC 确认。

@@ -1,11 +1,12 @@
 # Appium Connect Agent
 
-当前提供 Runtime 本地静态诊断和 Python 工程基础：`src` 根包、类型标记、锁定开发环境、质量检查和构建。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接及 Python 工程基础；
+具体实现验收状态以[交付台账](docs/tasks/runtime-delivery-ledger.md)为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Runtime 已提供本地静态诊断，Contracts 提供唯一共享设置值。当前没有
-Appium 服务管理、安装、设备操作、MCP 或正式产品 CLI；没有产品运行依赖或经真实
+Contracts 提供唯一共享设置值。Runtime 不安装、启停 Appium 或管理 Session；
+自管服务、设备操作、MCP 和正式产品 CLI 尚未交付。没有产品运行依赖或经真实
 Android Session 验证的兼容组合。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见
 [AGENTS.md](AGENTS.md)。
 
@@ -48,7 +49,8 @@ uv build
 
 `.python-version` 默认选择 3.11；包元数据允许 CPython `>=3.11`。
 工程基础在 macOS arm64 / CPython 3.11.16 上通过锁定同步、质量检查、
-导入 smoke test 和构建；Runtime 验证另覆盖静态报告与跨进程互斥。
+导入 smoke test 和构建；Runtime 验证另覆盖静态报告、受控本地 HTTP 与跨进程互斥，
+获准真实连接的验证证据见交付台账。
 其他解释器版本与宿主尚未验证，
 不构成正式发布支持矩阵。
 
@@ -56,7 +58,7 @@ uv build
 import-linter；锁定同步后无需另行安装质量工具。依赖变更使用 `uv add --dev`、
 `uv remove --dev` 等 uv 命令，并同步提交锁文件。运行依赖当前为空。
 
-pytest 覆盖包导入和 Runtime 静态诊断、错误恢复及真实跨进程协调锁；
+pytest 覆盖包导入、Runtime 静态诊断、受控 HTTP 连接、错误恢复及真实跨进程协调锁；
 使用已安装包，不注入源码搜索路径。测试锁隔离于临时账号目录。
 mypy 对 `src`、`tests` 和诊断工具使用 strict 基线。默认验证不要求服务或设备。
 
@@ -125,10 +127,55 @@ OperationControl 默认总预算 10 秒，可传有限正数 timeout_seconds 和
 取消令牌。取消/超时/协调失败抛 RuntimeOperationError 子类，携带 operation_id、
 稳定 code 和 partial_report。进度同步回调计入预算，首次普通回调错误记录于
 observer_errors 后停止通知，诊断继续；KeyboardInterrupt 仍传播并释放资源。
+回调直接抛出的 OperationCancelledError 同样原样传播，不作为普通观察者错误吞掉。
 每文件最多 1 MiB，每次最多 64 份，证据有界并仅提取白名单字段。
 
-本 feature 无需服务或设备；后续连接、安装、自管服务、维护和启停尚未交付。
+本静态 feature 无需服务或设备；已有本地连接见下节，安装、自管服务、维护和启停尚未交付。
 Runtime 首批整体仍须完成其余 feature 及真实 Android Session 创建/关闭验收。
+
+## 已有本地 Appium 连接
+
+RT-LOCAL-02 已实现下述 Interface，当前验证及独立审查状态见
+[交付台账](docs/tasks/runtime-delivery-ledger.md)，不代表 Runtime 模块已整体验收。
+目标仍为 macOS / Android / UiAutomator2，只复用调用方已经启动的本机 Appium。
+
+```python
+from appium_connect_agent.runtime import LocalSettings, OperationControl, Runtime
+
+runtime = Runtime(LocalSettings(server_url="http://127.0.0.1:4723/"))
+with runtime.connect(control=OperationControl(timeout_seconds=10)) as connection:
+    print(connection.server_url)
+    print(connection.ownership, connection.appium_version, connection.compatibility)
+    report = connection.report
+```
+
+- 必须显式传完整 HTTP loopback URL 和端口；没有 server_url 不影响静态诊断，
+  但进入连接范围报 endpoint_not_configured，不猜默认地址。localhost 固定规范化为
+  127.0.0.1，IPv6 用显式 `[::1]`；不查询 DNS、读取代理、扫描端口或更改监听。
+- 可传普通 ASCII base path，例如 `http://127.0.0.1:4723/wd/hub`。
+  不接受凭证、查询、fragment、百分号编码、非 ASCII、`.`/`..` 段或重复路径分隔符；
+  尾斜线规范化去除。只检查该 base path 下的 `/status`，不猜路径、不跟随重定向。
+- 只做一次状态 GET。HTTP/协议错误、401/403、not ready、残缺或超限响应明确失败，
+  不轮询重试，也不把这些失败包装成“版本未验证”。已知 Appium 3 为
+  declared_compatible，已知其他主版本拒绝；只有版本信息不足才为 unverified。
+  这不是设备、driver 精确组合或 Session 可用性证明。
+- OperationControl 默认 10 秒只约束进入范围的准备；各阶段共享总预算，包含同步回调，
+  不限制 with 主体时长。同步回调阻塞不能被安全强制打断，返回后才检查超预算。
+  active 后不因准备 deadline 到期或其 Event 被设置而自动结束业务范围。
+- 当前账号固定锁保持到范围退出，不按 URL/端口另建锁。active 所属线程可顺序调用
+  同实例静态 diagnose，不再次联网或重取锁；并发、嵌套及诊断回调重入明确报忙。
+- connection.server_url 在范围内只返回地址，不触发隐藏请求，也不保证服务持续健康；
+  退出后读取它抛 InvalidStateError/code connection_closed。历史版本、兼容状态及
+  report 仍可读；已经保存的 URL 字符串无法撤销，已有客户端不会因此被断开。
+- Runtime 不安装、启动、停止或重启外部 Appium，也不选择设备、创建或关闭 Session。
+  Session 创建者或后续 Automation 负责其生命周期；退出 with 不等于 driver.quit()。
+  主体异常原样保留，本库资源清理失败另附 runtime_cleanup_error，不覆盖 Session 错误。
+
+默认产品测试使用临时 loopback HTTP 端点和隔离锁测试进程，结束关闭回收；
+不依赖真实 Appium，不向真实服务注入故障。真实验收另行使用获准地址的 GET /status，
+不启停 Appium 或创建 Session。以上限制只针对本 feature，未来远程/HTTPS/认证另行设计。
+完整约束见[Runtime SPEC](modules/runtime/SPEC.md)及
+[连接设计](docs/superpowers/specs/2026-10-21-runtime-local-connection-design.md)。
 
 ## 内部集成测试辅助工具
 

@@ -1,9 +1,12 @@
+import fcntl
 import os
 import select
 import stat
 import subprocess
 import sys
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -13,6 +16,8 @@ import pytest
 from appium_connect_agent.runtime import (
     EnvironmentBusyError,
     LocalSettings,
+    OperationCancelledError,
+    ProgressEvent,
     Runtime,
     RuntimeOperationError,
     _coordination,
@@ -149,3 +154,103 @@ def test_callback_runtime_error_is_observer_failure() -> None:
     result = Runtime(LocalSettings(), on_progress=failed).diagnose()
     assert result.observer_errors == ("progress_callback_failed",)
     assert len(result.checks) > 1
+
+
+@contextmanager
+def memory_lock_os(
+    monkeypatch: pytest.MonkeyPatch,
+    preparing_error: BaseException | None = None,
+) -> Iterator[tuple[list[int], list[int], OSError]]:
+    opened: list[int] = []
+    closed: list[int] = []
+    cleanup = OSError("memory close failure")
+
+    def open_fd(
+        path: str,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        descriptor = 100 + len(opened)
+        opened.append(descriptor)
+        return descriptor
+
+    def close_fd(descriptor: int) -> None:
+        closed.append(descriptor)
+        if len(closed) == 1:
+            raise cleanup
+
+    def flock(descriptor: int, flags: int) -> None:
+        if preparing_error is not None:
+            raise preparing_error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_coordination, "_account_home", lambda: Path("/audit-account"))
+        patch.setattr(os, "open", open_fd)
+        patch.setattr(os, "mkdir", lambda *args, **kwargs: None)
+        patch.setattr(os, "fchmod", lambda *args: None)
+        patch.setattr(
+            os,
+            "fstat",
+            lambda fd: os.stat_result(
+                (stat.S_IFREG, 0, 0, 1, os.getuid(), 0, 0, 0, 0, 0)
+            ),
+        )
+        patch.setattr(os, "close", close_fd)
+        patch.setattr(fcntl, "flock", flock)
+        yield opened, closed, cleanup
+
+
+@pytest.mark.parametrize("stage", ["observer", "flock"])
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_repair1_cleanup_preserves_cancel_or_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    cancelled: bool,
+) -> None:
+    report = Runtime(LocalSettings()).diagnose()
+    original = (
+        OperationCancelledError("caller_cancelled", report.operation_id, report)
+        if cancelled
+        else KeyboardInterrupt("original")
+    )
+    original.__dict__["session_cleanup_error"] = "unchanged"
+
+    def observer(event: ProgressEvent) -> None:
+        raise original
+
+    with memory_lock_os(
+        monkeypatch,
+        original if stage == "flock" else None,
+    ) as (opened, closed, cleanup):
+        with pytest.raises(type(original)) as caught:
+            if stage == "observer":
+                Runtime(LocalSettings(), on_progress=observer).diagnose()
+            else:
+                Runtime(
+                    LocalSettings(server_url="http://127.0.0.1:1")
+                ).connect().__enter__()
+        assert caught.value is original
+        assert original.__dict__["runtime_cleanup_error"] is cleanup
+        assert original.__dict__["session_cleanup_error"] == "unchanged"
+        if isinstance(original, OperationCancelledError):
+            assert original.partial_report is report
+            assert original.operation_id == report.operation_id
+            assert original.code == "caller_cancelled"
+        assert closed == list(reversed(opened))
+        assert len(closed) == 6
+        assert _coordination._PROCESS_LOCK.acquire(blocking=False)
+        _coordination._PROCESS_LOCK.release()
+    assert Runtime(LocalSettings()).diagnose().checks
+
+
+def test_repair1_cleanup_without_original_is_still_an_operation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with memory_lock_os(monkeypatch) as (opened, closed, _):
+        with pytest.raises(RuntimeOperationError, match="coordination_unavailable"):
+            Runtime(LocalSettings()).diagnose()
+        assert closed == list(reversed(opened))
+        assert _coordination._PROCESS_LOCK.acquire(blocking=False)
+        _coordination._PROCESS_LOCK.release()

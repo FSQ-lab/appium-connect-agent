@@ -32,3 +32,13 @@
 - `LocalSettings` 为不可变、仅关键字字段的纯值：appium_executable、appium_home、node_executable、npm_executable、java_home、android_sdk_root；每项 `Path | None`，默认None。非None必须为绝对Path，错误抛ValueError；构造不访问文件系统、不展开用户目录或读取环境变量。
 - 本轮固定macOS/Android/UiAutomator2，不创建RemoteSettings、认证、连接、组件请求、支持清单等未来feature占位类型。
 - 此最小设置值是未来Configuration与Runtime的接缝；配置来源/格式/优先级/凭证存储仍未设计，本轮不交付Configuration功能。
+
+## Local Connection Setting
+
+本节定义已确认的已有本地连接设置，依据为[连接设计](../../docs/superpowers/specs/2026-10-21-runtime-local-connection-design.md)；不预设未来远程、HTTPS 或其他 feature 的设置规则。
+
+- 唯一 LocalSettings 新增仅关键字、不可变的 `server_url: str | None = None`；六项已有 Path 设置保持。构造校验及规范化仅纯值操作，不访问文件系统、环境、DNS、端口或任何服务。
+- None 不表示默认地址；由 Runtime 在实际连接时明确报告未配置端点，不影响静态诊断。
+- 非 None 为最多 2048 字符的完整 HTTP URL，必须显式指定有效端口；host 只能为数值 loopback IPv4/IPv6 或 `localhost`，后者纯值规范化为 `127.0.0.1`，不使用 DNS。
+- 拒绝 userinfo、查询、fragment、空白/控制字符、非 ASCII、反斜线和百分号路径；base path 的段仅允许字母、数字及 `-._~`，拒绝 `.`/`..` 段及重复 `/`。统一 scheme/host、IPv6 方括号和尾斜线，根或 base path 尾 `/` 去除；非法值抛 ValueError，不静默回退。
+- Contracts 不拥有带范围有效性或 Runtime 报告的 RuntimeConnection，不依赖 Runtime。此增量不新增远程、认证、安装或配置来源模型。

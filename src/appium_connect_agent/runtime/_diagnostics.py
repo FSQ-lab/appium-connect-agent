@@ -1,17 +1,29 @@
-"""Synchronous static inspection, with no executable or network invocation."""
+"""Synchronous Runtime entry points and static installation inspection."""
+
+from __future__ import annotations
 
 import os
 import platform
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import get_ident
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from appium_connect_agent.contracts import LocalSettings
 
 from . import _coordination
-from ._inspection import Finding, Package, Reader, constraint, path_evidence
+from ._inspection import (
+    Finding,
+    Package,
+    Reader,
+    constraint,
+    normalized,
+    path_evidence,
+)
 from ._models import (
     DiagnosticCheck,
     DiagnosticReport,
@@ -25,15 +37,20 @@ from ._models import (
 )
 from ._semver import satisfies
 
+if TYPE_CHECKING:
+    from ._connection import RuntimeConnection
+
 
 class _Operation:
     def __init__(
         self,
         control: OperationControl,
         observer: Callable[[ProgressEvent], None] | None,
+        phase: str = "diagnosing",
     ) -> None:
         self.control = control
         self.observer = observer
+        self.phase = phase
         self.operation_id = uuid4().hex
         self.observed_at = datetime.now(UTC)
         self.deadline = time.monotonic() + control.timeout_seconds
@@ -83,8 +100,10 @@ class _Operation:
         if self.observer is not None:
             try:
                 self.observer(
-                    ProgressEvent(self.operation_id, "diagnosing", check_id, reason)
+                    ProgressEvent(self.operation_id, self.phase, check_id, reason)
                 )
+            except OperationCancelledError:
+                raise
             except Exception:
                 self.observer_errors.append("progress_callback_failed")
                 self.observer = None
@@ -171,6 +190,7 @@ class _Operation:
                 self.add(check_id, "unknown", "not_specified")
                 continue
             try:
+                root = normalized(root)
                 for relative in files:
                     self.reader.ordinary(root / relative)
                 # Only layout is claimed: do not return unfiltered release/properties.
@@ -199,20 +219,22 @@ class _Operation:
                 continue
             if package.version is None:
                 results.append(None)
+            if package.engines is None or package.peers is None:
+                results.append(None)
+            engines = package.engines or {}
             for engine in ("node", "npm"):
-                raw = package.engines.get(engine)
-                if raw is None:
+                if engine not in engines:
                     continue
-                declared = constraint(raw)
+                declared = constraint(engines[engine])
                 actual = npm.version if engine == "npm" and npm else None
                 result = satisfies(actual, declared) if actual and declared else None
                 results.append(result)
                 evidence.append(
                     f"{label}.{engine}={declared or 'unsupported_constraint'}; observed={actual or 'unknown'}"
                 )
-        raw_peer = driver.peers.get("appium") if driver else None
-        if raw_peer is not None:
-            peer = constraint(raw_peer)
+        peers = driver.peers if driver else None
+        if peers is not None and "appium" in peers:
+            peer = constraint(peers["appium"])
             actual = appium.version if appium else None
             results.append(satisfies(actual, peer) if actual and peer else None)
             evidence.append(
@@ -235,7 +257,7 @@ class _Operation:
 
 
 class Runtime:
-    """Inspect a local macOS installation without executing its components."""
+    """Diagnose local metadata or reuse an explicitly configured external service."""
 
     def __init__(
         self,
@@ -249,14 +271,32 @@ class Runtime:
             raise ValueError("on_progress must be callable or None")
         self._settings = settings
         self._on_progress = on_progress
+        self._active_thread: int | None = None
+        self._diagnosing = False
+
+    def connect(
+        self, *, control: OperationControl | None = None
+    ) -> AbstractContextManager[RuntimeConnection]:
+        from ._connection import _ConnectionScope
+
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        return _ConnectionScope(self, control or OperationControl())
 
     def diagnose(self, *, control: OperationControl | None = None) -> DiagnosticReport:
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
         operation = _Operation(control or OperationControl(), self._on_progress)
         operation.checkpoint()
+        if self._diagnosing or self._active_thread not in (None, get_ident()):
+            raise operation.error(EnvironmentBusyError, "environment_busy")
+        self._diagnosing = True
         try:
-            with _coordination.account_lock():
+            with (
+                nullcontext()
+                if self._active_thread == get_ident()
+                else _coordination.account_lock()
+            ):
                 operation.checkpoint()
                 system = platform.system()
                 operation.add(
@@ -289,3 +329,5 @@ class Runtime:
             raise operation.error(
                 RuntimeOperationError, "coordination_unavailable"
             ) from None
+        finally:
+            self._diagnosing = False

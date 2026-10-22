@@ -50,6 +50,6 @@ def satisfies(actual: str, expression: str) -> bool | None:
             comparisons.append(result)
         else:
             branches.append(all(comparisons) if tokens else None)
-    if any(result is True for result in branches):
-        return True
-    return None if None in branches else False
+    if None in branches:
+        return None
+    return any(branches)

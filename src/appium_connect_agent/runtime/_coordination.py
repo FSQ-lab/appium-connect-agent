@@ -29,6 +29,7 @@ def account_lock() -> Iterator[None]:
     if not _PROCESS_LOCK.acquire(blocking=False):
         raise Busy
     descriptors: list[int] = []
+    original: BaseException | None = None
     try:
         home = _account_home()
         if not home.is_absolute() or ".." in home.parts:
@@ -69,10 +70,20 @@ def account_lock() -> Iterator[None]:
         except BlockingIOError:
             raise Busy from None
         yield
+    except BaseException as error:
+        original = error
+        raise
     finally:
+        cleanup_error: OSError | None = None
         try:
             for descriptor in reversed(descriptors):
-                with suppress(OSError):
+                try:
                     os.close(descriptor)
+                except OSError as error:
+                    cleanup_error = cleanup_error or error
         finally:
             _PROCESS_LOCK.release()
+        if cleanup_error is not None:
+            if original is None:
+                raise cleanup_error
+            original.__dict__["runtime_cleanup_error"] = cleanup_error

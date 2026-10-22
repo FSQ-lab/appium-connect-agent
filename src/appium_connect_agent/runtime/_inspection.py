@@ -54,8 +54,9 @@ def mapping(value: object) -> dict[str, object]:
 class Package:
     root: Path
     version: str | None
-    engines: dict[str, object]
-    peers: dict[str, object]
+    # Missing declarations are empty; explicitly malformed containers are None.
+    engines: dict[str, object] | None
+    peers: dict[str, object] | None
 
 
 class Reader:
@@ -203,9 +204,11 @@ def package_value(root: Path, data: dict[str, object]) -> Package:
 
     raw = data.get("version")
     actual = raw if isinstance(raw, str) and version(raw) is not None else None
+    engines = data.get("engines", {})
+    peers = data.get("peerDependencies", {})
     return Package(
         root,
         actual,
-        mapping(data.get("engines")),
-        mapping(data.get("peerDependencies")),
+        mapping(engines) if isinstance(engines, dict) else None,
+        mapping(peers) if isinstance(peers, dict) else None,
     )
