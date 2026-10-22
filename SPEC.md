@@ -27,7 +27,7 @@
 ## Development Rules
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
-- 当前没有产品运行依赖；工程验证入口由下方 Tooling and Verification Constraints 定义，兼容性只按实际验证证据声明。
+- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1 与 httpcore==1.0.9。HTTPX 继续负责已有本地连接 HTTP 请求，AnyIO 仅用于操作内受管异步桥接；HTTPcore 仅用于公开异常类型识别及 HTTPX 公开 trace 事件集合的版本固定，不直接建立另一套客户端或 Transport。其余传递依赖由 uv.lock 固定；发行元数据同样固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。 **待确认（RT-LIB-02）：** 增加无 extras 的 node-semver==0.9.1，供 Runtime 静态诊断及连接共用版本识别和 npm 范围匹配；不执行 Node/npm，不增加实测兼容组合。
 - Runtime/Contracts 的当前公开契约由对应模块 SPEC 维护；其他模块仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
@@ -41,10 +41,11 @@
 ## Tooling and Verification Constraints
 
 - 使用 `pyproject.toml` 统一项目元数据、构建后端、依赖组和质量工具配置；构建后端为带兼容版本范围的 `uv_build`。
-- 使用 uv 管理环境和依赖，`uv.lock` 纳入版本控制；初始运行依赖为空。pytest、Ruff、mypy 和 import-linter 放入单一默认 `dev` 组，`uv sync --locked` 应能从全新环境安装所需开发依赖。
+- 使用 uv 管理环境和依赖，`uv.lock` 纳入版本控制；直接运行依赖与上文一致。pytest、Ruff、mypy 和 import-linter 放入单一默认 `dev` 组，`uv sync --locked` 应能从全新环境安装所需运行及开发依赖。
 - pytest 从 `tests/` 收集测试，使用已安装包，不注入源码搜索路径；初始测试只验证包可导入。默认测试不得隐式要求 Appium 服务或设备。
 - Ruff 使用 Python 3.11 目标、88 字符行宽、四空格缩进和双引号，统一格式化与 lint；mypy 对源码和测试采用 strict 基线，不全局忽略缺失类型。
 - 基础验证入口为 `uv sync --locked`、`uv run ruff format --check .`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest` 和 `uv build`；构建产物还须在隔离环境安装并验证导入及 `py.typed`。
+- wheel/sdist 元数据必须与批准的直接运行依赖一致；各自在隔离环境按元数据安装依赖，执行 uv pip check、包导入及 py.typed 验证。项目锁定环境另以 uv sync --locked 验证，不把消费者解析的传递版本冒充与本地锁完全相同。保留 macOS 质量与 Windows 打包检查，后者不构成 Windows Runtime 支持。
 
 ## Module Import Constraints
 
@@ -84,5 +85,5 @@
 - Contracts 的唯一 LocalSettings 增加可选纯值 `server_url`；Runtime 拥有连接范围视图、协议检查、报告与操作异常，不引入 Contracts 反向依赖。
 - 仅 HTTP loopback、明确端口和 base path；不自动发现端口、回退端点、读取代理环境、跟随重定向或处理认证/远程/TLS。
 - 外部服务仅按已确认主版本策略检查；不从本机静态包推断服务版本，不创建 Session，不取得进程所有权，不在退出时停止服务器。
-- 本连接能力无新增运行依赖，不改变 `diagnose()` 的静态只读语义或默认测试无需真实服务/设备的约束。详细 Interface、失败行为、资源限制与验证义务由相关模块 SPEC 定义。
+- 本连接能力采用上述固定版本的 HTTPX 与 AnyIO；保持同步公开 Interface，HTTP 任务与操作内受管线程在准备返回前结束。不改变 `diagnose()` 的静态只读语义或默认测试无需真实服务/设备的约束。详细 Interface、失败行为、资源限制与验证义务由相关模块 SPEC 定义。
 - 上述协议、地址和路径限制仅定义本轮已有本地连接能力，不预设后续本地自管、远程、HTTPS 或其他 feature 的支持规则；扩展仍须对应设计与 SPEC 确认。

@@ -11,6 +11,7 @@ from email import message_from_bytes
 from pathlib import Path
 
 PACKAGE = "appium_connect_agent"
+DEPENDENCIES = {"httpx==0.28.1", "anyio==4.15.1", "httpcore==1.0.9"}
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = """
 import sys
@@ -30,6 +31,9 @@ metadata = distribution('appium-connect-agent').metadata
 assert metadata['Name'] == 'appium-connect-agent'
 assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
+assert set(metadata.get_all('Requires-Dist')) == {
+    'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9'
+}
 if sys.platform == 'darwin':
     from appium_connect_agent.runtime import LocalSettings as RuntimeSettings
     from appium_connect_agent.runtime import Runtime
@@ -53,6 +57,7 @@ def run(command: list[str], cwd: Path) -> None:
 
 def main() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    require(set(project["dependencies"]) == DEPENDENCIES, "Unapproved dependencies")
     version = str(project["version"])
     python_requirement = str(project["requires-python"])
     stem = f"{PACKAGE}-{version}"
@@ -134,7 +139,10 @@ def main() -> None:
         require(
             parsed["Requires-Python"] == python_requirement, "Incorrect Python range"
         )
-        require(not parsed.get_all("Requires-Dist"), "Unexpected runtime dependency")
+        require(
+            set(parsed.get_all("Requires-Dist", [])) == DEPENDENCIES,
+            "Incorrect runtime dependencies",
+        )
         print(f"Archive contents and metadata: {artifact.name} OK", flush=True)
     uv = shutil.which("uv")
     require(uv is not None, "uv is required")
@@ -165,11 +173,11 @@ def main() -> None:
                     "install",
                     "--python",
                     str(python),
-                    "--no-deps",
                     str(artifact),
                 ],
                 outside,
             )
+            run([uv, "pip", "check", "--python", str(python)], outside)
             run([str(python), "-I", "-c", SMOKE, version, python_requirement], outside)
 
 

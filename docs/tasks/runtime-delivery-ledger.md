@@ -7,6 +7,39 @@
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
 - 当前结论：**RT-LOCAL-01 静态诊断和 RT-LOCAL-02 已有本地外部 Appium 连接均已在各自范围内验收。02 的 full 审查四项问题已修复并通过一轮 repair-only，397 项测试及真实 GET-only 链路通过，Tech Lead 判定 RT-LOCAL-02 Done。Runtime 首批及 M01 仍未整体验收，未推进 03–06。**
 
+## RT-LIB-01 / RT-LIB-02 库迁移
+
+- 当前授权：本会话用户显式调用 $spec-driven，采纳 Runtime 库迁移设计并要求 RT-LIB-01 → RT-LIB-02 顺序；随后对已展示的根/Runtime SPEC delta 回复“确认”，再明确“那我们使用独立的worktree 进行开发？”。沿用原库版本及 G1–G6，不自动提交/推送或扩大服务设备操作。
+- 当前状态：**RT-LIB-01 Done；RT-LIB-02 awaiting-spec-confirmation**。第一步F1经修复和独审关闭，456项产品验证及限定真实链路通过；第二步库资格与候选SPEC独审通过，产品实现尚未开始。
+- 本会话为 Runtime 根协调 session /root；唯一工作区 /Users/qunmi/.codex/worktrees/runtime-rt-lib-01/Appium_connect_agent，任务分支 codex/runtime-rt-lib-01，起点 75c1737d95cacad2a8a104337fa988bed48aeb17。用户本轮独立 worktree 指示适用于跨模块并行；Runtime 内仍一次一个 feature，不借此合入尚有验证缺口的流程分支或采用其自动提交/推送规则。
+- 原主工作区的 Configuration 改动不复制、不修改、不暂存；共享根 SPEC、依赖配置与分发脚本仅在本任务分支修改，后续集成需分别核对其他模块增量，不更新被占用的主分支引用。产品规模从固定起点累计新增+删除；目标350–800行、约1200行门槛，测试/文档另计，修复不以净增长抵消。
+- 设计原文固定 SHA-256 e26edd1de51a9676198495ddc1f41dd9ac6b9a3126499ece83ca628013070c3f；保留设计历史草案与访谈记录，本次最终采纳/实施状态以本节为准。RT-LIB-01 固定 httpx==0.28.1、anyio==4.15.1，无 extras，仅已批准 HTTP/受管桥接用途；node-semver 留待第二步。
+- 临时证据根 /var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/aca-rt-lib-01-b9sm3mc6。原资格31场景、10项库协议观测和三脚本strict mypy通过；0.2秒预算场景含收尾最大约0.207秒。资格 full/pass 记录 qualification-audit-result.json，SHA-256 c384a26924fe4007cfc99cfd824348d4f1540f9dbafd1df3eb5a7e7ae81cb84f；不把资格脚本当产品实现/完整清理矩阵，不替代产品验证。
+- 独立 worktree 基线 implementation/baseline-manifest.json SHA-256 2f52cf82b07dba5f4d8075e75f7abb4dbadcf36a5af92b45c6276a7c8e36f7cf，包含70文件和完整2份差异。工程上下文 /root/rtlib01_engineer 实际写读授权probe通过；新独审 /root/rtlib01_product_audit 实际读取完整根/模块SPEC、设计、14199字节/2diff和47726字节/1diff并独立重建一致，确认Runtime delta转移完整、Contracts未变且未带入Configuration增量。此为能力预检，不是产品审查pass。
+- 工程负责人仅修改 _http.py、必要_connection.py/_models.py、连接/协调测试、pyproject.toml、uv.lock、.github/scripts/check_distributions.py；Tech Lead维护本worktree SPEC/README/本台账和任务证据。使用本worktree独立.venv及既有CPython3.11，包源保持公司配置。
+- 验证：受控临时numeric loopback/进程/目录按G6.1；真实127.0.0.1:4723每轮最多两次GET/status由Tech Lead在产品验证后执行，首次失败报告，不重试其他地址、不启停、不创建Session/操作设备。本批迁移不替代Runtime/M01 Android整体验收。
+
+- 工程交付前验证：435项完整产品测试通过，Ruff格式/lint、strict mypy（源码/测试/工具19文件及分发脚本）、import-linter（1 kept/0 broken）、构建及wheel/sdist隔离依赖安装和uv pip check通过。锁仅添加6项必需包，已有开发依赖版本未变；实际httpcore1.0.9/h11 0.16.0与资格一致。
+- Tech Lead真实G6.2验收：只向http://127.0.0.1:4723发送两次GET/status，公开同步范围依次进入退出成功，观测Appium3.7.0/external/declared_compatible；HTTP socket和portal线程在active前结束，退出URL视图失效，第二次成功证明服务保留与锁可复用。证据 implementation/real-acceptance-result.json；未执行Session、组件命令或服务启停。此结果不替代产品独审。
+
+- 产品full独审 /root/rtlib01_product_audit：findings，仅RTLIB01-F1/P1。审查完整HEAD差异83326字节/11项及设计补充，独立核验70文件/36证据；review-1/manifest.json SHA-256 9204bc5bf77c76fd4d6fa1ca9c049abfb0e0872a00de6bd542713cce35fe9ab7。纯内存实际库链复现协议错误被已知/未知自动关闭异常覆盖，取消主对象保留但未知关闭错误丢失；已有435测试及真实链路未覆盖反例。修复要求保留正确主错误/对象身份、独立清理信息、资源结束和锁可复用，不改库私有属性或协议。原独审后续仅repair-only，最多两轮自动修复。
+
+- 修复1可行性门槛：未修改产品/测试。固定HTTPcore内部两层自动关闭可覆盖原异常；可靠候选需使用HTTPX公开trace并直接固定httpcore==1.0.9及其公开异常类型，超出原直接依赖用途批准。当前需用户具体选型及后续SPEC增量确认，不宽扫异常链、不调用私有映射、不降低契约。提案与固定官方证据位于implementation/repair-proposal.md及trace-docs-0.28.1.md；RTLIB01-F1未关闭，RT-LIB-02不启动。
+
+- 用户在明确HTTPX保留、仅新增HTTPcore直接用途说明后回复“明白了，确认”，批准httpcore==1.0.9（无extras）的公开异常识别/HTTPX trace版本固定及限定资格。该选型不替代后续SPEC gate。限定trace补证由原独审repair-only/pass：29传输场景、5组身份断言、30命令通过，最大0.20830025秒、strict mypy通过；完整40新+32旧产物及差异独立核验。补证manifest SHA-256 16002a53dc0ecd83433dec6b2c0e01e881bec9e5c02af959e2ac8cc8eead9ac3。初始合成pool后抛反例揭示临时适配丢对象，按精确对象/公开映射直接cause与额外对象保留补齐，不宣称自然pool故障。
+- 当前根/Runtime SPEC仅写入上述依赖和trace用途的明确待确认增量（已独立核验，无行为放宽）。产品、测试、正式依赖仍保持首次full审查冻结，F1未修复，RT-LIB-02未开始；待用户确认SPEC后恢复修复1及必要验证/原独审repair-only。资格通过不等于产品验收。
+
+- 用户对已展示根/Runtime SPEC新增httpcore版本与trace用途条款回复“确认”；已核验原候选身份并移除待确认标记。确认后根SPEC SHA-256 500344ad14d68a9e6374e3e84506924dfc7210af7560ef8374f75a02269bd5c3，Runtime SPEC fa189314c3dc0cd07150d9d0b017c4668c721b486a6cd439c24c7f6551e57eaf。工程恢复实际产品修复1，之前仅做可行性和资格脚本，未消耗额外产品修复轮。确认不等于F1关闭，仍须产品red/green、必要回归/分发/真实限定复验及原独审repair-only。
+
+- 产品修复1已交付冻结：F1有效red为10 failed/2 passed，定向green为12 passed，扩展修复回归21项与完整456项测试通过；Ruff、strict mypy、import-linter、构建及wheel/sdist隔离三依赖安装/uv pip check通过。trace仅记录原始读错误/关闭错误，按精确对象或固定公开类型+direct cause区分同一传播，其余不同对象保留，不以分类相同丢弃。
+- Tech Lead在独立repair-1-real目录复用原同一验收脚本执行修复后G6.2：仅两次GET/status，Appium3.7.0/external，进入前socket与portal结束，退出视图失效、第二次进入证明服务保留。原始首轮日志不覆盖；本轮仍无Session/设备/服务启停。当前待原独审repair-only核对F1关闭与修复直接影响，未判定Done。
+
+- 修复1原独审 /root/rtlib01_product_audit：repair-only/pass，RTLIB01-F1关闭，无确认直接回归；完整核验10增量、70文件/快照及修复日志，纯内存实际库链复验主错误/取消/未知清理对象保持。review manifest SHA-256 6c2f9950c7ffba102263f61815f1ea15adefb62d07f93bb66525638d68221772，repair manifest dfc31b79010f36c9d9aa9fcb380b8ff803e5b3bf76e59c4959c19d61d25aa487。Tech Lead再次核验已审文件身份不变，结合456测试/质量/分发及限定真实链路，判定RT-LIB-01 Done。累计产品472行、测试824行、工程配置106行；本条验收记录为审后状态同步，不冒称旧hash覆盖新台账。
+- 沿原授权进入RT-LIB-02库资格，保持同一Runtime独立worktree，前序未提交成果以accepted-01.json/repair-1-review快照固定。无需自动提交来分隔feature，仍不推送；第二步须另通过node-semver0.9.1发行物/类型/FD-01等资格及SPEC gate，不提前实现。
+
+- RT-LIB-02资格通过：指定源node-semver0.9.1实际源码与固定提交4ae6e4b1ccdf8bc5197075c91212c0313dcd317e逐字节一致，wheel无类型文件；45矩阵/7边界、FD-01及未知AttributeError对象传播、最小11行stub的strict mypy通过。新独审 /root/rtlib02_qualification_audit full/pass，独立核验4代码/stub差异、2候选SPEC差异、22产物及8安装文件/RECORD，未参与测试。资格manifest SHA-256 f6cfd00100b203cce781cfa09019bb2b75caedec1531ebe1197904f2d0c74429，候选manifest39fd47ca8405cdbc0c8144c140e307a760b1b857c4ef671aa208f38a9b21cdac。实际命令补证从原执行历史恢复，未记录的完整继承环境/时间戳不伪造。
+- 已将第二步候选写入根/Runtime SPEC，明确待用户确认；范围为node-semver依赖、共享严格版本/范围语义及最小类型声明。有效范围识别可使unknown变明确匹配/不匹配；非法仍unknown、已知fail优先、无设备实测仍unknown，保留已验证原始build字符串。第二步产品、依赖清单/锁和测试尚无增量，不把资格通过当Ready或Done。
+
 ## 状态与范围的读法
 
 | 状态或分类 | 含义 |

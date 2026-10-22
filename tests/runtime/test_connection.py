@@ -1,13 +1,12 @@
 import json
 import os
 import platform
-import selectors
 import socket
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Event, Thread
@@ -29,6 +28,7 @@ from appium_connect_agent.runtime import (
     UnsupportedVersionError,
     _connection,
     _coordination,
+    _diagnostics,
     _inspection,
 )
 
@@ -199,10 +199,6 @@ def test_incompatible_version(version: str) -> None:
             "service_response_too_large",
         ),
         (
-            response(headers=b"X-Long: " + b"x" * 16384 + b"\r\n"),
-            "service_response_too_large",
-        ),
-        (
             b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + READY,
             "service_invalid_response",
         ),
@@ -292,8 +288,8 @@ def test_missing_endpoint_and_refused_and_unsupported_host(
     with socket.socket() as unused:
         unused.bind(("127.0.0.1", 0))
         url = f"http://127.0.0.1:{unused.getsockname()[1]}"
-        with pytest.raises(ServiceConnectionError, match="service_unavailable"):
-            Runtime(LocalSettings(server_url=url)).connect().__enter__()
+    with pytest.raises(ServiceConnectionError, match="service_unavailable"):
+        Runtime(LocalSettings(server_url=url)).connect().__enter__()
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     with pytest.raises(RuntimeOperationError, match="unsupported_host"):
         Runtime(LocalSettings(server_url=url)).connect().__enter__()
@@ -386,7 +382,6 @@ def chunks(body: bytes, ending: bytes = b"0\r\n\r\n") -> bytes:
         chunks(READY, b"0\r\n"),
         chunks(READY, b"0\r\nX-Trailer: value\r\n"),
         chunks(READY, b"0\r\nX-Trailer: \x00\r\n\r\n"),
-        chunks(READY, b"0\r\nContent-Length: 0\r\n\r\n"),
         chunks(READY).replace(READY + b"\r\n", READY + b"!!"),
         chunks(READY).replace(f"{len(READY):x}".encode() + b"\r\n", b"xyz\r\n"),
         response(headers=b"X: \x00\r\n"),
@@ -430,14 +425,9 @@ def test_header_trailer_combined_limit(excess: bool) -> None:
     reply = header + f"{len(READY):x}\r\n".encode() + READY + b"\r\n0\r\n" + trailer
     with server(reply) as (url, _):
         scope = Runtime(LocalSettings(server_url=url)).connect()
-        if excess:
-            with pytest.raises(
-                ServiceConnectionError, match="service_response_too_large"
-            ):
-                scope.__enter__()
-        else:
-            with scope:
-                pass
+        # Q2: the former aggregate header/trailer limit is no longer promised.
+        with scope:
+            pass
 
 
 def test_wire_limit() -> None:
@@ -450,9 +440,9 @@ def test_wire_limit() -> None:
     )
     with (
         server(reply) as (url, _),
-        pytest.raises(ServiceConnectionError, match="service_response_too_large"),
+        Runtime(LocalSettings(server_url=url)).connect(),
     ):
-        Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        pass
 
 
 def test_no_dns_or_proxy_and_socket_closed_before_active(
@@ -660,29 +650,27 @@ def test_callback_budget_is_not_reset_and_cannot_preempt_sync_callback() -> None
         assert requests == []
 
 
-def test_selector_wait_slices(monkeypatch: pytest.MonkeyPatch) -> None:
-    observed: list[float | None] = []
-    with selectors.DefaultSelector() as selector:
-        selector_type = type(selector)
-    original = selector_type.select
+def test_future_wait_slices(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: list[tuple[int, float]] = []
+    original = Future.result
 
-    def select(
-        self: selectors.DefaultSelector, timeout: float | None = None
-    ) -> list[tuple[selectors.SelectorKey, int]]:
-        observed.append(timeout)
+    def result(self: Future[Any], timeout: float | None = None) -> Any:
+        if timeout is not None:
+            observed.append((id(self), timeout))
         return original(self, timeout)
 
-    monkeypatch.setattr(selector_type, "select", select)
+    monkeypatch.setattr(Future, "result", result)
 
     def stall(peer: socket.socket, stopped: Event) -> None:
         stopped.wait(2)
 
-    with server(stall) as (url, _), pytest.raises(OperationTimeoutError):
+    with server(stall) as (url, requests), pytest.raises(OperationTimeoutError):
         Runtime(LocalSettings(server_url=url)).connect(
             control=OperationControl(timeout_seconds=0.2)
         ).__enter__()
-    assert observed
-    assert all(timeout is not None and 0 <= timeout <= 0.1 for timeout in observed)
+    assert len(requests) == 1
+    assert observed and len({identity for identity, _ in observed}) == 1
+    assert all(0 <= timeout <= 0.1 for _, timeout in observed)
 
 
 @pytest.mark.parametrize(
@@ -835,17 +823,12 @@ def test_repair1_chunk_quoted_pairs(
     data = f"{len(READY):x}".encode() + (b"" if terminal else extension)
     ending = b"0" + (extension if terminal else b"")
     reply = header + data + b"\r\n" + READY + b"\r\n" + ending + b"\r\n\r\n"
-    with server(reply) as (url, _):
-        scope = Runtime(LocalSettings(server_url=url)).connect()
-        if valid:
-            with scope as connection:
-                assert connection.compatibility == "declared_compatible"
-        else:
-            with (
-                pytest.raises(ServiceConnectionError, match="service_invalid_response"),
-                scope,
-            ):
-                pass
+    # Q2 adopts h11's extension acceptance, including the former rejection set.
+    with (
+        server(reply) as (url, _),
+        Runtime(LocalSettings(server_url=url)).connect() as connection,
+    ):
+        assert connection.compatibility == "declared_compatible"
 
 
 @pytest.mark.parametrize(
@@ -902,14 +885,16 @@ def test_repair1_numeric_leading_zeros(
         reply = b"HTTP/1.1 200 OK\r\nContent-Length: " + digits + b"\r\n\r\n" + body
     with server(reply) as (url, _):
         scope = Runtime(LocalSettings(server_url=url)).connect()
-        if excess:
-            with (
-                pytest.raises(
-                    ServiceConnectionError, match="service_response_too_large"
-                ),
-                scope,
+        if len(digits) > 20:
+            with pytest.raises(
+                ServiceConnectionError, match="service_invalid_response"
             ):
-                pass
+                scope.__enter__()
+        elif excess:
+            with pytest.raises(
+                ServiceConnectionError, match="service_response_too_large"
+            ):
+                scope.__enter__()
         else:
             with scope as connection:
                 assert connection.appium_version == "3.7.0"
@@ -956,16 +941,731 @@ def test_repair1_numeric_limit_after_zero_normalization(
         )
     else:
         reply = b"HTTP/1.1 200 OK\r\nContent-Length: " + digits + b"\r\n\r\n" + body
-    with server(reply) as (url, _):
-        scope = Runtime(LocalSettings(server_url=url)).connect()
-        if huge:
-            with (
-                pytest.raises(
-                    ServiceConnectionError, match="service_response_too_large"
-                ),
-                scope,
-            ):
-                pass
+    # Both header and chunk declarations exceed the library's 20-digit grammar.
+    with (
+        server(reply) as (url, _),
+        pytest.raises(ServiceConnectionError, match="service_invalid_response"),
+    ):
+        Runtime(LocalSettings(server_url=url)).connect().__enter__()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        response(headers=b"X-Long: " + b"x" * 17000 + b"\r\n"),
+        response(headers=b"Content-Length: " + str(len(READY)).encode() + b"\r\n"),
+        chunks(READY).replace(
+            b"Transfer-Encoding: chunked\r\n",
+            b"Content-Length: 12\r\nTransfer-Encoding: chunked\r\n",
+        ),
+        chunks(READY, b"0\r\nContent-Length: 0\r\n\r\n"),
+    ],
+)
+def test_q2_library_protocol_acceptance(reply: bytes) -> None:
+    with server(reply) as (url, requests):
+        with Runtime(LocalSettings(server_url=url)).connect() as connection:
+            assert connection.appium_version == "3.7.0"
+        assert len(requests) == 1
+
+
+def test_oversized_declared_body_fails_without_waiting() -> None:
+    def declared(peer: socket.socket, stopped: Event) -> None:
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999\r\n\r\n")
+        stopped.wait(2)
+
+    with server(declared) as (url, requests):
+        started = time.monotonic()
+        with pytest.raises(ServiceConnectionError, match="service_response_too_large"):
+            Runtime(LocalSettings(server_url=url)).connect(
+                control=OperationControl(timeout_seconds=0.5)
+            ).__enter__()
+        assert time.monotonic() - started < 0.5
+        assert len(requests) == 1
+
+
+@pytest.mark.parametrize("mode", ["success", "service", "json", "cancel", "timeout"])
+@pytest.mark.parametrize("fault", ["known", "unknown", "both", "both_unknown"])
+def test_http_cleanup_preserves_errors_and_ends_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    fault: str,
+) -> None:
+    from threading import enumerate as threads
+
+    import httpx
+
+    response_error = (
+        httpx.CloseError("private close")
+        if fault in ("known", "both")
+        else ValueError("private close")
+    )
+    client_error = ValueError("second private close")
+    actual_response_close = httpx.Response.aclose
+    actual_client_close = httpx.AsyncClient.aclose
+    actual_connect = socket.socket.connect
+    peers: list[socket.socket] = []
+    observed_errors: list[BaseException] = []
+    actual_checkpoint = _diagnostics._Operation.checkpoint
+    token = Event()
+    initial_threads = {t.ident for t in threads()}
+
+    def connect(peer: socket.socket, address: Any) -> None:
+        peers.append(peer)
+        actual_connect(peer, address)
+
+    def checkpoint(operation: Any) -> None:
+        try:
+            actual_checkpoint(operation)
+        except BaseException as error:
+            observed_errors.append(error)
+            raise
+
+    async def close_response(value: httpx.Response) -> None:
+        # A known/unknown failure from public close after actual resource release.
+        await actual_response_close(value)
+        raise response_error
+
+    async def close_client(value: httpx.AsyncClient) -> None:
+        await actual_client_close(value)
+        if fault in ("both", "both_unknown"):
+            raise client_error
+
+    def slow(peer: socket.socket, stopped: Event) -> None:
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 52\r\n\r\n{")
+        if mode == "cancel":
+            token.set()
+        stopped.wait(2)
+
+    reply = (
+        b"HTTP/1.1 503 Error\r\n\r\n"
+        if mode == "service"
+        else response(b"{")
+        if mode == "json"
+        else response()
+    )
+    with server(slow if mode in ("cancel", "timeout") else reply) as (url, requests):
+        with monkeypatch.context() as patch:
+            patch.setattr(httpx.Response, "aclose", close_response)
+            patch.setattr(httpx.AsyncClient, "aclose", close_client)
+            patch.setattr(socket.socket, "connect", connect)
+            patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
+            with pytest.raises(BaseException) as caught:
+                Runtime(LocalSettings(server_url=url)).connect(
+                    control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                ).__enter__()
+        error = caught.value
+        if mode in ("cancel", "timeout"):
+            assert isinstance(
+                error,
+                OperationCancelledError if mode == "cancel" else OperationTimeoutError,
+            )
+            assert error is observed_errors[0]
+        elif mode in ("service", "json"):
+            assert isinstance(error, ServiceConnectionError)
+            assert error.code == (
+                "service_http_error"
+                if mode == "service"
+                else "service_invalid_response"
+            )
+        elif fault in ("known", "both"):
+            assert (
+                isinstance(error, RuntimeOperationError)
+                and error.code == "http_cleanup_failed"
+            )
+        elif fault == "unknown":
+            assert error is response_error
         else:
-            with scope as connection:
-                assert connection.appium_version == "3.7.0"
+            assert isinstance(error, BaseExceptionGroup)
+            assert error.exceptions == (response_error, client_error)
+        cleanup = (
+            error.__dict__.get("runtime_http_cleanup_error")
+            if mode != "success"
+            else error
+        )
+        assert cleanup is not None
+        if fault == "unknown":
+            assert cleanup is response_error
+        if fault == "both":
+            assert (
+                isinstance(cleanup, RuntimeOperationError)
+                and cleanup.code == "http_cleanup_failed"
+            )
+            group = cleanup.runtime_http_cleanup_error
+            assert isinstance(group, BaseExceptionGroup)
+            assert isinstance(group.exceptions[0], RuntimeOperationError)
+            assert group.exceptions[1] is client_error
+        assert peers and all(peer.fileno() == -1 for peer in peers)
+        assert len(requests) == 1
+        assert not any(
+            "portal" in t.name for t in threads() if t.ident not in initial_threads
+        )
+        Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_close_failure_before_response_flag_still_closes_client(
+    monkeypatch: pytest.MonkeyPatch,
+    unknown: bool,
+) -> None:
+    import httpx
+
+    fault = (
+        ValueError("unknown before close")
+        if unknown
+        else httpx.CloseError("before close")
+    )
+    peers: list[socket.socket] = []
+    actual_connect = socket.socket.connect
+    actual_client_close = httpx.AsyncClient.aclose
+    client_closed: list[bool] = []
+
+    def connect(peer: socket.socket, address: Any) -> None:
+        peers.append(peer)
+        actual_connect(peer, address)
+
+    async def fail(response: httpx.Response) -> None:
+        assert not response.is_closed
+        raise fault
+
+    async def close(client: httpx.AsyncClient) -> None:
+        await actual_client_close(client)
+        client_closed.append(client.is_closed)
+
+    with server(response()) as (url, _):
+        with monkeypatch.context() as patch:
+            patch.setattr(httpx.Response, "aclose", fail)
+            patch.setattr(httpx.AsyncClient, "aclose", close)
+            patch.setattr(socket.socket, "connect", connect)
+            with pytest.raises(
+                ValueError if unknown else RuntimeOperationError
+            ) as caught:
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        if unknown:
+            assert caught.value is fault
+        else:
+            assert isinstance(caught.value, RuntimeOperationError)
+            assert caught.value.code == "http_cleanup_failed"
+        assert client_closed == [True]
+        assert peers and all(peer.fileno() == -1 for peer in peers)
+        Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("stage", ["future", "portal"])
+def test_completion_race_checks_budget(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    from appium_connect_agent.runtime import _http
+
+    actual_checkpoint = _diagnostics._Operation.checkpoint
+    actual_request = _http._request
+    from anyio.from_thread import start_blocking_portal
+
+    actual_portal = start_blocking_portal
+    finished = Event()
+    portal_closed = Event()
+
+    async def request(url: str, result: _http.HTTPResult) -> None:
+        await actual_request(url, result)
+        finished.set()
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        with actual_portal(*args, **kwargs) as current:
+            yield current
+        portal_closed.set()
+
+    def checkpoint(operation: Any) -> None:
+        if (finished if stage == "future" else portal_closed).is_set():
+            operation.deadline = 0
+        actual_checkpoint(operation)
+
+    with server(response()) as (url, requests):
+        with monkeypatch.context() as patch:
+            patch.setattr(_http, "_request", request)
+            patch.setattr(_http, "start_blocking_portal", portal)
+            patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
+            with pytest.raises(OperationTimeoutError):
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        assert len(requests) == 1 and portal_closed.is_set()
+        Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("kind", ["timeout", "protocol", "network", "local", "unknown"])
+def test_httpx_error_mapping_without_swallowing_defects(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    import httpx
+
+    errors: dict[str, BaseException] = {
+        "timeout": httpx.ReadTimeout("private"),
+        "protocol": httpx.RemoteProtocolError("private"),
+        "network": httpx.ReadError("private"),
+        "local": httpx.LocalProtocolError("private"),
+        "unknown": ValueError("private"),
+    }
+    original = errors[kind]
+
+    async def send(
+        client: httpx.AsyncClient, *args: Any, **kwargs: Any
+    ) -> httpx.Response:
+        raise original
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    with pytest.raises(BaseException) as caught:
+        Runtime(LocalSettings(server_url="http://127.0.0.1:1")).connect().__enter__()
+    if kind == "timeout":
+        assert isinstance(caught.value, OperationTimeoutError)
+    elif kind in ("protocol", "network"):
+        assert isinstance(caught.value, ServiceConnectionError)
+        assert caught.value.code == (
+            "service_invalid_response" if kind == "protocol" else "service_unavailable"
+        )
+    else:
+        assert caught.value is original
+    Runtime(LocalSettings()).diagnose()
+
+
+def test_http_and_coordination_cleanup_remain_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    actual_lock = _coordination.account_lock
+    actual_close = httpx.AsyncClient.aclose
+
+    @contextmanager
+    def lock() -> Iterator[None]:
+        with actual_lock():
+            yield
+        raise OSError("coordination cleanup")
+
+    async def close(client: httpx.AsyncClient) -> None:
+        await actual_close(client)
+        raise httpx.CloseError("HTTP cleanup")
+
+    with server(b"HTTP/1.1 503 Unavailable\r\n\r\n") as (url, _):
+        with monkeypatch.context() as patch:
+            patch.setattr(_coordination, "account_lock", lock)
+            patch.setattr(httpx.AsyncClient, "aclose", close)
+            with pytest.raises(ServiceConnectionError) as caught:
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        assert caught.value.code == "service_http_error"
+        http_cleanup = caught.value.runtime_http_cleanup_error
+        assert isinstance(http_cleanup, RuntimeOperationError)
+        assert http_cleanup.code == "http_cleanup_failed"
+        assert (
+            caught.value.__dict__["runtime_cleanup_error"].code
+            == "coordination_unavailable"
+        )
+        Runtime(LocalSettings()).diagnose()
+
+
+def test_client_constructor_failure_closes_owned_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    original = ValueError("constructor defect")
+    closed: list[httpx.AsyncHTTPTransport] = []
+    actual_close = httpx.AsyncHTTPTransport.aclose
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise original
+
+    async def close(transport: httpx.AsyncHTTPTransport) -> None:
+        await actual_close(transport)
+        closed.append(transport)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", fail)
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "aclose", close)
+    with pytest.raises(ValueError) as caught:
+        Runtime(LocalSettings(server_url="http://127.0.0.1:1")).connect().__enter__()
+    assert caught.value is original and len(closed) == 1
+    Runtime(LocalSettings()).diagnose()
+
+
+def test_connection_from_running_loop_keeps_callback_on_caller() -> None:
+    import asyncio
+    from threading import get_ident
+
+    caller = get_ident()
+    callbacks: list[int] = []
+
+    async def use(url: str) -> None:
+        with Runtime(
+            LocalSettings(server_url=url),
+            on_progress=lambda event: callbacks.append(get_ident()),
+        ).connect():
+            assert asyncio.get_running_loop().is_running()
+
+    with server(response()) as (url, requests):
+        asyncio.run(use(url))
+        assert len(requests) == 1 and callbacks and set(callbacks) == {caller}
+
+
+def test_zero_io_constructor_and_static_diagnose_create_no_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Unexpected thread/network operation")
+
+    monkeypatch.setattr(Thread, "start", forbidden)
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    runtime = Runtime(LocalSettings(server_url="http://127.0.0.1:1"))
+    runtime.connect()
+    runtime.diagnose()
+
+
+def test_real_sigint_during_http_wait_releases_resources(tmp_path: Path) -> None:
+    script = """
+import os, signal, sys, threading, socket
+from pathlib import Path
+from appium_connect_agent.runtime import Runtime, LocalSettings, _coordination
+_coordination._account_home = lambda: Path(sys.argv[1])
+actual_connect = socket.socket.connect
+timers = []
+def connect(peer, address):
+    try:
+        return actual_connect(peer, address)
+    finally:
+        timer = threading.Timer(0.1, lambda: os.kill(os.getpid(), signal.SIGINT))
+        timers.append(timer)
+        timer.start()
+socket.socket.connect = connect
+try:
+    Runtime(LocalSettings(server_url=sys.argv[2])).connect().__enter__()
+except KeyboardInterrupt:
+    for timer in timers:
+        timer.join()
+    assert not any('portal' in t.name for t in threading.enumerate())
+    Runtime(LocalSettings()).diagnose()
+    print('RELEASED')
+else:
+    raise AssertionError('interrupt missing')
+"""
+
+    def stall(peer: socket.socket, stopped: Event) -> None:
+        stopped.wait(3)
+
+    with server(stall) as (url, requests):
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                script,
+                str(_coordination._account_home()),
+                url,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert child.returncode == 0, child.stderr
+        assert child.stdout == "RELEASED\n" and len(requests) == 1
+
+
+def test_both_public_closes_fail_before_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    peers: list[socket.socket] = []
+    actual_connect = socket.socket.connect
+    first = httpx.CloseError("before response")
+    second = ValueError("before client")
+
+    def connect(peer: socket.socket, address: Any) -> None:
+        peers.append(peer)
+        actual_connect(peer, address)
+
+    async def response_close(value: httpx.Response) -> None:
+        raise first
+
+    async def client_close(value: httpx.AsyncClient) -> None:
+        raise second
+
+    def slow(peer: socket.socket, stopped: Event) -> None:
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 52\r\n\r\n{")
+        stopped.wait(2)
+
+    with server(slow) as (url, _):
+        with monkeypatch.context() as patch:
+            patch.setattr(socket.socket, "connect", connect)
+            patch.setattr(httpx.Response, "aclose", response_close)
+            patch.setattr(httpx.AsyncClient, "aclose", client_close)
+            with pytest.raises(OperationTimeoutError) as caught:
+                Runtime(LocalSettings(server_url=url)).connect(
+                    control=OperationControl(timeout_seconds=0.2)
+                ).__enter__()
+        cleanup = caught.value.runtime_http_cleanup_error
+        assert (
+            isinstance(cleanup, RuntimeOperationError)
+            and cleanup.code == "http_cleanup_failed"
+        )
+        group = cleanup.runtime_http_cleanup_error
+        assert isinstance(group, BaseExceptionGroup) and group.exceptions[1] is second
+        assert peers and all(peer.fileno() == -1 for peer in peers)
+        Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize(
+    "mode", ["length", "chunked", "header", "read", "cancel", "timeout"]
+)
+@pytest.mark.parametrize("unknown", [False, True])
+def test_f1_internal_auto_close_preserves_primary(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    unknown: bool,
+) -> None:
+    from threading import enumerate as threads
+
+    import httpcore
+    import httpx
+    from httpcore._async.http11 import AsyncHTTP11Connection
+
+    close_error = (
+        ValueError("internal close") if unknown else httpx.CloseError("internal close")
+    )
+    read_error = httpcore.ReadError("read failure")
+    actual_close = AsyncHTTP11Connection.aclose
+    actual_receive = AsyncHTTP11Connection._receive_response_body
+    actual_connect = socket.socket.connect
+    actual_checkpoint = _diagnostics._Operation.checkpoint
+    caller_errors: list[BaseException] = []
+    peers: list[socket.socket] = []
+    token = Event()
+
+    async def close(connection: AsyncHTTP11Connection) -> None:
+        await actual_close(connection)
+        raise close_error
+
+    async def receive(
+        connection: AsyncHTTP11Connection, request: httpcore.Request
+    ) -> Any:
+        if mode == "read":
+            raise read_error
+        async for part in actual_receive(connection, request):
+            yield part
+
+    def connect(peer: socket.socket, address: Any) -> None:
+        peers.append(peer)
+        actual_connect(peer, address)
+
+    def checkpoint(operation: Any) -> None:
+        try:
+            actual_checkpoint(operation)
+        except BaseException as error:
+            caller_errors.append(error)
+            raise
+
+    def slow(peer: socket.socket, stopped: Event) -> None:
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 52\r\n\r\n")
+        if mode == "cancel":
+            token.set()
+        stopped.wait(2)
+
+    reply = (
+        chunks(READY, b"")
+        if mode == "chunked"
+        else (
+            b"HTTP/1.1 200 OK\r\nBad header\r\n\r\n"
+            if mode == "header"
+            else b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + READY
+        )
+    )
+    with server(slow if mode in ("cancel", "timeout") else reply) as (url, requests):
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncHTTP11Connection, "aclose", close)
+            patch.setattr(AsyncHTTP11Connection, "_receive_response_body", receive)
+            patch.setattr(socket.socket, "connect", connect)
+            patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
+            with pytest.raises(RuntimeOperationError) as caught:
+                Runtime(LocalSettings(server_url=url)).connect(
+                    control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                ).__enter__()
+        error = caught.value
+        if mode in ("cancel", "timeout"):
+            assert error is caller_errors[0]
+            assert isinstance(
+                error,
+                OperationCancelledError if mode == "cancel" else OperationTimeoutError,
+            )
+        else:
+            assert isinstance(error, ServiceConnectionError)
+            assert error.code == (
+                "service_unavailable" if mode == "read" else "service_invalid_response"
+            )
+        assert not any(
+            check.reason_code == "service_ready"
+            for check in error.partial_report.checks
+        )
+        cleanup = error.runtime_http_cleanup_error
+        if unknown:
+            assert cleanup is close_error
+        else:
+            assert (
+                isinstance(cleanup, RuntimeOperationError)
+                and cleanup.code == "http_cleanup_failed"
+            )
+        assert (
+            len(requests) == 1 and peers and all(peer.fileno() == -1 for peer in peers)
+        )
+        assert not any("portal" in thread.name for thread in threads())
+        Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("with_traced_cleanup", [False, True])
+@pytest.mark.parametrize("same_type", [False, True])
+def test_f1_distinct_pool_terminal_is_retained(
+    monkeypatch: pytest.MonkeyPatch,
+    with_traced_cleanup: bool,
+    same_type: bool,
+) -> None:
+    import httpx
+    from httpcore._async.connection_pool import PoolByteStream
+    from httpcore._async.http11 import AsyncHTTP11Connection
+
+    actual_pool_close = PoolByteStream.aclose
+    actual_http_close = AsyncHTTP11Connection.aclose
+    first = ValueError("traced close")
+    extra = (
+        httpx.RemoteProtocolError("distinct protocol object")
+        if same_type
+        else ValueError("extra terminal")
+    )
+    injected = False
+
+    async def close(connection: AsyncHTTP11Connection) -> None:
+        await actual_http_close(connection)
+        if with_traced_cleanup:
+            raise first
+
+    async def pool_close(stream: PoolByteStream) -> None:
+        nonlocal injected
+        try:
+            await actual_pool_close(stream)
+        finally:
+            # Synthetic boundary: original pool cleanup ran; this is a distinct extra.
+            if not injected:
+                injected = True
+                raise extra
+
+    with server(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + READY) as (
+        url,
+        requests,
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(AsyncHTTP11Connection, "aclose", close)
+            patch.setattr(PoolByteStream, "aclose", pool_close)
+            with pytest.raises(ServiceConnectionError) as caught:
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        assert caught.value.code == "service_invalid_response"
+        assert not any(
+            c.reason_code == "service_ready" for c in caught.value.partial_report.checks
+        )
+        cleanup = caught.value.runtime_http_cleanup_error
+        if with_traced_cleanup:
+            assert isinstance(cleanup, BaseExceptionGroup)
+            assert cleanup.exceptions == (first, extra)
+        else:
+            assert cleanup is extra
+        assert len(requests) == 1
+        Runtime(LocalSettings()).diagnose()
+
+
+def test_f1_direct_mapping_does_not_drop_other_objects() -> None:
+    import httpcore
+    import httpx
+
+    from appium_connect_agent.runtime._http import HTTPResult
+
+    primary = httpcore.RemoteProtocolError("original")
+    mapped = httpx.RemoteProtocolError("mapped")
+    mapped.__cause__ = primary
+    result = HTTPResult(traced_error=primary)
+    result.retain(mapped, False)
+    assert result.error is primary and result.cleanup_errors == []
+    distinct = httpx.RemoteProtocolError("same class, different object")
+    result.retain(distinct, False)
+    assert result.error is primary and result.cleanup_errors == [distinct]
+    unrelated = ValueError("arbitrary context")
+    unrelated.__context__ = primary
+    result.retain(unrelated, False)
+    assert result.cleanup_errors[1] is unrelated
+    known = ValueError("already traced")
+    result.traced_cleanup = known
+    final = ValueError("extra final")
+    result.retain(final, False)
+    assert result.cleanup_errors[2:] == [known, final]
+
+
+def test_f1_suppressed_write_still_accepts_valid_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpcore
+    from httpcore._async.http11 import AsyncHTTP11Connection
+
+    actual = AsyncHTTP11Connection._send_request_body
+
+    async def send(
+        connection: AsyncHTTP11Connection, request: httpcore.Request
+    ) -> None:
+        await actual(connection, request)
+        raise httpcore.WriteError("HTTPcore explicitly suppresses this")
+
+    monkeypatch.setattr(AsyncHTTP11Connection, "_send_request_body", send)
+    with server(response()) as (url, requests):
+        with Runtime(LocalSettings(server_url=url)).connect() as connection:
+            assert connection.appium_version == "3.7.0"
+        assert len(requests) == 1
+
+
+@pytest.mark.parametrize("kind", ["read", "timeout", "unknown"])
+def test_f1_raw_header_failures_map_and_preserve_unknown_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    import httpcore
+    from httpcore._async.http11 import AsyncHTTP11Connection
+    from httpcore._backends.anyio import AnyIOStream
+
+    primary = (
+        httpcore.ReadError("read")
+        if kind == "read"
+        else httpcore.ReadTimeout("timeout")
+        if kind == "timeout"
+        else ValueError("unknown operation")
+    )
+    secondary = ValueError("close")
+    actual_close = AsyncHTTP11Connection.aclose
+
+    async def read(
+        stream: AnyIOStream, max_bytes: int, timeout: float | None = None
+    ) -> bytes:
+        raise primary
+
+    async def close(connection: AsyncHTTP11Connection) -> None:
+        await actual_close(connection)
+        raise secondary
+
+    with server(response()) as (url, _):
+        with monkeypatch.context() as patch:
+            patch.setattr(AnyIOStream, "read", read)
+            patch.setattr(AsyncHTTP11Connection, "aclose", close)
+            with pytest.raises(BaseException) as caught:
+                Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        error = caught.value
+        if kind == "unknown":
+            assert error is primary
+        elif kind == "timeout":
+            assert isinstance(error, OperationTimeoutError)
+        else:
+            assert (
+                isinstance(error, ServiceConnectionError)
+                and error.code == "service_unavailable"
+            )
+        assert error.__dict__["runtime_http_cleanup_error"] is secondary
+        Runtime(LocalSettings()).diagnose()

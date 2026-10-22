@@ -11,14 +11,18 @@ from threading import Lock, get_ident
 from types import TracebackType
 from typing import Literal
 
+import httpcore
+import httpx
+
 from . import _coordination
 from ._diagnostics import Runtime, _Operation
-from ._http import HTTPFailure, get_status
+from ._http import HTTPFailure, HTTPResult, get_status
 from ._models import (
     DiagnosticReport,
     EnvironmentBusyError,
     InvalidStateError,
     OperationControl,
+    OperationTimeoutError,
     RuntimeOperationError,
     ServiceConnectionError,
     UnsupportedVersionError,
@@ -48,6 +52,37 @@ def _version(value: object) -> str | None:
 
 def _reject_constant(value: str) -> None:
     raise HTTPFailure()
+
+
+def _http_error(error: BaseException, operation: _Operation) -> BaseException:
+    if isinstance(error, (httpx.TimeoutException, httpcore.TimeoutException)):
+        return operation.error(OperationTimeoutError, "operation_timeout")
+    if isinstance(error, (httpx.RemoteProtocolError, httpcore.RemoteProtocolError)):
+        return HTTPFailure()
+    if isinstance(error, (httpx.NetworkError, httpx.ProxyError, httpcore.NetworkError)):
+        return HTTPFailure("service_unavailable")
+    return error
+
+
+def _http_cleanup(result: HTTPResult, operation: _Operation) -> BaseException | None:
+    errors: list[BaseException] = []
+    known = False
+    for error in result.cleanup_errors:
+        if isinstance(error, httpx.CloseError):
+            known = True
+            errors.append(operation.error(RuntimeOperationError, "http_cleanup_failed"))
+        else:
+            errors.append(error)
+    if not errors:
+        return None
+    if len(errors) == 1:
+        return errors[0]
+    group = BaseExceptionGroup("HTTP resource cleanup failures", errors)
+    if known:
+        failure = operation.error(RuntimeOperationError, "http_cleanup_failed")
+        failure.runtime_http_cleanup_error = group
+        return failure
+    return group
 
 
 @dataclass(frozen=True)
@@ -85,6 +120,7 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
         operation = self.operation = _Operation(
             self.control, self.runtime._on_progress, phase="connecting"
         )
+        http_result = HTTPResult()
         operation.checkpoint()
         try:
             lock = _coordination.account_lock()
@@ -113,10 +149,14 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
             if not supported:
                 raise operation.error(RuntimeOperationError, "unsupported_host")
             try:
-                body = get_status(url, operation.checkpoint, operation.deadline)
+                http_result = get_status(url, operation.checkpoint, operation.deadline)
+                if http_result.error is not None:
+                    raise _http_error(http_result.error, operation)
                 operation.checkpoint()
                 try:
-                    value = json.loads(body, parse_constant=_reject_constant)
+                    value = json.loads(
+                        http_result.body, parse_constant=_reject_constant
+                    )
                 except (ValueError, RecursionError):
                     raise HTTPFailure() from None
                 if not isinstance(value, dict) or not isinstance(
@@ -157,6 +197,10 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 )
             operation.add("qualified_support", "unknown", "not_qualified")
             operation.add("device", "unknown", "not_checked")
+            cleanup = _http_cleanup(http_result, operation)
+            if cleanup is not None:
+                http_result.cleanup_errors.clear()
+                raise cleanup
             self.runtime._active_thread = get_ident()
             self.active = True
             return RuntimeConnection(
@@ -167,6 +211,9 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 operation.report(),
             )
         except BaseException as error:
+            cleanup = _http_cleanup(http_result, operation)
+            if cleanup is not None:
+                error.__dict__["runtime_http_cleanup_error"] = cleanup
             self._release(error)
             raise
 
