@@ -248,9 +248,14 @@ def test_repair1_cleanup_preserves_cancel_or_interrupt(
 def test_repair1_cleanup_without_original_is_still_an_operation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from appium_connect_agent.runtime._diagnostics import _Operation
+
+    # This OS fixture targets lock cleanup, not component-file descriptors.
+    monkeypatch.setattr(_Operation, "driver", lambda self, settings: None)
     with memory_lock_os(monkeypatch) as (opened, closed, _):
         with pytest.raises(RuntimeOperationError, match="coordination_unavailable"):
             Runtime(LocalSettings()).diagnose()
         assert closed == list(reversed(opened))
+        assert len(closed) == 6
         assert _coordination._PROCESS_LOCK.acquire(blocking=False)
         _coordination._PROCESS_LOCK.release()

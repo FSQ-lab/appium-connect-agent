@@ -4,50 +4,66 @@ from __future__ import annotations
 
 import json
 import platform
-import re
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from threading import Lock, get_ident
 from types import TracebackType
 from typing import Literal
 
+import httpcore
+import httpx
+
 from . import _coordination
 from ._diagnostics import Runtime, _Operation
-from ._http import HTTPFailure, get_status
+from ._http import HTTPFailure, HTTPResult, get_status
 from ._models import (
     DiagnosticReport,
     EnvironmentBusyError,
     InvalidStateError,
     OperationControl,
+    OperationTimeoutError,
     RuntimeOperationError,
     ServiceConnectionError,
     UnsupportedVersionError,
 )
-from ._semver import _VERSION
+from ._semver import version as parse_version
 
 Compatibility = Literal["declared_compatible", "unverified"]
 
 
-def _version(value: object) -> str | None:
-    if not isinstance(value, str) or len(value) > 128:
-        return None
-    match = re.fullmatch(
-        _VERSION + r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
-        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
-        value,
-    )
-    if match is None:
-        return None
-    if match[4] and any(
-        part.isdigit() and len(part) > 1 and part.startswith("0")
-        for part in match[4].split(".")
-    ):
-        return None
-    return value
-
-
 def _reject_constant(value: str) -> None:
     raise HTTPFailure()
+
+
+def _http_error(error: BaseException, operation: _Operation) -> BaseException:
+    if isinstance(error, (httpx.TimeoutException, httpcore.TimeoutException)):
+        return operation.error(OperationTimeoutError, "operation_timeout")
+    if isinstance(error, (httpx.RemoteProtocolError, httpcore.RemoteProtocolError)):
+        return HTTPFailure()
+    if isinstance(error, (httpx.NetworkError, httpx.ProxyError, httpcore.NetworkError)):
+        return HTTPFailure("service_unavailable")
+    return error
+
+
+def _http_cleanup(result: HTTPResult, operation: _Operation) -> BaseException | None:
+    errors: list[BaseException] = []
+    known = False
+    for error in result.cleanup_errors:
+        if isinstance(error, httpx.CloseError):
+            known = True
+            errors.append(operation.error(RuntimeOperationError, "http_cleanup_failed"))
+        else:
+            errors.append(error)
+    if not errors:
+        return None
+    if len(errors) == 1:
+        return errors[0]
+    group = BaseExceptionGroup("HTTP resource cleanup failures", errors)
+    if known:
+        failure = operation.error(RuntimeOperationError, "http_cleanup_failed")
+        failure.runtime_http_cleanup_error = group
+        return failure
+    return group
 
 
 @dataclass(frozen=True)
@@ -85,6 +101,7 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
         operation = self.operation = _Operation(
             self.control, self.runtime._on_progress, phase="connecting"
         )
+        http_result = HTTPResult()
         operation.checkpoint()
         try:
             lock = _coordination.account_lock()
@@ -113,10 +130,14 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
             if not supported:
                 raise operation.error(RuntimeOperationError, "unsupported_host")
             try:
-                body = get_status(url, operation.checkpoint, operation.deadline)
+                http_result = get_status(url, operation.checkpoint, operation.deadline)
+                if http_result.error is not None:
+                    raise _http_error(http_result.error, operation)
                 operation.checkpoint()
                 try:
-                    value = json.loads(body, parse_constant=_reject_constant)
+                    value = json.loads(
+                        http_result.body, parse_constant=_reject_constant
+                    )
                 except (ValueError, RecursionError):
                     raise HTTPFailure() from None
                 if not isinstance(value, dict) or not isinstance(
@@ -137,10 +158,11 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 raise operation.error(ServiceConnectionError, failure)
             operation.add("service", "pass", "service_ready")
             build = value.get("build")
-            version = _version(
+            observed = parse_version(
                 build.get("version") if isinstance(build, dict) else None
             )
-            compatible = version is not None and int(version.split(".")[0]) == 3
+            version = observed.text if observed is not None else None
+            compatible = observed is not None and observed.major == 3
             operation.add(
                 "declared_compatibility",
                 "pass" if compatible else "unknown" if version is None else "fail",
@@ -157,6 +179,10 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 )
             operation.add("qualified_support", "unknown", "not_qualified")
             operation.add("device", "unknown", "not_checked")
+            cleanup = _http_cleanup(http_result, operation)
+            if cleanup is not None:
+                http_result.cleanup_errors.clear()
+                raise cleanup
             self.runtime._active_thread = get_ident()
             self.active = True
             return RuntimeConnection(
@@ -167,6 +193,9 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
                 operation.report(),
             )
         except BaseException as error:
+            cleanup = _http_cleanup(http_result, operation)
+            if cleanup is not None:
+                error.__dict__["runtime_http_cleanup_error"] = cleanup
             self._release(error)
             raise
 

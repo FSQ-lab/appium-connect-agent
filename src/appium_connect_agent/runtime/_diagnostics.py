@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import platform
 import time
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import get_ident
@@ -20,7 +20,6 @@ from ._inspection import (
     Finding,
     Package,
     Reader,
-    constraint,
     normalized,
     path_evidence,
 )
@@ -35,7 +34,7 @@ from ._models import (
     RuntimeOperationError,
     Status,
 )
-from ._semver import satisfies
+from ._semver import constraint, satisfies
 
 if TYPE_CHECKING:
     from ._connection import RuntimeConnection
@@ -256,6 +255,38 @@ class _Operation:
         )
 
 
+@contextmanager
+def _diagnostic_lock(operation: _Operation, reuse: bool) -> Iterator[None]:
+    if reuse:
+        yield
+        return
+    lock = _coordination.account_lock()
+    try:
+        lock.__enter__()
+    except _coordination.Busy:
+        raise operation.error(EnvironmentBusyError, "environment_busy") from None
+    except (_coordination.CoordinationFailure, OSError, KeyError):
+        raise operation.error(
+            RuntimeOperationError, "coordination_unavailable"
+        ) from None
+    try:
+        yield
+    except BaseException as original:
+        try:
+            lock.__exit__(type(original), original, original.__traceback__)
+        except BaseException as cleanup:
+            if cleanup is not original:
+                original.__dict__["runtime_cleanup_error"] = cleanup
+        raise
+    else:
+        try:
+            lock.__exit__(None, None, None)
+        except (_coordination.CoordinationFailure, OSError, KeyError):
+            raise operation.error(
+                RuntimeOperationError, "coordination_unavailable"
+            ) from None
+
+
 class Runtime:
     """Diagnose local metadata or reuse an explicitly configured external service."""
 
@@ -292,11 +323,7 @@ class Runtime:
             raise operation.error(EnvironmentBusyError, "environment_busy")
         self._diagnosing = True
         try:
-            with (
-                nullcontext()
-                if self._active_thread == get_ident()
-                else _coordination.account_lock()
-            ):
+            with _diagnostic_lock(operation, self._active_thread == get_ident()):
                 operation.checkpoint()
                 system = platform.system()
                 operation.add(
@@ -323,11 +350,5 @@ class Runtime:
                 operation.add("service", "unknown", "not_checked")
                 operation.add("device", "unknown", "not_checked")
                 return operation.report()
-        except _coordination.Busy:
-            raise operation.error(EnvironmentBusyError, "environment_busy") from None
-        except (_coordination.CoordinationFailure, OSError, KeyError):
-            raise operation.error(
-                RuntimeOperationError, "coordination_unavailable"
-            ) from None
         finally:
             self._diagnosing = False

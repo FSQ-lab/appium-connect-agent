@@ -6,7 +6,9 @@
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
 Contracts 提供唯一共享设置值。Runtime 不安装、启停 Appium 或管理 Session；
-自管服务、设备操作、MCP 和正式产品 CLI 尚未交付。没有产品运行依赖或经真实
+自管服务、设备操作、MCP 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖
+为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于
+错误识别与 trace 版本固定，迁移验收状态见台账。尚无经真实
 Android Session 验证的兼容组合。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见
 [AGENTS.md](AGENTS.md)。
 
@@ -75,7 +77,8 @@ uv build
 
 `uv.lock` 纳入版本控制。唯一默认 `dev` 组包含 pytest、Ruff、mypy 和
 import-linter；锁定同步后无需另行安装质量工具。依赖变更使用 `uv add --dev`、
-`uv remove --dev` 等 uv 命令，并同步提交锁文件。运行依赖当前为空。
+`uv remove --dev` 等 uv 命令，并同步提交锁文件。运行依赖用于 Runtime HTTP 连接与操作内受管异步桥接，
+实际版本由锁文件固定。
 
 pytest 覆盖包导入、Runtime 静态诊断、受控 HTTP 连接、错误恢复及真实跨进程协调锁；
 使用已安装包，不注入源码搜索路径。测试锁隔离于临时账号目录。
@@ -133,6 +136,10 @@ ANDROID_HOME 或 ANDROID_SDK_ROOT 作为设置。版本及布局存在不证明�
 Node 实际版本、服务和设备状态不检查；报告没有总体 ready 布尔值。
 
 声明约束已知不匹配时 declared_compatibility 为 fail；无法可靠解析则为 unknown。
+Runtime 使用 node-semver 0.9.1 的严格公开版本/范围能力；支持经验证的 AND/OR、
+caret/tilde、部分版本、x 和 hyphen 范围，并采用默认 prerelease 规则。
+非法声明仍为 unknown；有效声明的识别扩展可能将原 unknown 变为明确匹配或不匹配。
+报告保留已验证版本的 build 信息；匹配不执行 Node/npm，也不表示设备或组合已实测。
 qualified_support 独立保持 unknown，直到后续获授权的真实 Android Session 资格验证。
 当前 Appium 3.7.0 / UiAutomator2 8.7.0 仅为观测候选，不构成支持承诺。
 
@@ -179,7 +186,8 @@ with runtime.connect(control=OperationControl(timeout_seconds=10)) as connection
   declared_compatible，已知其他主版本拒绝；只有版本信息不足才为 unverified。
   这不是设备、driver 精确组合或 Session 可用性证明。
 - OperationControl 默认 10 秒只约束进入范围的准备；各阶段共享总预算，包含同步回调，
-  不限制 with 主体时长。同步回调阻塞不能被安全强制打断，返回后才检查超预算。
+  不限制 with 主体时长。预算到期触发取消，完成必要清理后返回；同步回调阻塞不能
+  被安全强制打断，返回后才检查超预算。
   active 后不因准备 deadline 到期或其 Event 被设置而自动结束业务范围。
 - 当前账号固定锁保持到范围退出，不按 URL/端口另建锁。active 所属线程可顺序调用
   同实例静态 diagnose，不再次联网或重取锁；并发、嵌套及诊断回调重入明确报忙。
@@ -188,7 +196,11 @@ with runtime.connect(control=OperationControl(timeout_seconds=10)) as connection
   report 仍可读；已经保存的 URL 字符串无法撤销，已有客户端不会因此被断开。
 - Runtime 不安装、启动、停止或重启外部 Appium，也不选择设备、创建或关闭 Session。
   Session 创建者或后续 Automation 负责其生命周期；退出 with 不等于 driver.quit()。
-  主体异常原样保留，本库资源清理失败另附 runtime_cleanup_error，不覆盖 Session 错误。
+  主体异常原样保留，协调资源清理失败另附 runtime_cleanup_error，不覆盖 Session 错误。
+- HTTP 准备使用操作内受管线程，HTTP 连接和线程结束后才进入主体或返回失败。
+  HTTP 清理失败另附 runtime_http_cleanup_error；无主错误时以 http_cleanup_failed 失败。
+  保留 64 KiB body 限制并拒绝 EOF-only 成功响应；协议语法由 HTTPX 处理，
+  不再承诺旧版头/trailer 16 KiB 和线上报文 96 KiB 精确上限。
 
 默认产品测试使用临时 loopback HTTP 端点和隔离锁测试进程，结束关闭回收；
 不依赖真实 Appium，不向真实服务注入故障。真实验收另行使用获准地址的 GET /status，

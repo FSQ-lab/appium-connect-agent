@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "Python project foundation for Appium agent integration."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "httpx==0.28.1",
+    "anyio==4.15.1",
+    "httpcore==1.0.9",
+    "node-semver==0.9.1",
+]
 
 [dependency-groups]
 dev = [
@@ -20,6 +25,9 @@ dev = [
 
 [tool.uv]
 default-groups = ["dev"]
+
+[tool.uv.build-backend]
+source-include = ["typings/nodesemver/__init__.pyi"]
 
 [tool.ruff]
 target-version = "py311"
@@ -37,6 +45,7 @@ indent-style = "space"
 python_version = "3.11"
 strict = true
 files = ["src", "tests"]
+mypy_path = "$MYPY_CONFIG_FILE_DIR/typings"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

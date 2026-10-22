@@ -65,6 +65,7 @@ class RuntimeOperationError(Exception):
         self.code = code
         self.operation_id = operation_id
         self.partial_report = partial_report
+        self.runtime_http_cleanup_error: BaseException | None = None
 
 
 class EnvironmentBusyError(RuntimeOperationError):
