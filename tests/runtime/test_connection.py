@@ -1669,3 +1669,265 @@ def test_f1_raw_header_failures_map_and_preserve_unknown_identity(
             )
         assert error.__dict__["runtime_http_cleanup_error"] is secondary
         Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("mode", ["success", "request", "cancel", "timeout"])
+@pytest.mark.parametrize("close_kind", ["known", "os", "value"])
+def test_ext_f1_portal_close_keeps_primary_and_resources(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    close_kind: str,
+) -> None:
+    from threading import enumerate as threads
+
+    import httpx
+    from anyio.from_thread import BlockingPortal, start_blocking_portal
+
+    from appium_connect_agent.runtime import _http
+
+    request_error = ValueError("original request error")
+    portal_error = (
+        httpx.CloseError("known portal close")
+        if close_kind == "known"
+        else OSError("unknown portal close")
+        if close_kind == "os"
+        else ValueError("unknown portal close")
+    )
+    original_send = httpx.AsyncClient.send
+    original_connect = socket.socket.connect
+    original_checkpoint = _diagnostics._Operation.checkpoint
+    peers: list[socket.socket] = []
+    caller_errors: list[BaseException] = []
+    joined = Event()
+    token = Event()
+
+    async def send(
+        client: httpx.AsyncClient, *args: Any, **kwargs: Any
+    ) -> httpx.Response:
+        if mode == "request":
+            raise request_error
+        return await original_send(client, *args, **kwargs)
+
+    def connect(peer: socket.socket, address: Any) -> None:
+        peers.append(peer)
+        original_connect(peer, address)
+
+    def checkpoint(operation: Any) -> None:
+        try:
+            original_checkpoint(operation)
+        except BaseException as error:
+            caller_errors.append(error)
+            raise
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[BlockingPortal]:
+        with start_blocking_portal(*args, **kwargs) as current:
+            yield current
+        assert not any("portal" in t.name for t in threads())
+        assert all(peer.fileno() == -1 for peer in peers)
+        joined.set()
+        raise portal_error
+
+    def slow(peer: socket.socket, stopped: Event) -> None:
+        peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 52\r\n\r\n")
+        if mode == "cancel":
+            token.set()
+        stopped.wait(2)
+
+    with server(slow if mode in ("cancel", "timeout") else response()) as (
+        url,
+        requests,
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(_http, "start_blocking_portal", portal)
+            patch.setattr(httpx.AsyncClient, "send", send)
+            patch.setattr(socket.socket, "connect", connect)
+            patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
+            scope = Runtime(LocalSettings(server_url=url)).connect(
+                control=OperationControl(timeout_seconds=0.2, cancellation=token)
+            )
+            with pytest.raises(BaseException) as caught:
+                scope.__enter__()
+        error = caught.value
+        assert isinstance(scope, _connection._ConnectionScope)
+        assert joined.is_set() and not scope.active
+        if mode == "request":
+            assert error is request_error
+        elif mode in ("cancel", "timeout"):
+            assert error is caller_errors[0]
+            assert isinstance(
+                error,
+                OperationCancelledError if mode == "cancel" else OperationTimeoutError,
+            )
+        elif close_kind == "known":
+            assert isinstance(error, RuntimeOperationError)
+            assert error.code == "http_cleanup_failed"
+        else:
+            assert error is portal_error
+        if mode != "success":
+            cleanup = error.__dict__["runtime_http_cleanup_error"]
+            if close_kind == "known":
+                assert (
+                    isinstance(cleanup, RuntimeOperationError)
+                    and cleanup.code == "http_cleanup_failed"
+                )
+            else:
+                assert cleanup is portal_error
+        assert len(requests) == (0 if mode == "request" else 1)
+        assert mode == "request" or peers
+        Runtime(LocalSettings()).diagnose()
+
+
+def test_ext_f1_preserves_http_and_account_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+    from anyio.from_thread import BlockingPortal, start_blocking_portal
+
+    from appium_connect_agent.runtime import _http
+
+    request_error = ValueError("request")
+    http_cleanup = ValueError("client close")
+    portal_cleanup = OSError("portal close")
+    original_close = httpx.AsyncClient.aclose
+    original_lock = _coordination.account_lock
+
+    async def send(*args: Any, **kwargs: Any) -> httpx.Response:
+        raise request_error
+
+    async def close(client: httpx.AsyncClient) -> None:
+        await original_close(client)
+        raise http_cleanup
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[BlockingPortal]:
+        with start_blocking_portal(*args, **kwargs) as current:
+            yield current
+        raise portal_cleanup
+
+    @contextmanager
+    def lock() -> Iterator[None]:
+        with original_lock():
+            yield
+        raise OSError("account close")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(httpx.AsyncClient, "send", send)
+        patch.setattr(httpx.AsyncClient, "aclose", close)
+        patch.setattr(_http, "start_blocking_portal", portal)
+        patch.setattr(_coordination, "account_lock", lock)
+        with pytest.raises(ValueError) as caught:
+            Runtime(
+                LocalSettings(server_url="http://127.0.0.1:1")
+            ).connect().__enter__()
+    assert caught.value is request_error
+    cleanup = caught.value.__dict__["runtime_http_cleanup_error"]
+    assert isinstance(cleanup, BaseExceptionGroup)
+    assert cleanup.exceptions == (http_cleanup, portal_cleanup)
+    assert (
+        caught.value.__dict__["runtime_cleanup_error"].code
+        == "coordination_unavailable"
+    )
+    Runtime(LocalSettings()).diagnose()
+
+
+def test_ext_f1_does_not_release_lock_before_portal_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from threading import enumerate as threads
+
+    from anyio.from_thread import BlockingPortal, start_blocking_portal
+
+    from appium_connect_agent.runtime import _http
+
+    closing = Event()
+    release = Event()
+    joined = Event()
+    failure = OSError("portal after join")
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[BlockingPortal]:
+        with start_blocking_portal(*args, **kwargs) as current:
+            yield current
+            closing.set()
+            assert release.wait(3)
+        joined.set()
+        raise failure
+
+    monkeypatch.setattr(_http, "start_blocking_portal", portal)
+    with server(response()) as (url, _), ThreadPoolExecutor(1) as executor:
+        future = executor.submit(
+            Runtime(LocalSettings(server_url=url)).connect().__enter__
+        )
+        try:
+            assert closing.wait(3)
+            assert not future.done() and not joined.is_set()
+            assert any("portal" in thread.name for thread in threads())
+            with pytest.raises(EnvironmentBusyError):
+                Runtime(LocalSettings()).diagnose()
+        finally:
+            release.set()
+        with pytest.raises(OSError) as caught:
+            future.result(3)
+        assert caught.value is failure and joined.is_set()
+    Runtime(LocalSettings()).diagnose()
+
+
+@pytest.mark.parametrize("stage", ["startup", "after_enter"])
+def test_ext_f1_startup_and_pre_request_failures_remain_primary(
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    from anyio.from_thread import BlockingPortal, start_blocking_portal
+
+    from appium_connect_agent.runtime import _http
+
+    original = ValueError("pre-request failure")
+    cleanup = OSError("exit failure")
+    calls = 0
+
+    def checkpoint() -> None:
+        nonlocal calls
+        calls += 1
+        if stage == "after_enter" and calls >= 2:
+            raise original
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[BlockingPortal]:
+        if stage == "startup":
+            raise original
+        with start_blocking_portal(*args, **kwargs) as current:
+            yield current
+        raise cleanup
+
+    monkeypatch.setattr(_http, "start_blocking_portal", portal)
+    result = _http.get_status("http://127.0.0.1:1", checkpoint, time.monotonic() + 1)
+    assert result.error is original
+    assert result.cleanup_errors == ([cleanup] if stage == "after_enter" else [])
+
+
+def test_ext_f1_protocol_failure_keeps_mapping_on_portal_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from anyio.from_thread import BlockingPortal, start_blocking_portal
+
+    from appium_connect_agent.runtime import _http
+
+    failure = ValueError("portal")
+
+    @contextmanager
+    def portal(*args: Any, **kwargs: Any) -> Iterator[BlockingPortal]:
+        with start_blocking_portal(*args, **kwargs) as current:
+            yield current
+        raise failure
+
+    monkeypatch.setattr(_http, "start_blocking_portal", portal)
+    with server(chunks(READY, b"")) as (url, _):
+        with pytest.raises(ServiceConnectionError) as caught:
+            Runtime(LocalSettings(server_url=url)).connect().__enter__()
+        assert caught.value.code == "service_invalid_response"
+        assert caught.value.runtime_http_cleanup_error is failure
+        assert not any(
+            c.reason_code == "service_ready" for c in caught.value.partial_report.checks
+        )
+    Runtime(LocalSettings()).diagnose()

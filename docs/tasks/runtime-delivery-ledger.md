@@ -10,7 +10,7 @@
 ## RT-LIB-01 / RT-LIB-02 库迁移
 
 - 当前授权：本会话用户显式调用 $spec-driven，采纳 Runtime 库迁移设计并要求 RT-LIB-01 → RT-LIB-02 顺序；随后对已展示的根/Runtime SPEC delta 回复“确认”，再明确“那我们使用独立的worktree 进行开发？”。沿用原库版本及 G1–G6，不自动提交/推送或扩大服务设备操作。
-- 当前状态：**RT-LIB-01 Done；RT-LIB-02 awaiting-spec-confirmation**。第一步F1经修复和独审关闭，456项产品验证及限定真实链路通过；第二步库资格与候选SPEC独审通过，产品实现尚未开始。
+- 当前状态：**RT-LIB-01 Done（EXT-F1 已关闭）；RT-LIB-02 awaiting-spec-confirmation**。外部审查问题经本次修复、473项验证及新独立复审通过；第二步候选与未实现状态保持。
 - 本会话为 Runtime 根协调 session /root；唯一工作区 /Users/qunmi/.codex/worktrees/runtime-rt-lib-01/Appium_connect_agent，任务分支 codex/runtime-rt-lib-01，起点 75c1737d95cacad2a8a104337fa988bed48aeb17。用户本轮独立 worktree 指示适用于跨模块并行；Runtime 内仍一次一个 feature，不借此合入尚有验证缺口的流程分支或采用其自动提交/推送规则。
 - 原主工作区的 Configuration 改动不复制、不修改、不暂存；共享根 SPEC、依赖配置与分发脚本仅在本任务分支修改，后续集成需分别核对其他模块增量，不更新被占用的主分支引用。产品规模从固定起点累计新增+删除；目标350–800行、约1200行门槛，测试/文档另计，修复不以净增长抵消。
 - 设计原文固定 SHA-256 e26edd1de51a9676198495ddc1f41dd9ac6b9a3126499ece83ca628013070c3f；保留设计历史草案与访谈记录，本次最终采纳/实施状态以本节为准。RT-LIB-01 固定 httpx==0.28.1、anyio==4.15.1，无 extras，仅已批准 HTTP/受管桥接用途；node-semver 留待第二步。
@@ -39,6 +39,20 @@
 
 - RT-LIB-02资格通过：指定源node-semver0.9.1实际源码与固定提交4ae6e4b1ccdf8bc5197075c91212c0313dcd317e逐字节一致，wheel无类型文件；45矩阵/7边界、FD-01及未知AttributeError对象传播、最小11行stub的strict mypy通过。新独审 /root/rtlib02_qualification_audit full/pass，独立核验4代码/stub差异、2候选SPEC差异、22产物及8安装文件/RECORD，未参与测试。资格manifest SHA-256 f6cfd00100b203cce781cfa09019bb2b75caedec1531ebe1197904f2d0c74429，候选manifest39fd47ca8405cdbc0c8144c140e307a760b1b857c4ef671aa208f38a9b21cdac。实际命令补证从原执行历史恢复，未记录的完整继承环境/时间戳不伪造。
 - 已将第二步候选写入根/Runtime SPEC，明确待用户确认；范围为node-semver依赖、共享严格版本/范围语义及最小类型声明。有效范围识别可使unknown变明确匹配/不匹配；非法仍unknown、已知fail优先、无设备实测仍unknown，保留已验证原始build字符串。第二步产品、依赖清单/锁和测试尚无增量，不把资格通过当Ready或Done。
+
+## RTLIB01-EXT-F1 外部审查修复
+
+- 用户回传外部独审确认P1：已记录请求错误可能被portal退出错误覆盖，且未独立保留清理错误；同时要求评估集中主/清理错误归属，先反例证明、不按行数删除保护、不扩大范围。完整原始请求固定于 /var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/aca-rtlib01-extf1-mlkvu37j/user-request.txt。
+- 当前基线 codex/runtime-rt-lib-01 / da0a25c099fbe9cc2b4a8478be54b45b8a195371，工作区开工干净，无后续改动。Tech Lead纯内存复现原ValueError丢失、结果为portal OSError且cleanup为空。判定恢复现行Scope And Coordination/Errors And Verification契约的no-delta；不修改任何SPEC/依赖/RT-LIB-02，第二步候选仍待确认。
+- 当前状态：EXT-F1 已关闭；RT-LIB-01本次修复验收通过，既有验收保留其历史固定身份。工程只负责_http.py、必要_connection.py/_models.py及connection测试，TL只维护本台账和证据。此前实际产品修复一轮，本次按第二轮有界修复；不能继续无限自动修复。
+- Ready证据：完整任务包、7固定依据/70文件快照、历史152050字节/12文件全差异已实核；工程temp probe写读成功，新未参与本批实现/测试的 /root/rtlib01_extf1_audit 上下文完成原文/全差异独立核验，后续仅repair-only EXT-F1及精简直接回归。文件/命令工具均真实调用，无UI探针。
+- 验证沿既有定向/全套pytest、Ruff、strict mypy、import-linter、构建及分发隔离安装；受控临时loopback/账号锁fixture按原G6.1。真实固定端点G6.2由TL于代码冻结后每轮最多两次GET/status，首次失败即报告，不扩大服务/设备权限。未自动提交/推送。
+
+- EXT-F1工程交付已冻结：原反例red5 failed/8 passed，green13 passed，扩展定向17 passed，完整473 passed；Ruff、strict mypy、import-linter、构建与wheel/sdist隔离安装/uv pip check通过。仅修改_http.py和connection测试；主错误最终选择集中在HTTPResult.finish，portal退出统一走cleanup收集，保留trace观察与Runtime报告映射边界，不为缩行删除语义所需状态。产品25新增/15删除（40行），此前472累计后512；测试新增262、累计1086。
+- 本次冻结后TL仅对固定127.0.0.1:4723执行两次GET/status，Appium3.7.0/external、进入active前socket/portal已结束、视图退出失效及服务保留通过；证据在EXT-F1临时目录real/。新独审待repair-only复核EXT-F1及集中错误状态的直接回归，未以测试通过替代审查。RT-LIB-02内容未改。
+
+- 新独立上下文 /root/rtlib01_extf1_audit repair-only/pass：EXT-F1关闭，无确认直接回归。已读全3文件19447字节差异（SHA-256 26bc3b7b3f14d554361fafa4a826b3eb4f627a69ea21dc7c5bb73c6a3c207f7e），70文件/快照及包身份核验；独立纯内存重验原反例和18组阶段/错误、4组优先级，验证主对象与独立清理信息。review/manifest.json SHA-256 be35d725a87d42be23194c6b326d9abca4705f7087773984c53f1efedaa4c555。TL再次核验全部已审文件一致后判定本修复Done；本文随后仅同步验收状态，旧hash不冒称覆盖后续台账。
+- 最终实际修复规模产品40、测试262、审时文档13行；任务包文档14是已核实笔误。保留473测试、质量/分发及限定真实链路证据。真实命令补证为从原工具调用事后恢复，完整继承环境与时间戳未保存，不虚构。此次未提交/推送，RT-LIB-02 SPEC及源码未修改。
 
 ## 状态与范围的读法
 

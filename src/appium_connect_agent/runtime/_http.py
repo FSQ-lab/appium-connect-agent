@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable
+from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 
@@ -23,6 +24,18 @@ class HTTPResult:
     cleanup_errors: list[BaseException] = field(default_factory=list)
     traced_error: BaseException | None = None
     traced_cleanup: BaseException | None = None
+    caller_error: BaseException | None = None
+
+    def finish(self, checkpoint: Callable[[], None]) -> None:
+        # Called only after the managed portal has joined. The request task cannot
+        # overwrite a caller cancellation while completing its own cleanup.
+        try:
+            checkpoint()
+        except BaseException as error:
+            if self.caller_error is None and self.error is None:
+                self.caller_error = error
+        if self.caller_error is not None:
+            self.error = self.caller_error
 
     async def trace(self, name: str, info: dict[str, object]) -> None:
         # Fixed HTTPcore HTTP/1 lifecycle: retain only exception objects, no I/O.
@@ -162,13 +175,15 @@ async def _request(url: str, result: HTTPResult) -> None:
 
 def get_status(url: str, checkpoint: Callable[[], None], deadline: float) -> HTTPResult:
     result = HTTPResult()
-    primary: BaseException | None = None
+    portal_entered = False
     try:
         checkpoint()
         with start_blocking_portal(backend="asyncio") as portal:
-            checkpoint()
-            future = portal.start_task_soon(_request, url, result)
+            portal_entered = True
+            future: Future[None] | None = None
             try:
+                checkpoint()
+                future = portal.start_task_soon(_request, url, result)
                 while True:
                     checkpoint()
                     try:
@@ -184,19 +199,14 @@ def get_status(url: str, checkpoint: Callable[[], None], deadline: float) -> HTT
                         checkpoint()
                     break
             except BaseException as error:
-                primary = error
-                future.cancel()
+                result.caller_error = error
+                if future is not None:
+                    future.cancel()
         # Portal exit joins the thread; Future cancellation alone proves nothing.
     except BaseException as error:
-        if primary is None:
-            primary = error
+        if portal_entered:
+            result.add_cleanup(error)
         else:
-            result.cleanup_errors.append(error)
-    try:
-        checkpoint()
-    except BaseException as error:
-        if primary is None and result.error is None:
-            primary = error
-    if primary is not None:
-        result.error = primary
+            result.caller_error = error
+    result.finish(checkpoint)
     return result
