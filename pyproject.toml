@@ -72,3 +72,19 @@ name = "Contracts cannot depend on Configuration"
 type = "forbidden"
 source_modules = ["appium_connect_agent.contracts"]
 forbidden_modules = ["appium_connect_agent.configuration"]
+
+[[tool.importlinter.contracts]]
+name = "Automation cannot depend on Configuration"
+type = "forbidden"
+source_modules = ["appium_connect_agent.automation"]
+forbidden_modules = ["appium_connect_agent.configuration"]
+
+[[tool.importlinter.contracts]]
+name = "Lower-level modules cannot depend on Automation"
+type = "forbidden"
+source_modules = [
+    "appium_connect_agent.contracts",
+    "appium_connect_agent.configuration",
+    "appium_connect_agent.runtime",
+]
+forbidden_modules = ["appium_connect_agent.automation"]
