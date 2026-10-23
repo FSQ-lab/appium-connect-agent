@@ -87,7 +87,7 @@
 
 ## 3. 接口总表 v0.1
 
-下列除设备发现外，所有设备能力都由明确 Session 对象承载归属；接入层可映射外部句柄，不作为核心 Registry 方案。具体类名尚未确定。`Control` 暂指每次操作的预算/取消输入，不表示复用 Runtime 同名类型或批准其默认值。返回模型尚未确认，第 5 节只列必须可辨别的事实。
+下列除设备发现外，所有设备能力都由明确 Session 对象承载归属；接入层可映射外部句柄，不作为核心 Registry 方案。具体类名尚未确定。`Control` 复用 `runtime.OperationControl` 的总预算与取消输入；`control=None` 沿 Appium 默认处理。成功直接返回语义值，受控失败使用第 5.0 节已确认 Automation 异常。
 
 **Element 修订优先规则**：下表原列出的“目标定位、容器、相对区域”对控件/区域操作统一从 Element 对象取得；表中定位策略和相对几何保留为目标描述需求，不再表示操作方法的并列公开参数。普通动作一个 Element，拖动涉及源/目的 Element；滚动查找的容器 Element 与目标条件/Element 如何组合仍须尊重官方策略限制，未完成签名确认。第 4.3、5.1 和 5.2 的 Element 增量覆盖旧 locator 参数草案，旧草案不作为新增别名一并发布。
 
@@ -97,8 +97,8 @@
 | --- | --- | --- | --- | --- |
 | IF-01 `list_devices` 查询设备 | 显式 Android 工具配置及 Control，实际字段待核验 | 有界查询已连接真机/已启动模拟器，返回标识、名称、连接状态；不自动选设备 | 查询完成与空列表分开；发现失败不能伪造无设备 | 沿用；原稿设备发现，U02 |
 | IF-02 `create_session` 创建设备会话 | connection 使用资格、设备 ID、应用 package/APK、capabilities、Control | 校验范围/冲突，取得设备占用，经批准客户端创建，保存资源身份 | 返回可明确操作的会话；创建失败区分确定未创建、已创建待清理、创建结果未知 | 意图沿用；参数/资源模型待 U01/U02/U03/U06 |
-| IF-03 `session_info` 读取会话信息 | 明确 Session；是否刷新尚待定 | 建议提供本库身份、设备、目标应用及已知生命周期状态；本地快照与实时探测分别标注 | 历史状态不冒充持续健康；未知/关闭/失效可辨别 | 建议待确认；不引入健康轮询 |
-| IF-04 `quit` 关闭会话 | 明确 Session、Control；官方关闭相关设置在创建处固定 | 调用客户端终止该会话，处理清理，不停止外部服务器 | 确认关闭后释放设备；未知保留占用与可处置状态；主错误和清理错误不互相覆盖 | 意图沿用；草名按 Appium 会话结束术语核对，幂等/重入/异常细节待定 |
+| IF-03 `session_info` 读取会话信息 | 明确 Session；纯本地读取，不发健康查询 | 返回本库身份、已知Appium sessionId、设备、目标应用及 `creating/active/uncertain/closing/closed` 最后状态 | 历史状态不冒充持续健康；busy作为active操作状态另示；不重置500秒空闲计时 | 生命周期模型本轮确认；不引入健康轮询 |
+| IF-04 `quit` 关闭会话 | 明确 Session、Control；官方关闭相关设置在创建处固定 | active且不busy时调用客户端终止一次并收尾；closed再次调用为空操作成功 | 确认关闭后释放本进程设备占用；失败/未知转uncertain且不自动重试；主错误和清理错误分别保留 | 意图与Appium `quit` 命名沿用；幂等/未知规则本轮确认，实际异常待资格验证 |
 
 “复用”指调用方保存同一 Session 多次操作，不是附加任意外部 Session。外部 attach、跨进程恢复和全局列举 Session 属后续候选。
 
@@ -151,13 +151,13 @@
 | IF-26 `accept_alert` / `dismiss_alert` 弹窗 | Session、可选 button_label 映射 buttonLabel、Control | 复用官方接口；不自建按钮识别 | 官方命令完成；错误保留实际原因，不承诺可区分全部识别失败，不自动替代点击 | 沿用 B7；官方识别局限见 5.3 |
 | IF-27 `status_bar` 展开通知栏/快捷设置 | Session、command 为 expandNotifications 或 expandSettings、Control | 官方 `mobile: statusBar`；命令白名单 | 官方命令完成，不宣称面板 UI 已核对 | 沿用 B8；建议与 IF-28 合并方法，见 5.3 |
 | IF-28 `status_bar` 收起面板 | Session、command=collapse、Control | 官方收起通知及快捷设置面板 | 命令完成；不支持/未知如实报告 | 沿用 B8；不需要猜测原面板类型 |
-| IF-29 点击已有磁贴 | Session、Element；组件路径候选另见 5.3 | 视觉磁贴复用 IF-10 `tap(element)`；官方 clickTile 用 TileService component，不是标签 | 点击命令完成，不默认为“设置成开/关” | 已确认能力；不新增重复 Element 点击接口，不添加/移除磁贴；具体公开形态待确认 |
+| IF-29 点击已有磁贴 | Session、Element | 视觉磁贴只复用 IF-10 `tap(element)`；不开放 TileService component `clickTile` | 点击命令完成，不默认为“设置成开/关” | 本轮确认；不新增重复接口，不添加/移除磁贴，见 5.3 |
 | IF-30 `activate_app` 激活应用 | Session、package ID、适用官方参数、Control | 官方 activateApp，不隐式 force-stop/重启 | 官方激活结果；不证明特定页面出现 | 沿用应用管理 |
-| IF-31 `terminate_app` 终止应用 | Session、app_id、候选 timeout_ms、Control | 官方 terminateApp，保留其返回语义 | true/false 与 Session 关闭分开，不保证应用持续停止 | 沿用；组合参数及500ms官方等待见 5.4 |
+| IF-31 `terminate_app` 终止应用 | Session、app_id、Control；不公开上游 timeout | 官方 terminateApp，具体等待适配受统一操作预算约束，保留其返回语义 | true/false 与 Session 关闭分开，不保证应用持续停止 | 最小选项白名单本轮确认；上游500ms默认不冒充公共预算，见 5.4 |
 | IF-32 `query_app_state` 应用状态 | Session、package ID、Control | 官方 queryAppState，保留未知/不支持 | 本次状态，不当作持续健康保证 | 沿用 |
-| IF-33 `install_app` 安装 | Session、本地 APK、批准的官方选项、Control | 官方 installApp；与创建 Session 必要安装准备分开 | 官方安装结果；明确数据/升级副作用和部分失败 | 沿用；无设备操作授权 |
-| IF-34 `remove_app` 卸载 | Session、package ID、适用官方选项、Control | 官方 removeApp，不附带其他应用清理 | 官方卸载结果；不是 Session 关闭 | 沿用；无设备操作授权 |
-| IF-35 `clear_app` 清应用数据 | Session、app_id、Control；组合预算待定 | 建议内部检查安装/停止状态、必要终止及核对、再官方 clearApp；不得混淆 IF-14 字段清空 | 清数据命令完成；部分完成/未知及后续 Session 不可用分别报告 | 能力沿用；完整操作组合建议见 5.4，无设备操作授权 |
+| IF-33 `install_app` 安装 | Session、本地 APK、`replace=True`、`allow_test_packages=False`、Control | 官方 installApp；与创建 Session 必要安装准备分开；不开放其他上游选项 | 官方安装结果；明确数据/升级副作用和部分失败 | 最小选项白名单本轮确认；无设备操作授权 |
+| IF-34 `remove_app` 卸载 | Session、package ID、`keep_data=False`、Control | 官方 removeApp，不附带其他应用清理，不开放其他上游选项 | 官方卸载结果；不是 Session 关闭；显式 keep_data=true 才承诺请求保留卸载数据 | 最小选项白名单本轮确认；无设备操作授权 |
+| IF-35 `clear_app` 清应用数据 | Session、app_id、Control | 已确认内部检查安装/运行状态、必要终止并核对，再调用官方 clearApp；不得混淆 IF-14 字段清空 | 清数据命令完成；部分完成/未知及后续 Session 不可用分别报告 | 必要组合本轮确认；阶段预算待公共模型，无设备操作授权 |
 
 方法粒度仍可调整：剪贴板读写、弹窗接受/取消可以各为方法或带区分参数；原则是无关必填项不混入同一请求，调用方能明确副作用。框架诊断与 Appium 服务管理仍归 Runtime，不迁入上述 Session 操作。
 
@@ -393,20 +393,91 @@ other_session.tap(items)
 
 ## 5. 执行控制与完成/失败语义
 
-本节是需要保证信息可表达的设计方向；**不是已确认的返回/异常 schema**，不引入 evidence 字段。最终选返回值、异常或二者组合仍待确定。
+本节定义公共调用的执行边界，不引入 evidence 字段。**本轮已确认异常式公共接口**：成功直接返回语义值，受控失败抛 Automation 异常；具体预算/取消和生命周期恢复仍按下文状态收敛。
 
 | 需要分开的事实 | 设计要求 | 确认状态 |
 | --- | --- | --- |
-| 调用完成 / 执行失败 / 取消或超时 | 普通错误、取消/中断与未知程序缺陷不宽泛混为同类 | 细节待定；原稿 U07 |
-| 设备命令未发送 / 有已完成步骤 / 命令完成 / 执行未知 | 参数/定位失败与发送后响应丢失不同；多步有已完成部分时保留事实 | 执行阶段划分为建议待确认；原稿仅已确认响应丢失不能断言未执行、不自动重放；字段、粒度和可证明程度待核验 |
+| 调用完成 / 执行失败 / 取消或超时 | 普通错误、取消/中断与未知程序缺陷不宽泛混为同类；成功值与失败异常分开 | 异常式公共接口本轮确认；预算/取消细节待下文确认 |
+| 设备命令未发送 / 有已完成步骤 / 命令完成 / 执行未知 | `request_state` 与 `completed_steps` 分开表达；响应丢失不能断言未执行，不自动重放 | 本轮确认；可可靠分类的实际上游异常仍待版本资格验证 |
 | 命令完成 / 状态核对 / 预期条件 / 业务目标 | 单动作成功沿原稿只保证有效命令响应；观测不自动升级保证 | 沿用并本轮确认 |
-| 条件等待 / 响应预算 / 操作总预算 / 清理 / 空闲超时 | 不共用一个模糊 timeout；默认值、计时起止、取消可达性逐项核验 | 等待沿用；空闲默认本轮修订为 500 秒、可显式覆盖；其他待定 |
-| 主错误 / 清理错误 | 同时保留，不因清理报错覆盖原操作事实 | 建议待确认；与 Runtime 既有异常接缝兼容 |
+| 条件等待 / 响应预算 / 操作总预算 / 清理 / 空闲超时 | 四层分别定义；取消采用检查点语义，命令阻塞期间不提前返回或释放准入 | 等待、500秒空闲及检查点取消已确认；操作分类默认总预算待确认，响应边界待版本资格验证 |
+| 主错误 / 清理错误 | `cleanup_errors` 按顺序保留，不覆盖主错误；无主错误时必要清理失败使操作失败 | 本轮确认；实际清理错误类型待版本资格验证 |
 | 同 Session 并发 | 操作重叠时，后来调用在发送其设备命令前立即报忙；不等待执行槽位、不隐式排队、不打断前一操作 | 本轮确认；只限制同一 Session，不证明不同设备并行可用；关闭/取消竞态待设计 |
 
 “未知”不是保证未执行，“部分完成”不是事务回滚承诺。是否可重试需要结合具体操作和已知状态；不照搬别库 `retry_safe` 布尔值，不用一个通用“可重试”驱动自动重放。超时不能自动解锁仍在执行的设备资源，取消后如何结束上游请求必须有官方和实际版本依据；无法兑现硬返回预算时应如实设计限制。
 
-错误至少覆盖：参数冲突、不支持、Session 无效/已关闭/忙、目标缺失/歧义/不满足前置条件、等待超时、命令失败、传输中断/执行未知、占用/清理失败。稳定码和原始异常如何保留待近期设计，不在表中虚构默认码。
+受控错误采用第 5.0 节已确认模型；未知程序缺陷不伪装为稳定 Automation 错误。稳定 code 的具体上游映射、预算/取消和生命周期恢复仍须按锁定版本核验。
+
+### 5.0 公共错误模型（本轮确认）
+
+采用“**成功返回意图本身的值，失败抛稳定 Automation 异常**”，不让每个方法都返回通用 `ActionResult` 包装。读取方法直接返回其不可变值，命令无业务返回时返回 `None`，官方有稳定语义的布尔/状态值原样进入项目类型；仅失败路径携带执行事实。直接 Python 调用和未来 Integrations 复用同一失败语义，Adapter 只做协议映射，不自行推断设备状态。
+
+最小异常层级由 Automation 拥有，不放入 Contracts，也不继承 Runtime 的 `partial_report` 结构：
+
+| 类型方向 | 适用范围 | 必须携带 / 不承诺 |
+| --- | --- | --- |
+| `AutomationError` | 所有受控公共失败的根类型 | 稳定 `code`；人类消息不是机器协议，未知程序缺陷不包成此类型 |
+| `InvalidRequestError` | 纯值、参数组合、跨 Session Element、首版不支持的 parent+XPath 等在设备请求前可判定的问题 | `request_state=not_sent`；创建纯值对象没有 operation_id 时不得伪造一个操作 |
+| `InvalidSessionStateError` / `SessionBusyError` | Session 未 active、已关闭/失效/状态未知，或同 Session 重叠调用 | 忙保证后来调用未发送其设备命令；状态未知不自动恢复为 active |
+| `TargetError` | 目标缺失、歧义、前置条件无法满足或属性无法判定 | 用稳定 code 区分 not_found/ambiguous/precondition/unknown；不取第一个、不把读取失败当不存在 |
+| `OperationTimeoutError` / `OperationCancelledError` | 操作总预算耗尽或调用方请求取消 | 已确认检查点取消；取消请求与实际上游停止分开，必要收尾结束前不释放 Session 准入 |
+| `CommandError` | 收到有效上游失败响应，或项目能可靠分类的明确协议/命令失败 | 保留稳定项目 code 和原始异常链；不能由“收到错误”推断设备绝无副作用 |
+| `ExecutionUnknownError` | 状态改变请求可能已发送但没有可验证终态响应，或无法证明上游已结束 | 明确禁止自动重放；上层只能基于后续显式核实决定下一步 |
+| `ResourceStateError` | 设备占用、Session 创建/关闭及必要清理失败 | 不能因本地锁释放或 Appium sessionId 不可见就宣称设备端已清理 |
+
+受控操作异常统一携带 `operation_id`、稳定 `code`、`request_state`、`completed_steps` 和 `cleanup_errors`：
+
+- `request_state` 只取 `not_sent`、`response_received`、`response_unknown`。`not_sent` 仅用于本库能证明本次待执行设备请求尚未发出的情况；连接库无法证明请求字节是否送达时必须用 `response_unknown`。`response_received` 只说明取得有效终态响应，不把失败响应解释为“无副作用”。
+- `completed_steps` 是有序稳定步骤名，只列已由成功响应或其他明确状态确认完成的 Automation 组合步骤。例如 `clear_app` 可在 clear 失败时列出 `state_checked`、`app_terminated`；它不是日志、evidence 或事务补偿记录。
+- `cleanup_errors` 是按发生顺序保存的原始清理异常 tuple。主错误对象和稳定 code 保持，不被清理错误覆盖；没有主错误而必要清理失败时，以 ResourceStateError 使操作失败。底层原始异常通过异常链保留，不把任意 `repr` 写入稳定字段。
+- 不提供通用 `retryable` 标志。是否可再次调用取决于具体操作、`request_state`、已完成步骤和显式核实结果；任何接入不得仅按异常类自动重放。
+
+稳定 code 至少覆盖：`invalid_argument`、`unsupported_operation`、`session_invalid`、`session_closed`、`session_busy`、`target_not_found`、`target_ambiguous`、`precondition_not_met`、`condition_timeout`、`operation_timeout`、`operation_cancelled`、`command_failed`、`execution_unknown`、`device_busy`、`session_create_unknown`、`session_quit_unknown`、`cleanup_failed`。最终按实际可可靠分类的上游异常收敛，不能为凑表宽泛猜测；Appium/Selenium 原始类名不直接成为稳定跨版本 code。
+
+#### 5.0.1 预算与取消模型（本轮确认；响应实现待资格验证）
+
+时间语义分为四层，禁止用同一个 `timeout` 名称混淆：
+
+| 层级 | 作用与起止 | 到期结果 / 与其他层关系 |
+| --- | --- | --- |
+| 目标等待 `wait_timeout_seconds` | 只覆盖首次至条件满足前的只读重定位/状态轮询；默认15秒，保留5/15/60及有限正数 | 先于操作总预算耗尽则 `condition_timeout`；不限制随后动作响应，不重置总预算 |
+| 操作总预算 `OperationControl.timeout_seconds` | 仅调用方显式传入时存在；从公共方法通过纯值校验、准备取得 Session 准入前开始，到业务步骤停止并进入必要收尾；使用单调时钟 | 到期后不启动新定位、动作或补偿步骤；抛 `operation_timeout`。它是停止业务推进的 deadline，不承诺不可中断清理已在同一时刻完成 |
+| 单次上游响应处理 | `control=None` 时沿锁定 Appium Python Client / Selenium / Appium 命令本身的默认处理，Automation 不附加统一响应时限；显式 Control 时，尝试将每个请求限制在操作剩余预算内，具体能力须资格验证 | 默认可能无有限上限；响应丢失或传输超时按请求是否可能发送映射 `response_unknown`，不得自动重发。应用管理已确认不公开各自上游 timeout |
+| Session 空闲回收 | `appium:newCommandTimeout=500`，由 Appium 在命令间空闲时计时 | 与以上三层无包含关系；不是命令时限、操作预算或客户端取消机制 |
+
+Automation **复用现有公开 `runtime.OperationControl` 的 `timeout_seconds` 与 `threading.Event` cancellation 形态**，不再造第二个同义控制类型；Automation 只解释自己的操作结果，不复用 Runtime 的报告异常。**本轮已确认 `control=None` 默认沿 Appium 处理，不设置 Automation 操作总预算，并接受所选官方客户端默认可能没有有限响应上限。** 目标等待自己的15秒默认仍有效，但它不会中止已经发送的命令。调用方需要有界调用时显式传 `OperationControl`；`OperationControl()` 的10秒就是明确总预算，必要等待由剩余预算截断。
+
+取消采用检查点语义：开始前、每轮等待、每个组合步骤前、每个上游响应后及进入/退出收尾时检查 Event。取消后不发送新的设备命令、不自动 `quit`、回滚或重放；已知完成步骤仍写入 `completed_steps`。若取消在状态改变请求阻塞期间到来，只有在该请求结束或传输层可靠中止并完成资源收尾后才释放同 Session 准入；不能让后来调用与仍运行的前请求重叠。
+
+固定研究事实限定首版可承诺范围：所查 Appium Python Client 只扩展 Selenium 同步 `RemoteConnection`；Selenium 4.51.0 `ClientConfig.timeout` 为连接请求 timeout，`RemoteConnection.execute` 同步阻塞在 urllib3 请求，公开接口没有按命令取消原语，`close()` 只清连接池。**本轮已确认检查点取消**：等待/步骤间及时取消；单个阻塞命令受资格验证后的响应上限约束，取消期间仍等待该请求终止和必要收尾，不能让后来调用与仍运行的前请求重叠。首版不声称 Event 会立即抢占任意正在执行的 Appium 命令，不把同步请求遗留在线程中提前返回或释放准入。未来若要求命令中即时返回，须重新选型或批准不同传输/隔离机制，不能在 Integrations 伪造。
+
+预算竞争优先级：在发送前同时发现取消与deadline到期，取消优先；已有有效上游失败响应保持该命令失败为主，随后发生的取消/超时不覆盖它；无终态响应时，根据最先可证明的调用方取消或deadline分别抛 cancelled/timeout，但 `request_state=response_unknown` 仍保留可能已执行事实。必要清理错误按已确认 `cleanup_errors` 追加，不改变主错误对象。
+
+本轮不采用按操作分类的10/30/120秒隐式默认，也不强制每次传 Control。该产品决定不等于已证明上游默认安全：锁定 Appium Python Client/Selenium/driver 版本前，必须验证其默认请求行为、显式 timeout 映射、慢连接/慢响应及清理；若实际版本无法在显式 Control 下提供所需有界行为，AIF-02及相关操作仍不 Ready，不能以“Appium 默认”掩盖阻塞。
+
+#### 5.0.2 Session 生命周期与恢复（本轮确认；Runtime竞态待接缝核验）
+
+首批不把 Session 简化为 active/closed 两态。公开 `session_info` 返回本地不可变快照，至少区分 `creating`、`active`、`uncertain`、`closing`、`closed`；`busy` 是 active 上的一次操作准入状态，不作为另一个可复用 Session。快照含本库 Session 身份、Appium sessionId（仅已知时）、设备身份、目标包和最后已知状态；不做后台健康轮询，不把历史 active 冒充持续健康。
+
+| 状态 / 事件 | Automation 行为 | 设备占用与可继续动作 |
+| --- | --- | --- |
+| create 准备 | 在任何可能创建 Session 的请求前取得同设备占用，校验 active Runtime connection、设备/资源参数和已确认 capabilities | 校验或可证明未发送的失败释放占用；不同设备不受此占用限制 |
+| create 成功 | 只有收到有效创建响应、sessionId和所需协商事实才返回 Session；客户端保持该会话独立资源 | 转 active；`appium:newCommandTimeout=500` 已进入 capabilities；不自动启动目标应用 |
+| create 响应未知 | 不猜“没有创建”，不自动重发；异常含 device、operation_id及已知身份 | 转 uncertain并保留本进程设备占用；无sessionId时不得猜ID、attach或枚举认领其他会话 |
+| active 操作 | 每次先核对 connection仍active并取得非阻塞Session准入；同Session后来调用立即忙 | 有效响应后恢复active；状态改变命令响应未知时转uncertain，禁止普通后续命令和自动重放 |
+| 正常 `quit()` | active且不busy才发一次Appium DELETE；进入closing后拒绝其他操作 | 只有有效成功响应且客户端必要收尾完成才closed并释放设备；closed再次quit为空操作成功的幂等便利 |
+| quit失败/响应未知 | 不以本地连接关闭、Appium sessionId不可见或500秒经过推断清理完成 | 转uncertain，保留已知身份和本进程设备占用；不自动再次DELETE、重建或释放 |
+| Runtime connection退出/失效 | 正常契约要求所有Session先quit；退出后任何新Automation操作在设备请求前拒绝，不用缓存URL继续 | 当前Runtime不知道Automation Session，无法从现有接口强制退出顺序；并发退出属于待接缝解决的竞态，必要时另提Runtime delta |
+
+恢复遵循“核实而非重放”。首批不 attach 外部 Session、不后台探活、不自动开启 `session_discovery`、不自动心跳，也不以 `GET /appium/sessions` 空列表证明设备资源清理。固定 Appium 3.0.0 源码显示，`GET /appium/sessions` 需启用不安全特性 `session_discovery`；DELETE 会在等待实际 driver `deleteSession` 前先从 master list 移除条目。因此 sessionId 不可见只说明该服务不再接受该ID，不能单独解除设备占用。500秒 newCommandTimeout 在命令完成后计时并触发 unexpected shutdown，是回收机制而非本地清理证明。
+
+同进程可达恢复规则已确认：uncertain Session 只允许读取本地 `session_info`，不再执行普通设备命令。普通查询也可能重置500秒或与未知命令重叠，首批不把“发一个只读命令试试”作为自动恢复。已知 sessionId 的显式再次quit也可能只得到“session不存在”，仍不能证明driver清理完成，故不承诺为通用恢复。调用方停止后续设备操作并对外报告需人工核实；Automation不清理其他客户端Session或重启外部Appium。
+
+**本轮已确认进程边界**：同设备占用保证限于当前 Automation 宿主进程。进程正常存活时，creating、active、closing、uncertain 均保留占用，只有可证明未创建或确认成功关闭并完成本地收尾才释放。进程崩溃后本地保证终止；依赖Appium 500秒空闲回收，但新进程必须明确知道无法证明旧资源已清理。本库不写持久账本，不宣称跨进程Session互斥、自动恢复或自动证明设备空闲。
+
+未采用方案保留为比较历史：跨进程持久记录会新增状态权限、损坏、崩溃窗口和人工解除契约；强制 `session_discovery` 会扩大服务配置与会话可见范围，且条目消失仍不证明driver清理。二者未来若需要必须重新设计，不从当前进程内保证增量实现。
+
+无论选择哪种范围，Appium Python Client 新Session请求的 idempotency key 只能减少同一请求重复处理风险，不提供创建响应丢失后的Session身份恢复，也不批准自动重试。客户端 `direct_connection` 默认保持关闭，避免创建响应让每个Session悄悄切换到未经Runtime验证的其他端点；若未来需要须单独走连接边界设计。
 
 ### 5.1 定位、等待与基本操作的详细契约草案
 
@@ -524,31 +595,31 @@ other_session.tap(items)
 | 读剪贴板 `get_clipboard_text()` | 无格式参数，首版建议只纯文本 | 官方纯文本 getter 的 UTF-8/Base64 转换；driver 按 Android API 版本选择 UiAutomator2/Settings 路径 | 返回文本，合法空串保持为空；读取/解码失败不是空串。读取的是设备剪贴板，不是当前输入框 |
 | 写剪贴板 `set_clipboard_text(text, *, label=None)` | `text: str`，可选 `label: str` | 复用官方 Python 文本 helper；线上编码由官方封装处理；执行映射的参数是 label | 命令完成，改变设备剪贴板；不粘贴、不聚焦、不承诺系统会永久保留内容 |
 | 弹窗 `accept_alert` / `dismiss_alert` | 可选 `button_label`，映射 buttonLabel | `mobile: acceptAlert` / `dismissAlert` → 官方 alert 端点；未指定标签时由官方识别 | 官方识别/按钮点击命令完成；不存在、不支持或按钮不符按实际错误报告，不承诺已核实分类；Android 识别可能失败，不自建识别器或替代点击 |
-| 展开/收起面板 `status_bar(command)` | 首版候选白名单 expandNotifications / expandSettings / collapse | `mobile: statusBar` → driver 的固定 statusbar 命令；本库不公开任意 shell/command 透传 | 下游命令完成，可能返回空输出；不伪造 visible=true。Android 8+ 为该官方能力条件，厂商实际表现待验证 |
-| 点击已有磁贴 `tap(element)` | 同 Session 的目标 Element | 重用 IF-10 的唯一、显示、启用检查后点击，不另造 tile 定位系统 | 点击完成，不等于设置为某个开关状态；不存在/歧义/未知沿普通点击。面板展开由调用方显式选择 |
+| 展开/收起面板 `status_bar(command)` | 已确认首版白名单 expandNotifications / expandSettings / collapse | `mobile: statusBar` → driver 的固定 statusbar 命令；本库不公开任意 shell/command 透传 | 下游命令完成，可能返回空输出；不伪造 visible=true。Android 8+ 为该官方能力条件，厂商实际表现待验证 |
+| 点击已有磁贴 `tap(element)` | 已确认：同 Session 的目标 Element | 重用 IF-10 的唯一、显示、启用检查后点击，不另造 tile 定位系统或 TileService component 入口 | 点击完成，不等于设置为某个开关状态；不存在/歧义/未知沿普通点击。面板展开由调用方显式选择 |
 
 IME 的真实断点：官方不接收 Element。建议先保留明确的“对当前焦点执行 editor action”语义，且不把它当作“对指定输入框发送”。若公共意图要绑定 Element，应由 Automation 内部定位并核对 focused，或在明确批准后负责必要聚焦；不能要求 Integrations 自己拼点击/检查。**当前焦点版本、Element 版本及是否允许自动聚焦均未确认**，不是重新询问已确认的文本输入前置条件。可用 action 名为 normal、unspecified、none、go、search、send、next、done、previous；不自造跨平台键名语法。
 
-磁贴的两种目标不可混用：上述 Element 是界面控件；官方 `statusBar(clickTile, component)` 的 component 是 TileService 组件标识（如 `com.example/.ExampleTileService`），不是磁贴文字或 resource-id。建议首版已有磁贴 UI 点击只复用 tap，组件入口先不增加；如果后续选择组件入口，须独立说明“调用组件”的意图，不自动发现/添加磁贴，不用它假称一定点击了面板中的现有按钮。添加/移除磁贴及其他 statusBar 命令不因上游支持而纳入。该收敛建议待整体确认。
+磁贴的两种目标不可混用：上述 Element 是界面控件；官方 `statusBar(clickTile, component)` 的 component 是 TileService 组件标识（如 `com.example/.ExampleTileService`），不是磁贴文字或 resource-id。**本轮已确认**：首版已有磁贴 UI 点击只复用 `tap(element)`，不增加 component `clickTile` 入口；面板方法只接受 expandNotifications、expandSettings、collapse 三个命令。调用方显式展开所需面板再点击目标，Automation 不根据磁贴自动猜面板、发现或添加磁贴，不用命令完成假称磁贴已切换到某状态。添加/移除磁贴及其他 statusBar 命令不因上游支持而纳入。
 
 固定官方依据（查询 2026-10-23；仅研究，不是已测组合）：UiAutomator2 v8.7.0 的 [键盘实现](https://github.com/appium/appium-uiautomator2-driver/blob/v8.7.0/lib/commands/keyboard.ts)、[剪贴板实现](https://github.com/appium/appium-uiautomator2-driver/blob/v8.7.0/lib/commands/clipboard.ts)、[弹窗实现](https://github.com/appium/appium-uiautomator2-driver/blob/v8.7.0/lib/commands/alert.ts)、[执行映射](https://github.com/appium/appium-uiautomator2-driver/blob/v8.7.0/lib/execute-method-map.ts)；Android driver v14.0.8 的 [IME/键盘](https://github.com/appium/appium-android-driver/blob/v14.0.8/lib/commands/keyboard.ts)、[面板实现](https://github.com/appium/appium-android-driver/blob/v14.0.8/lib/commands/system-bars.ts)、[继承执行映射](https://github.com/appium/appium-android-driver/blob/v14.0.8/lib/execute-method-map.ts)；Python Client 固定提交见第 8 节，另见 [clipboard.py](https://github.com/appium/python-client/blob/d261253b89786fb4686b374721f0fbd0b8c02854/appium/webdriver/extensions/clipboard.py)。官方 README 的剪贴板参数误写 lable，执行映射和客户端实际为 label；不照抄该拼写。mobilePressKey 的 flags TS 注解与文档/Python 整数类型不一致，实际 server 参数验证留作版本资格项，不擅自转字符串。
 
 ### 5.4 应用管理：包级操作及完整组合
 
-六项能力沿用原需求，不重新征求是否纳入。下表具体参数、组合和返回表达仍是**建议待确认**。应用由明确 `app_id` 标识，不把 Session ID、当前前台包、Element 或应用显示名当包名。原有 Session target package 不随 activate 自动改写。所有预算和稳定错误遵守第 5 节；本节的 `timeout_ms` 只是候选上游等待参数，不能代替操作总预算或 500 秒空闲超时，不开放任意 `**options`。
+六项能力沿用原需求，不重新征求是否纳入。**本轮已确认最小语义选项白名单**：终止不暴露上游 timeout；安装只公开 `replace: bool = True`、`allow_test_packages: bool = False`；卸载只公开 `keep_data: bool = False`。应用由明确 `app_id` 标识，不把 Session ID、当前前台包、Element 或应用显示名当包名。原有 Session target package 不随 activate 自动改写。所有预算和稳定错误遵守第 5 节；不开放任意 `**options`，也不把 500 秒 Session 空闲超时当应用操作等待值。
 
 | 调用意图 / 候选方法 | 调用方输入 | Automation 执行职责 / 官方入口 | 完成、失败与副作用 |
 | --- | --- | --- | --- |
 | 激活 `activate_app(app_id)` | 明确 Android 包名 | 官方 activateApp；必要时启动或带到前台，不先 terminate/reset | 激活命令完成，不证明某 Activity/业务页面已出现，不自动安装缺失应用 |
-| 终止 `terminate_app(app_id, *, timeout_ms=None)` | 包名；可选官方进程等待时长 | 官方 terminateApp 获取原进程、force-stop 并按官方规则等待；不自行杀其他进程 | 保留 true/false：false 可表示原未运行；true 是官方终止判定，不保证持续停止。timeout≤0 会跳过状态核对；是否公开此选项待确认，不静默更改语义 |
+| 终止 `terminate_app(app_id)` | 包名；不公开上游 timeout | 官方 terminateApp 获取原进程、force-stop 并按官方规则等待；具体等待值由统一操作预算适配，不自行杀其他进程 | 保留 true/false：false 可表示原未运行；true 是官方终止判定，不保证持续停止。不得通过内部 timeout≤0 跳过状态核对来伪装完成 |
 | 状态 `query_app_state(app_id)` | 包名 | 官方 queryAppState；安装检查、运行状态和窗口焦点判断由 driver 完成 | Android 已核对状态为 0 未安装、1 未运行、3 后台、4 前台；失败/未知不是 0，不承诺 iOS 的状态 2 或持续健康 |
-| 安装 `install_app(app_path, *, timeout_ms=None, replace=None, …)` | 明确本地单 APK 路径；显式选项清单待收敛 | 校验仅允许本地 APK，传给官方 installApp；路径属于 Appium 服务所在文件系统，首批本地连接不自动上传/下载 | 安装/升级命令完成，不启动应用。官方可替换已有包，版本/签名/数据迁移受 Android 约束；失败可能有已完成准备，不自动卸载重装兜底 |
-| 卸载 `remove_app(app_id, *, timeout_ms=None, keep_data=None)` | 包名；是否保留数据及等待值须明确产品默认 | 官方 mobile: removeApp；使用能保留官方返回值的公开入口，不从 Python 返回 self 推断 bool | true 表示找到并成功卸载；false 可表示未安装。未要求 keepData 时不得声称保留数据；卸载可能影响当前应用与后续 Session |
-| 清数据 `clear_app(app_id)` | 明确包名；终止/核对预算由公共规则提供，具体默认未定 | 建议内部核对安装/运行，必要时官方 terminateApp，再核对未运行后调用官方 clearApp；见下文的组合边界 | 清除应用数据、缓存和设置的命令完成，不重启、不重授权限、不保证原 Session 继续可用；前置终止已完成而清除失败时保留部分完成事实 |
+| 安装 `install_app(app_path, *, replace=True, allow_test_packages=False)` | 明确本地单 APK 路径；显式是否替换已有包、是否允许测试包 | 校验仅允许本地 APK，传给官方 installApp；路径属于 Appium 服务所在文件系统，首批本地连接不自动上传/下载 | 安装/升级命令完成，不启动应用。replace=true 沿 Appium 默认允许替换/升级；版本/签名/数据迁移受 Android 约束；失败可能有已完成准备，不自动卸载重装兜底 |
+| 卸载 `remove_app(app_id, *, keep_data=False)` | 包名；显式是否请求保留应用数据和缓存 | 官方 mobile: removeApp；使用能保留官方返回值的公开入口，不从 Python 返回 self 推断 bool | true 表示找到并成功卸载；false 可表示未安装。默认不保留数据；仅 keep_data=true 才承诺发送保留请求，实际平台结果须验证；卸载可能影响当前应用与后续 Session |
+| 清数据 `clear_app(app_id)` | 明确包名；终止/核对使用公共操作总预算 | **已确认必要组合**：内部查询安装/运行状态，运行中则官方 terminateApp，再核对未运行后调用官方 clearApp；见下文组合边界 | 清除应用数据、缓存和设置的命令完成，不重启、不重授权限、不保证原 Session 继续可用；前置终止已完成而清除失败时保留部分完成事实 |
 
-`clear_app` 的组合是当前新增建议：官方 clearApp 只调用 adb.clear，文档要求应用存在且未运行；直接薄透传会迫使 Integrations 先停应用。建议由 Automation 完成这些必要步骤，使用同一次 Session 准入和总预算，不调用公开方法递归取锁、不增加任意等待/搜索循环。官方 terminateApp 在原进程被新进程替代时也可能返回 true，所以不能仅凭 true 继续清数据；需显式核对官方状态。再次运行/不明状态/超预算则停止，不再清除、不反复终止。核对与清除仍非原子，遇到竞态按实际失败/未知返回，不保证回滚或数据已保留。**组合和预算尚未批准**；这项不把已确认的清数据意图重新列为待确认。
+`clear_app` 的必要组合**本轮已确认**：官方 clearApp 只调用 adb.clear，文档要求应用存在且未运行；Automation 必须完成所承诺的设备步骤，不能迫使 Integrations 先停应用。同一 Session 准入和操作总预算内，先查询安装/运行状态；未安装明确返回而不发送 terminate/clear；运行中调用一次官方 terminateApp，然后显式核对已安装且未运行，才调用一次 clearApp。不调用公开方法递归取锁，不增加任意等待/搜索循环。官方 terminateApp 在原进程被新进程替代时也可能返回 true，所以不能仅凭 true 继续清数据。再次运行、状态不明或预算不足时停止，不发 clear、不反复终止；已终止但 clear 失败或响应丢失时保留部分完成/执行未知。核对与清除非原子，竞态按实际失败或未知返回，不自动重试、回滚或声称数据已保留。各阶段如何分配预算仍由公共预算模型收敛，不重新开放组合决定。
 
-选项收敛建议：安装先只考虑明确 timeout、replace 与测试 APK 所需 allowTestPackages；checkVersion 会把操作变为可能跳过安装，需单列语义再决定。grantPermissions、useSdcard、noIncremental 不自动开放；特别是不能因安装接口存在就扩大到后续权限管理。卸载的 keep_data 与默认 Session 保留数据不是同一设置；正常 quit 的 noReset/shouldTerminateApp 也不能抵消显式卸载/清数据。安装本地 APK 不是承诺可以读 Appium server 任意其他文件；不接受 URL、APK 集或隐藏下载。此处省略号只表示待决字段，不是公开 kwargs。
+选项边界**本轮已确认**：安装只公开 `replace=True` 与 `allow_test_packages=False`；卸载只公开 `keep_data=False`；终止、安装、卸载均不公开上游 timeout，由后续统一操作预算模型规定内部适配和不足预算行为。`checkVersion` 会把操作变为可能跳过安装，`grantPermissions` 会扩大到权限副作用，`useSdcard`、`noIncremental`、`skipInstallCheck` 也不首发。正常 quit 的 noReset/shouldTerminateApp 不能抵消显式卸载/清数据。安装本地 APK 不是承诺可以读 Appium server 任意其他文件；不接受 URL、APK 集或隐藏下载。未来新增选项须按其独立语义确认，不提供 `**options` 绕过白名单。
 
 官方文档与实现差异必须保留：安装 timeout 的 v8.7.0 README 写 6000ms，而 v14.0.8 mobileInstallApp 注释写 20000ms，当前实现还向 appium-adb 传递可选值；本文**不采用任一数字作为默认**，需沿实际选定依赖继续核验或显式设定。clearApp 文档称返回 stdout，但所查 Android driver 实现 await adb.clear 后无返回，故本接口只承诺命令完成，不暴露虚构 stdout/bool。terminateApp 已查默认等待 500ms，这是应用进程等待，与 Session 500秒空闲不是同一设置。
 
@@ -575,7 +646,7 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 | S04a 相对点/区域手势 | 本次操作采样显示区域，按宽高转换 [0,1] 点、起终点或区域，再调用官方能力；容器另由定位给出 | 绝对像素参数/模式不接受；不将同一坐标改按容器局部解释；旋转/窗口变化导致采样失效时不盲用旧几何 | 相对坐标与统一基准已确认，变化检测、边界与舍入待设计 |
 | S05 键盘、弹窗和面板 | 调用方判断后 IF-22/23/26/27/28/29 | 键盘原隐藏/隐藏失败、IME焦点变化、官方弹窗识别失败、磁贴缺失、厂商差异 | 5.3；IME目标待收敛，磁贴Element点击复用tap，不自动接收弹窗或回退点击 |
 | S06 应用与 Session 分离 | IF-30 → IF-32 → IF-31 → IF-04；IF-33/34/35 单独显式场景 | 应用状态未知、终止后被重新拉起、安装/清数据后会话变化、关闭默认值交互 | U06及5.4；应用关闭不等于Session关闭，清数据前置组合不能外包给Integrations |
-| S06a 清数据的必要组合 | 单次 IF-35 内部检查安装/运行 → 必要 terminate → 核对未运行 → clear；同一次Session准入与总预算 | 未安装、停止失败、被重新拉起、停止已完成但清除失败、清除响应丢失 | 5.4组合建议待确认；不要求接入层拼步骤，不递归取锁、不回滚或自动重试 |
+| S06a 清数据的必要组合 | 单次 IF-35 内部检查安装/运行 → 必要 terminate → 核对未运行 → clear；同一次Session准入与总预算 | 未安装、停止失败、被重新拉起、停止已完成但清除失败、清除响应丢失 | 5.4组合已确认；不要求接入层拼步骤，不递归取锁、不回滚或自动重试；阶段预算待公共模型收敛 |
 | S07 多设备隔离 | 在同一 active Runtime connection 中两个明确设备各建 Session，操作只作用于各自归属 | A 的正常 quit 不关闭 B；相同设备拒绝；客户端/端口资源独立；创建/退出及跨线程冲突分别验证 | 正常生命周期已确认，U03/并发资格仍未解决；不是跨进程多连接或并行通过声明 |
 | S07a 同 Session 重叠调用 | A 操作仍在执行时，B 操作请求同一 Session | B 返回忙且没有设备命令发送，不排队；A 不被打断；A 结束后的显式新调用独立处理 | 产品规则已确认；原子准入、重入、关闭/取消竞态及取消后的收尾时点待设计 |
 | S07b 500 秒空闲与异常回收 | 无新命令后由 Appium 回收；后续调用按实际失效或未知结果处理 | 命令执行中不按空闲计时推断关闭；不以反复 Session 查询续命；Session 不在列表不证明设备清理完成；创建无 ID 不猜归属 | 空闲默认已确认；跨进程未知占用保证与核实方式仍待决，不自动新建 |
@@ -600,12 +671,12 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 
 ## 8. 库复用、官方依据与设计阻塞
 
-本批写文档，不实现 Python，**不新增依赖/不安装**。但面向后续实现的选型是 Ready 前提，不能写“不适用”掩盖尚未完成的选型。以下为研究队列，不是推荐版本或批准。
+本批写文档，不实现 Python，**不安装或修改依赖**。面向后续实现的选型是 Ready 前提；下表区分本轮已批准用途与仍待资格验证项，批准不等于SPEC gate或实施授权。
 
 | 用途与候选 | 当前判断 | 需补的版本化依据与验证 | 状态 |
 | --- | --- | --- | --- |
-| WebDriver/Session：官方 Appium-Python-Client、其 Selenium 依赖；对比现有 Runtime 依赖可否复用 | 优先官方公开客户端处理通用协议，不自行 HTTP 实现 WebDriver；Runtime 已批准 HTTPX 用途不能自动扩展 | 候选具体版本/支持 Python、维护/许可证/传递依赖、构造与 create/quit、超时/取消/异常/清理、实际公开签名、迁移说明 | U02；未选版本、无用户批准 |
-| Android 发现：已有封装、成熟 ADB 库、Python 标准库 subprocess 薄适配 | 只为设备发现，不开放任意 shell/ADB；不预定自写 ADB 协议 | 具体工具/库版本、枚举身份及状态、子进程或连接预算/取消/资源上限，明确允许的薄适配 | U02；未批准 |
+| WebDriver/Session：Appium-Python-Client 6.0.8 + Selenium 4.51.0 | **用户本轮具体批准**：直接固定这两个版本，仅用于Automation的Session/WebDriver/Appium命令；不启用AppiumService、浏览器、Selenium Manager或BiDi | 传递依赖锁定/许可证/安全、实际wheel签名、create/quit、timeout/取消/异常/清理、系统端口与目标server/driver资格验证 | 版本/用途已批准；资格验证和SPEC/实现仍阻塞 |
+| Android发现：Python3.11 `subprocess` + 调用方显式官方ADB | **用户本轮具体批准**：只执行固定 `adb devices -l`，不使用shell/PATH回退/任意ADB，不自行实现协议 | 实际Android Platform Tools版本、输出/状态、超限、显式Control取消与子进程回收；真实查询需设备授权 | 用途已批准；资格验证/设备操作仍阻塞 |
 | JSON/XML：Python 3.11 标准库、成熟 XML 解析库/现有封装 | JSON 纯值转换与业务映射不等于批准重写解析器；XML 安全与资源界限待评估 | 目标 Python 官方行为、拒绝/限制策略、完整层级与大输入、异常、采集和返回上限分开验证 | U02/U04；未批准 |
 | 版本比较/协调/取消：现有批准库、标准库、成熟封装 | 不重新实现通用版本或协调框架；不能因为同账号锁已存在就复制为设备锁 | 复用既有批准用途记录；新增范围、身份、恢复与故障需独立评估 | U01/U03/U07 |
 
@@ -622,12 +693,12 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 | 顺序 | 决策 / 工作 | 已确认边界 | 当前建议或需产出的契约 | 状态 |
 | --- | --- | --- | --- | --- |
 | P1 | IME 目标语义 | B4 已纳入；命令完成不代表业务发送；Integrations 不补聚焦步骤 | 首版只提供“对当前焦点执行 editor action”；不接收 Element、不自动点击或聚焦。若调用方需要指定目标，先显式执行已有 Element 操作并自行确认焦点 | **建议待确认**；官方入口只作用于 active input field，见 5.3 |
-| P2 | 面板与已有磁贴入口 | 展开通知、展开快捷设置、收起、点击已有磁贴已纳入；不添加/移除磁贴 | `status_bar` 只接受三个命令白名单；视觉磁贴只复用 `tap(element)`，不首发 TileService component `clickTile` | **建议待确认**；组件不是界面标签或 resource-id |
-| P3 | `clear_app` 必要组合 | 清数据是显式应用操作；Automation 封装其承诺所需设备步骤 | 同一 Session 准入与总预算内：查询安装/运行状态 → 必要时终止 → 核对未运行 → clear；无法证明停止即不清除，不重试、不回滚，保留部分完成 | **建议待确认**；查询与清除非原子 |
-| P4 | 应用选项白名单和默认 | 六项应用能力已纳入；默认保留数据；不开放任意 `**options` | 安装首批仅评估 `timeout_ms`、`replace`、`allow_test_packages`；卸载单独决定 `keep_data`；终止单独决定是否公开 `timeout_ms`。`checkVersion`、授权权限、SD 卡、增量安装等不首发 | **建议待确认**；具体默认须随选定版本核验 |
-| P5 | 公共错误模型 | 响应丢失不能断言未执行；不自动重放；同 Session 重叠立即报忙 | 定义稳定错误族、原始异常保留、未发送/部分完成/命令完成/执行未知，以及主错误与清理错误并存规则 | **待设计并确认** |
-| P6 | 预算与取消 | 目标等待默认 15 秒；Session 空闲默认 500 秒；二者与响应预算分开 | 定义操作总预算、上游响应预算、取消可达点、计时起止和“收尾完成前不释放准入”；不承诺无法兑现的硬返回时限 | **待技术核验后设计并确认** |
-| P7 | 生命周期异常恢复 | 正常为单 active connection、多 Session、显式 `quit`；不自动心跳/重建/重放 | 收敛创建/quit 响应未知、连接退出竞态、进程内未知占用、跨进程保证终止点及显式核实入口；不先建持久 Registry | **待技术核验后设计并确认** |
+| P2 | 面板与已有磁贴入口 | 展开通知、展开快捷设置、收起、点击已有磁贴已纳入；不添加/移除磁贴 | `status_bar` 只接受三个命令白名单；视觉磁贴只复用 `tap(element)`，不首发 TileService component `clickTile` | **本轮确认**；组件不是界面标签或 resource-id |
+| P3 | `clear_app` 必要组合 | 清数据是显式应用操作；Automation 封装其承诺所需设备步骤 | 同一 Session 准入与总预算内：查询安装/运行状态 → 必要时终止 → 核对未运行 → clear；无法证明停止即不清除，不重试、不回滚，保留部分完成 | **本轮确认**；查询与清除非原子，阶段预算待 P6 |
+| P4 | 应用选项白名单和默认 | 六项应用能力已纳入；默认保留数据；不开放任意 `**options` | 终止无上游 timeout；安装 `replace=True`、`allow_test_packages=False`；卸载 `keep_data=False`。`checkVersion`、权限、SD 卡、增量安装、跳过检查等不首发 | **本轮确认**；内部等待适配待 P6 与锁定版本资格验证 |
+| P5 | 公共错误模型 | 响应丢失不能断言未执行；不自动重放；同 Session 重叠立即报忙 | 异常式接口；稳定错误族、`request_state`、`completed_steps`、原始异常链及 `cleanup_errors` 分别表达；无通用 retryable | **本轮确认**；具体上游映射待锁定版本资格验证 |
+| P6 | 预算与取消 | 目标等待默认15秒；Session空闲默认500秒；检查点取消已确认；各层与响应预算分开 | 复用 `runtime.OperationControl`；`control=None` 沿 Appium 默认并接受可能无有限上限；显式 Control 提供总预算；阻塞命令结束及收尾前保持忙 | **本轮确认**；显式 timeout 能力与清理仍须锁定版本资格验证 |
+| P7 | 生命周期异常恢复 | 正常为单active connection、多Session、显式quit；不自动心跳/重建/重放 | creating/active/uncertain/closing/closed；未知时禁普通命令并保留本进程占用；崩溃后保证终止，不写持久账本；direct_connection关闭 | **本轮确认**；Runtime并发退出竞态和实际客户端清理待资格验证 |
 | P8 | 近期 feature 设计 | 一次一个 feature，约 1200 产品行目标；AIF-01/02 优先 | 补齐 AIF-01/02 的完整接口、错误/预算/恢复验收、选型门槛和模块整体验收接缝，再确认顺序与预算 | **待 P1–P7 收敛；未 Ready** |
 
 并行但不由上述产品问答替代的技术门槛：Appium Python Client/UiAutomator2/Appium Server 精确版本与用途选型，ADB 设备发现方式，XML/JSON 处理，跨线程客户端与多 Session 资源参数，取消/传输清理能力。任何候选仍须按第 8 节完成资格研究和具体用户批准；本清单不批准依赖、设备操作或 SPEC delta。
@@ -654,6 +725,85 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 实际已有工具为 `uv run pytest`、Ruff、strict mypy、import-linter 及构建入口，均按根 SPEC 使用；Automation 测试尚不存在，本文未运行产品验证。设备安装/清数据等操作未授权，不编造真实链路结果。
 
 当前模块/平台整体验收：明确设备 → Session → 结构/定位/已选动作/等待 → 应用管理 → 关闭/占用释放；覆盖失败/超时/取消/资源清理、64 KiB、多设备需求及适用真实 Android 链路。模拟通过不等于设备通过，单 feature 不等于模块完成。
+
+### 9.1 AIF-01：只读设备发现
+
+**目标**：调用方从明确的 Android SDK `adb` 可执行文件查询当前 ADB server 已知的真机和已启动模拟器，取得可用于 AIF-02 的稳定设备ID、可选名称和本次连接状态；空列表是成功结果。**非目标**：不自动选择设备，不启动/创建模拟器，不连接/配对无线设备，不等待设备上线，不执行任意ADB命令、shell、安装或属性采集。
+
+公共形态建议：
+
+```python
+list_devices(
+    adb_executable: Path,
+    *,
+    control: OperationControl | None = None,
+) -> tuple[DeviceInfo, ...]
+```
+
+`DeviceInfo` 为Automation不可变值，字段为 `id: str`、`name: str | None`、`connection_state`。`id` 是本次ADB列出的serial原文，经UTF-8/长度/控制字符校验后保留，不用展示名替代；`name` 取 `adb devices -l` 的model描述，缺失时为None，不伪造serial为名称。连接状态至少区分connected、offline、unauthorized、unknown；空输出设备段返回空tuple，命令失败、不可解析和超限不能伪装成空列表。原始ADB任意附加字段不成为公共schema。
+
+执行只允许参数数组 `[adb_executable, "devices", "-l"]`，不用shell、PATH回退或环境中的另一个adb。路径须为绝对普通文件；显式路径失败不扫描SDK或回退。调用可能按ADB官方行为启动本机ADB server，但不会启动设备或模拟器，须在实施验收中记录该宿主副作用。输出按UTF-8严格解码，建议上限64KiB、最多256个设备；超限明确失败。返回按ID排序以获得确定性，不把输出顺序当优先级。`control=None` 不增加项目总预算；显式Control时子进程须在deadline/取消时终止、等待回收并关闭pipe后返回，不能遗留进程。
+
+复用评估（查询2026-10-23；推荐方案用途已获用户本轮具体批准，尚未实施）：
+
+| 候选 | 适配性与代价 | 判断 |
+| --- | --- | --- |
+| Python 3.11 `subprocess` + 官方Android SDK Platform Tools `adb devices -l` | 复用官方ADB client/server和已安装SDK，不实现ADB wire protocol；只需有界子进程、固定命令和小型行解析 | **已批准首feature用途**；无新增Python依赖，仍须记录并资格验证实际Platform Tools版本 |
+| adbutils 2.12.0 | 提供直接ADB server协议和设备列表，但引入requests、deprecation、retry2、Pillow，能力面远超只读发现；默认socket timeout可为None | 不推荐首feature；额外协议实现/依赖/重试面没有收益 |
+| adb-shell 0.4.4 | 自行实现ADB shell/FileSync，USB为experimental，PyPI元数据未声明目标Python范围，当前用途不需要shell/FileSync | 不推荐 |
+
+官方依据为Android Developers [adb文档](https://developer.android.com/tools/adb)：ADB是Platform Tools中的client/server/daemon；`adb devices -l`列出serial、state及描述，官方明确device不表示Android已经完全启动，offline与无设备不同。标准库方案不是自研ADB协议；解析仅覆盖该受限命令的公开输出，遇到未知状态保留unknown而非扩展任意命令。
+
+错误与验收：无效路径/参数为 `invalid_argument/not_sent`；同一发现调用取消/超时为已确认公共模型；执行失败、非零退出、非法UTF-8、重复ID冲突、输出/设备数超限分别稳定分类。受控临时可执行文件验证参数、排序、空列表、connected/offline/unauthorized/unknown、边界与进程回收；获准真实验证须运行明确adb路径，核对至少无设备或实际设备之一，证明未自动选择、启动模拟器或执行第二条设备命令。AIF-01产品/测试/文档预算维持250–450 / 250–450 / 80–140；超出先重拆。SPEC增量仅Automation公开入口、DeviceInfo/错误和源码映射；不改Runtime/Contracts。
+
+**Ready阻塞**：标准库+官方ADB CLI用途已获用户批准；实际Platform Tools版本与行为尚未资格验证，真实ADB查询尚未授权。批准不等于设备操作、SPEC或实现授权。
+
+### 9.2 AIF-02：明确设备 Session 生命周期
+
+**目标**：在一个active Runtime connection内，为调用方明确指定的device创建独立Appium Session，跨多次调用复用，提供本地 `session_info` 和显式 `quit`，执行本进程同设备占用、同Session立即忙及已确认异常状态机。**非目标**：不交付界面动作、观测、外部Session attach、全局Session查询、持久Registry、跨进程占用、后台心跳、自动恢复/重放、Appium服务启停或设备调度器。
+
+候选公共形态；参数名仍须独审和最终设计确认，行为边界如下：
+
+```python
+create_session(
+    connection: RuntimeConnection,
+    device_id: str,
+    *,
+    app_id: str,
+    app_path: Path | None = None,
+    auto_launch: bool = False,
+    force_app_launch: bool = False,
+    no_reset: bool = True,
+    full_reset: bool = False,
+    should_terminate_app: bool = False,
+    new_command_timeout_seconds: float = 500,
+    capabilities: Mapping[str, JsonValue] | None = None,
+    control: OperationControl | None = None,
+) -> Session
+```
+
+首批要求明确 `app_id`，即使同时给APK也用它作为Session目标包和短resource-id默认包；`app_path=None`表示使用已安装应用，非None须为本地绝对单APK路径且由当前本地Appium服务可读。该收敛避免从APK或前台应用猜目标包，仍保留原需求的已安装包/APK两种输入。`auto_launch`等一等映射Appium能力，不创造keep/activate/restart模式；组合冲突在任何Session请求前拒绝，具体矩阵须按最终UiAutomator2版本资格验证。
+
+Automation固定并验证 `platformName=Android`、`appium:automationName=UiAutomator2`、`appium:udid=device_id`、目标app/appPackage、500秒空闲默认及首批已确认范围。原始capabilities只允许批准白名单内、JSON可表达且有界的附加项；与一等参数、设备、平台、driver、连接端点、`direct_connection`、系统端口或首批范围冲突时明确拒绝，不静默覆盖。`enableMultiWindows=true`按原需求加入所选版本正确入口，但不据此宣称已取得窗口来源。Automation为不同active/uncertain Session分配并保留唯一UiAutomator2 `systemPort`；这是内部资源，不要求调用方调度，外部客户端冲突不在保证内。WebView/Chromedriver、MJPEG和录屏端口不因并行章节存在而配置。
+
+每个Session持有一个独立Appium客户端、设备/目标身份和生命周期状态；不同Session不共享WebDriver实例、sessionId或命令连接。同进程内部协调器只保存设备与systemPort保留信息，不能按ID查回Session或作为公共Registry。创建请求发出前同时保留device和port；按第5.0.2节处理成功、可证明未创建、响应未知。`direct_connection=False`，禁止新Session响应把客户端切到未经Runtime验证的端点。普通操作与quit在开始前验证Runtime connection仍active；首批要求调用方将Runtime退出与所有Session生命周期串行化，正常顺序仍为全部quit后退出。现有Runtime没有可供Automation持有的lease，因此跨线程并发退出的check-then-exit竞态不承诺被完全拦截；若最终要求强制阻止退出，必须单列Runtime SPEC delta，不能读私有锁实现。
+
+`session_info`只读本地快照，不发Appium命令。`quit`在active且不busy时发送一次DELETE；closed再次quit返回None；busy立即报忙；closing/uncertain不自动再发DELETE。有效成功响应、Appium客户端连接资源关闭和Automation收尾都完成后才释放本进程device/port。主体错误与客户端关闭错误按已确认 `cleanup_errors` 并存。进程崩溃后内存占用保证终止，不写磁盘；新进程不宣称旧Session已被500秒机制清理。
+
+依赖复用决定（查询2026-10-23；版本/用途已获用户本轮具体批准，尚未安装或实施）：
+
+| 用途 | 推荐版本与证据 | 适配/验证缺口 |
+| --- | --- | --- |
+| Appium公共客户端 | `Appium-Python-Client==6.0.8`，2026-10-20发布，PyPI Production/Stable，Apache-2.0，Python>=3.10，当前漏洞列表为空；**批准仅用于Session/WebDriver/Appium命令，不启用AppiumService** | 必须验证create/quit、AppiumBy、mobile命令、idempotency key、direct_connection关闭、客户端资源关闭、异常映射 |
+| WebDriver传输依赖 | 直接固定 `selenium==4.51.0`，2026-10-09发布，Apache-2.0，Python>=3.10，当前漏洞列表为空；6.0.8元数据要求`>=4.51.0,<5`；**批准作为上述固定传输/元素依赖** | 直接固定避免宽范围漂移；须审查urllib3/trio/websocket等传递依赖和锁定产物，Automation不启用浏览器/Selenium Manager/BiDi |
+
+6.0.8还依赖typing-extensions~=4.16，Selenium带来certifi、urllib3[socks]、trio、trio-websocket、typing_extensions、websocket-client；不得把Appium客户端一项批准解释为这些依赖无需锁定/许可证/安全核验。官方README称v4.3+请求默认120秒，但所核Selenium4.51.0 `ClientConfig`源码默认取 `socket.getdefaulttimeout()`，资料存在差异；必须以实际锁定wheel公开签名和行为测试为准。该差异尤其阻塞显式Control映射与用户已接受的“control=None沿Appium默认”准确说明。
+
+AIF-02受控验证不要求真实设备的部分：临时HTTP Appium协议服务验证capabilities、单次create/quit、无自动重试、direct connection不切换、稳定错误/原始异常/清理错误、同Session并发立即忙、本进程设备/port占用、状态机及connection失效前置拒绝；客户端线程/连接全部结束后资源才可复用。不得用mock成功代替Appium客户端真实序列化与异常路径。获准真实验收必须使用固定Appium/UiAutomator2组合和专用Android设备，覆盖已安装包与本地APK、autoLaunch=false、500秒能力协商、同设备拒绝、不同设备独立Session、分别quit且A不关闭B；不执行本feature范围外界面动作。创建/quit响应丢失、进程崩溃及500秒实际回收至少在隔离测试服务/设备授权后验证，不能靠sleep或会话列表推断清理。
+
+AIF-02预算维持700–1100产品 / 700–1200测试 / 140–240文档行；若process coordinator、能力矩阵和客户端适配累计明显超过约1200产品改动，先按“Session创建关闭”与“多Session资源隔离”两个可验收行为重新拆分，不删减错误/清理验证。未来SPEC delta主要在根依赖/Automation公开映射与Session契约；按当前进程内范围和串行Runtime退出前提，暂不需要Runtime或Contracts delta。
+
+**Ready阻塞**：Appium-Python-Client 6.0.8 / Selenium 4.51.0版本与限定用途已获用户批准；全部传递依赖锁定核验、实际wheel API、默认/显式timeout、清理、并行systemPort和目标server/driver组合尚未资格验证；真实Appium/设备/APK操作未授权。`app_id`必填及Runtime并发退出仅设为首批串行前提仍需最终设计确认。AIF-01先验收后才能实施AIF-02。
 
 ## 10. 拟议 SPEC 影响、设计验证与后续
 
