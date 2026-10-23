@@ -122,3 +122,83 @@
 - 必须验证零 I/O 构造/静态兼容、URL 校验与 base path、HTTP 正常/失败/未知区分、限制/取消/总预算、真实跨进程固定锁、active 内静态诊断、退出/失效及原异常保留；默认测试只依赖受控临时 HTTP Server，不要求真实 Appium/设备。
 - 获准已有 Appium 的真实同步范围进入/退出与退出后状态读取须验证；只 GET /status，不创建 Session、不关闭服务器，不代替本模块首批真实 Android Session 整体验收。
 - 固定版本的受管线程建立/取消/关闭、超时竞争与清理错误须先通过资格验证。普通网络无响应、慢头/慢 body/逐字节 drip、Event/KeyboardInterrupt 和已知关闭错误在 0.2 秒预算、正常调度下须于 1 秒内完成取消、清理和返回；该验收目标不构成本地库/OS 不可中断故障下的硬实时承诺。成功/失败/取消均须证实任务、HTTP 连接和 portal 线程结束后账号锁可顺序复用；同时覆盖主错误对象保留、已知/未知 HTTP 清理错误与协调清理错误独立保留，以及 Q2 已确认协议差异的完整清单。
+
+## Local Managed Installation Preparation
+
+本节定义RT-LOCAL-03A职责和接口，不改变前文静态诊断/外部连接契约，不提前加入03B恢复继续、04自管服务或其他平台；对应设计为[独立安装准备](../../docs/superpowers/specs/2026-10-23-runtime-local-installation-design.md)。
+
+### Designated Combination And Ownership
+
+- Runtime唯一拥有随Python包发布的不可变指定组合清单。首批仅一条默认 `macos-android-uiautomator2`：Appium精确3.7.0、UiAutomator2精确8.7.0；Python调用方默认使用该条目，无浮动latest/范围版本或任意自定义版本参数。清单可通过公开读取入口查询，不在运行时访问网络选择新版本。
+- 开发Agent负责固定官方依据、候选推荐及获准资格验证，项目维护者批准条目及默认值的更改；Runtime执行已指定策略。Configuration仅传值、不导入Runtime推导兼容组合，外部Agent不得自行批准、升级或降级。新增指定组合或改变已确认兼容行为另经维护者批准及相应SPEC gate。
+- 安装前须确认Node/npm实际可执行且满足该条目的声明约束；当前声明为Node `^20.19.0 OR ^22.12.0 OR >=24.0.0`、npm `>=10`，通过既有node-semver公共能力匹配，不重写grammar。声明满足只代表预检，不把所有允许版本称为实测；当前实测工具链仅Node26.7.0/npm11.19.0。构造、查询清单不执行组件命令。
+- 当前资格范围为macOS arm64及指定工具链、Temurin21.0.13+9、现有platform-tools37.0.1、Appium-Python-Client6.0.7/Selenium4.46.0、Pixel6 Android17/API37的一次原生Session创建与关闭及批准清理。资格客户端/JDK是开发资源，不是Runtime产品安装的依赖。不会因本条改变diagnose的静态行为或02外部服务主版本兼容策略。
+- 已知此driver发行/安装存在两个sharp可选原生包目录为空、npm全树检查ELSPROBLEMS；公开driver入口、版本识别和一次原生Session成功不等于图像处理功能成功。安装结果保留稳定警告 `optional_image_dependencies_unverified`；Runtime不自动补包、覆盖npm依赖树或更换driver版本，也不把npm全树成功作为未另行确认的永久安装条件。实际指定组件缺失/损坏、CLI无法运行/识别仍须失败，不能以此警告兜底。
+
+### Fixed Root And Boundaries
+
+- 自管根固定为系统当前账号home下 `.appium-connect-agent`；不随cwd、项目或调用方HOME覆盖改变，不支持自定义根。账号间各自独立，不宣称跨账号唯一。既有固定账号锁 `~/Library/Application Support/appium-connect-agent/runtime.lock` 不迁移、不按根/端口另建锁。
+- 根内本体、专用driver home及有界操作记录分开；不在用户全局npm包或默认 `~/.appium` 写入。不提权，不修改全局PATH、npmrc或shell配置。基础依赖Node/npm/Java/Android工具仅由用户准备；03A只运行Node/npm安装所需检查，Java/Android运行预检归后续04。
+- 仅显式安装调用才访问/创建根；Runtime、设置、请求/清单值构造仍零I/O。操作前校验当前账号所有权、文件类型/链接和受管身份；未知归属、目录冲突、损坏或无法确认空闲时在修改前拒绝，不接管、删除或自动修复。必要普通npm bin链接可在验证真实目标位于本次受管树后使用，不通过目录名/marker取得进程所有权。
+- 现有LocalSettings仍唯一由Contracts定义。安装入口拒绝同时指定 `appium_executable` 或 `appium_home` 的已有环境目标，抛纯值ValueError；不静默忽略用户路径或把它们作为写入目标。Node/npm显式绝对路径优先，失败不回退；未提供时沿有界唯一PATH候选选择，不混用包装Node与另一个npm。`server_url`、Java/SDK值不触发联网/设备行为。
+- 一次只准备Android所需Appium/UiAutomator2；npm负责一般依赖及安装脚本。版本/进程控制/结果是公共能力，driver命令与资格边界为平台适配；不预建iOS/remote入口或兼容矩阵。
+
+### Public Interface And Results
+
+所有新增类型及入口由 `appium_connect_agent.runtime` 拥有并导出；不改变Contracts或Configuration schema。名称/字段如下，均不承诺尚未实现的服务或Session行为。
+
+| 类型/入口 | 契约 |
+| --- | --- |
+| `supported_combinations() -> tuple[InstallationCombination, ...]` | 只返回随包不可变清单，零I/O；InstallationCombination含combination_id、host、target、driver、appium_version、driver_version、node_range、npm_range、is_default、limitations（稳定原因码tuple）。仅当前指定条目，查询不下载/解析latest。 |
+| `InstallRequest(*, combination_id: str | None = None)` | 不可变纯值；None选择当前唯一默认，显式值只可选清单条目。无任意版本、根、shell或源参数；未知条目/错误类型在修改前ValueError。 |
+| `Runtime.install(request: InstallRequest, *, control: OperationControl | None = None) -> InstallationResult` | 同步显式准备或复查整组，只有完整验证成功才正常返回。control=None默认600秒；传OperationControl尊重其timeout_seconds，包括显式构造默认10秒，不改变diagnose/connect默认值。 |
+| `Runtime.cleanup_installation(*, control: OperationControl | None = None) -> InstallationResult` | 只重试本实例仍持有且可证明归属的安装清理及状态复查；默认30秒，无资源时幂等成功。不再安装、不管理外部/服务进程，不凭旧PID接管崩溃遗留。 |
+| `InstallationComponent` | 不可变快照：name、requested_version、observed_version（str或None）、status（missing/verified/conflict/damaged/unknown）、reason_code、evidence（有界字符串tuple）。tuple中组件顺序固定Appium再UiAutomator2。 |
+| `InstallationResult` | 不可变：operation_id、UTC observed_at、combination_id、root、node_version/npm_version（str或None）、before/after（组件tuple）、outcome（installed/reused/failed/cancelled/timed_out/cleanup_pending/recovery_required/cleanup_completed）、changed（本次是否实际写组件）、warnings、observer_errors、settings（LocalSettings或None）。只有完整安装/复查成功时settings非None，给出实际本体/driver路径及选定Node/npm供后续诊断；不保证服务/设备可用。 |
+
+- RuntimeOperationError保留code/operation_id/partial_report，增加可选 `installation_result: InstallationResult | None`，既有操作默认None。安装可预期执行失败使用其子类 `InstallationError`；取消、超时、忙、无效状态继续复用现有具体类型并附实际结果。纯值错误为ValueError，未知程序缺陷原对象传播，不宽泛映射成unknown/success。KeyboardInterrupt原对象传播并附可用的安装结果。
+- 安装稳定错误码至少包括：`unsupported_host`、`tool_not_found`、`tool_not_executable`、`tool_version_invalid`、`tool_version_incompatible`、`installation_root_conflict`、`installation_version_conflict`、`installation_damaged`、`installation_partial`、`installation_state_unknown`、`installation_recovery_required`、`component_install_failed`、`component_verification_failed`、`installation_cleanup_pending`；复用既有environment_busy、operation_timeout、operation_cancelled、coordination_unavailable。错误保留实际before/after及本次阶段，不能把确定版本冲突包装成工具未知。
+- 主操作错误保持同一对象；安装子进程/流清理错误独立附 `runtime_installation_cleanup_error`，协调清理沿 `runtime_cleanup_error`，不覆盖已有HTTP或Session清理字段。无主错时清理失败本身使操作失败，不能返回成功结果。普通进度回调首次错误后停用/记录，操作继续；取消/KeyboardInterrupt不吞。进度沿既有ProgressEvent，用phase/check_id标明阶段/组件，不伪造百分比。
+- 本次日志和诊断证据有界脱敏：结果不含原始stdout/stderr、整份npm配置、凭据或任意异常repr。普通元数据读取复用现有1MiB/每操作64文件边界；操作记录最大64KiB，结果每组件最多8段证据、每段512字符，observer_errors最多8段。命令输出持续排空、仅保留每流64KiB用于内部分类，截断明确标识；结构化版本/list响应超限或形状错误使复查失败，不把截断内容当有效完整JSON。
+
+### Preparation, Reuse And Failure Boundaries
+
+- 安装从预检前至必要收尾持现有非阻塞账号锁；同实例重入/并发、其他实例/进程及现有active连接范围中安装均报忙，不启动子进程或修改组件。实际控制预算从入口开始，覆盖工具检查、安装、解析、回调、记录与最终复查；记录/回调后紧邻启动前和等待/流读取检查同一monotonic deadline，不逐阶段重置。
+- 先核对整组身份和当前版本；任一组件版本冲突在所有安装前拒绝，不自动升级/降级/创建第二套。03A允许空且归属明确的新建，或已有完整同版本组合复查后reused；部分安装以installation_partial失败并保留，由03B后续显式继续，03A不提供该能力占位。损坏/未知内容不覆盖。
+- 固定受管目录、参数数组shell=False、显式Node/npm路径及嵌套PATH；以npm公开精确版本安装本体，再用受管Appium公开extension CLI安装指定driver，专用APPIUM_HOME区分本体/扩展。沿用户现有registry、代理和证书配置，不改配置、不自动切源；prefix/global/cache/工作目录等只在必要的子进程内确定，不能让网络配置继承意外改变安装目标。安装脚本按所选固定工具链实际行为验证，不用禁止脚本后假装等价。
+- 成功必须复查实际包名、精确版本、可执行入口和受管路径，实际Appium版本命令及driver识别；退出码0或缓存manifest存在不能单独成功。重复完整安装只复查不下载/覆盖包，受管CLI衍生缓存与操作记录的有限变化按设计验证白名单单列，不笼统要求整个根mtime不变。
+- 修改前持久记录未完成意图；任何非零退出、取消/超时停止后续安装，不自动重试/回滚。最多额外30秒收尾，结束本次可证明归属的进程/流并复查状态；共享收尾预算不重置。仍活动或不能确认结束时保留原实例句柄及协调资格并报cleanup_pending；只有显式cleanup_installation可重试处理它。进程已结束但组件状态未知可释放账号锁，持久记录继续阻止后续修改，静态诊断边界不扩大。
+- 父进程崩溃、记录不完整、不能证明树空闲时为recovery_required；旧PID/PGID、目录名、管道EOF、日志沉默、锁已空闲或默认无进程列表不证明所有权/空闲。03A保守阻断，不自动接管、杀进程、删除记录或恢复安装。必要人工指引不声称系统级完全隔离；锁不能阻止用户手动npm/外部管理器。
+- 正常失败/取消的清理须验证实际安装命令及其已知后代行为；标准库/资格样本不保证任意逃逸子进程树。需要新增通用进程监督方案/第三方用途或自研时先停止相关实现，不能凭“薄适配”重写通用设施。同步回调及不可中断OS调用不承诺硬实时返回，但不能遗弃活动任务假报清理完成。
+
+### Verification Boundary
+
+- 03A必须验证新建整组、完整复用不下载/覆盖、整组预先冲突/损坏/部分/未知拒绝、明确路径/唯一工具链、声明版本、账号归属/链接边界、总预算/取消/观察者/原错误与清理错误、跨进程互斥/失败后可恢复资格及崩溃标记阻断；默认产品测试用受控临时子进程/文件而不依赖设备或真实npm网络。实际目标根的真实产品安装/重复复查另需获准资源验证，不被本次开发资格安装替代。
+- 指定组合资格保留单次真实原生Session创建/关闭及明确辅助APK/设置恢复边界；不要求提前实现Automation，Runtime不创建产品Session。不扩为图像/WebView增强、全部设备、Windows/iOS、其他Node/npm版本或整个Runtime/M01通过。详细测试矩阵、历史日志和未决计划留设计/任务材料，不写入当前契约。
+
+## Local Managed Partial Continuation
+
+本节定义RT-LOCAL-03B增量，依赖已验收的03A安全安装基线；继续使用同一`Runtime.install(InstallRequest(), control=...)`入口和现有公开结果/错误，不增加恢复占位API。以下只允许证据充分的正常失败终态继续，不放宽崩溃遗留、损坏或未知状态。
+
+### Eligible Terminal State
+
+- 继续资格必须同时满足：固定受管根/marker/record均为当前账号拥有的普通受管对象；唯一记录schema和combination_id有效且state为`failed`；该failed只由03A/03B在本次可证明进程组结束、流关闭、最终组件状态可读取且记录原子持久化成功后写入。额外记录、incomplete/recovery_required、截断、非法或缺失记录均不补写/删除，报installation_recovery_required。
+- 在账号锁内重新读取事实。唯一可继续部分形状为Appium精确3.7.0 `verified`、UiAutomator2精确8.7.0 `missing`；反向部分、任一conflict/damaged/unknown、complete记录下缺组件、或driver CLI事实与包状态不一致均在组件写入前失败并保留现场。
+- failed记录下两组件均missing继续沿03A完整显式重试；两组件均verified只做完整公开CLI复查并将记录推进为complete。两者都不能跳过工具/配置/预算/协调检查。仍有同实例cleanup_pending时只允许cleanup_installation；其他安装请求保持busy。
+
+### Continuation Behavior
+
+- 合格部分状态先执行与03A相同的Node/npm配对、声明范围和有效非网络npm策略预检，再用受管Appium入口核对精确本体版本并确认driver未被公开CLI识别为已安装。任何矛盾为installation_state_unknown或component_verification_failed，不以重新安装消除。
+- 修改前将同一操作记录写为incomplete。继续路径不得调用npm安装Appium、覆盖本体或更改其依赖；只执行受管Appium公开`driver install uiautomator2@8.7.0`，保留专用APPIUM_HOME、现有registry/proxy/certificate/auth配置及03A固定的非网络npm策略。
+- driver writer实际启动后`changed=true`；启动前取消、超时、策略/验证失败保持false。失败、取消和超时停止后续步骤，沿03A同一30秒共享收尾和进程组所有权规则；完成收尾且状态已知时原子写回failed，使下一次显式请求可再次复查，未知则写/保留recovery_required并阻断。
+- driver安装后必须重新核对两包身份/精确版本、受管路径、Appium版本和driver list。全部通过才原子记录complete，返回outcome `installed`、部分before/完整after、实际settings及既有warning；failed记录但组合已完整时推进complete并返回`reused`、changed=false。记录完成失败使操作失败，不能先返回成功。
+
+### Recovery And Non-Goals
+
+- 03B的“恢复”仅指上述正常failed终态的显式继续或完整事实晋级，不包含崩溃后进程所有权恢复。空闲账号锁、无可见进程、旧PID/PGID、EOF、mtime或完整组件快照均不能把incomplete/recovery_required变为failed/complete。
+- 不自动删除/重建driver home、manifest、cache或未知文件，不卸载/升级/降级，不手动补sharp，不接管用户已有安装或跨进程终止资源。Configuration/Contracts/Automation/Integrations及服务、设备、Session边界不变。
+
+### Verification Boundary
+
+- 必须验证：Appium成功/driver失败且清理完成→下一显式请求不再调用Appium npm安装、只补driver并完整成功；重复driver失败仍保留可继续failed；完整failed事实晋级complete；反向部分、complete缺失、记录缺失/截断/incomplete/recovery_required、CLI/package矛盾保持零写入阻断；各继续阶段取消/预算/回调/进程组/清理错误和跨进程锁沿03A契约。
+- 默认验证使用受控临时账号根和fake npm/Appium，不破坏已验收真实固定根。03整体证据组合03A已授权真实新建/复用与03B受控失败→继续链路；若要求真实固定根部分失败/继续，须另有明确的破坏/恢复方案和授权，不能通过删除现有driver或篡改记录伪造。03B通过仍不表示Runtime/M01或04–06完成。

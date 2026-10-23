@@ -41,10 +41,16 @@ assert set(metadata.get_all('Requires-Dist')) == {
     'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1'
 }
 if sys.platform == 'darwin':
-    from appium_connect_agent.runtime import LocalSettings as RuntimeSettings
-    from appium_connect_agent.runtime import Runtime
+    from appium_connect_agent.runtime import InstallRequest, LocalSettings as RuntimeSettings
+    from appium_connect_agent.runtime import Runtime, supported_combinations
     assert RuntimeSettings is LocalSettings
     assert callable(Runtime)
+    assert InstallRequest().combination_id is None
+    combinations = supported_combinations()
+    assert len(combinations) == 1
+    assert combinations[0].combination_id == 'macos-android-uiautomator2'
+    assert combinations[0].appium_version == '3.7.0'
+    assert combinations[0].driver_version == '8.7.0'
 else:
     assert 'appium_connect_agent.runtime' not in sys.modules
 print('Isolated installed package, metadata and py.typed: OK')
