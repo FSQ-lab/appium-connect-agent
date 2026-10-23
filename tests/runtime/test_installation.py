@@ -134,15 +134,18 @@ if args and Path(args[0]).name == "index.js":
                 for key, value in required_network.items()
             ):
                 raise SystemExit(12)
-        if mode == "driver-hang":
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            time.sleep(0.3)
         home = Path(os.environ["APPIUM_HOME"])
         package = home / "node_modules" / "appium-uiautomator2-driver"
         package.mkdir(parents=True, exist_ok=True)
         (package / "package.json").write_text(
             json.dumps({"name": "appium-uiautomator2-driver", "version": "8.7.0"})
         )
+        if mode == "driver-hang":
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            ready_file = os.environ.get("FAKE_READY_FILE")
+            if ready_file:
+                Path(ready_file).write_text("ready\n")
+            time.sleep(30)
         raise SystemExit(0)
     if command == ["driver", "list", "--installed", "--json"]:
         if mode == "list-oversize":
@@ -1224,18 +1227,36 @@ def test_started_continuation_writer_times_out_changed_and_promotes_on_retry(
     initialize_root(root)
     write_appium(root)
     write_record(root, "failed")
+    ready_file = tmp_path / "driver-ready"
     monkeypatch.setenv("FAKE_MODE", "driver-hang")
+    monkeypatch.setenv("FAKE_READY_FILE", str(ready_file))
     original_progress = _installation._InstallOperation.progress
+    original_checkpoint = _installation._InstallOperation.checkpoint
+    driver_started = False
 
-    def shorten_driver_budget(
+    def mark_driver_start(
         operation: Any, check_id: str | None, message: str
     ) -> None:
-        if check_id == "driver_installation":
-            operation.deadline = time.monotonic() + 0.05
+        nonlocal driver_started
         original_progress(operation, check_id, message)
+        if check_id == "driver_installation":
+            driver_started = True
+
+    def timeout_after_driver_write(operation: Any) -> None:
+        if driver_started:
+            ready_deadline = min(operation.deadline, time.monotonic() + 2.0)
+            while not ready_file.is_file():
+                if time.monotonic() >= ready_deadline:
+                    raise AssertionError("fake driver did not reach its write barrier")
+                time.sleep(0.01)
+            operation.deadline = time.monotonic()
+        original_checkpoint(operation)
 
     monkeypatch.setattr(
-        _installation._InstallOperation, "progress", shorten_driver_budget
+        _installation._InstallOperation, "progress", mark_driver_start
+    )
+    monkeypatch.setattr(
+        _installation._InstallOperation, "checkpoint", timeout_after_driver_write
     )
     runtime = Runtime(settings)
 
@@ -1252,6 +1273,10 @@ def test_started_continuation_writer_times_out_changed_and_promotes_on_retry(
     )
 
     monkeypatch.delenv("FAKE_MODE")
+    monkeypatch.setattr(_installation._InstallOperation, "progress", original_progress)
+    monkeypatch.setattr(
+        _installation._InstallOperation, "checkpoint", original_checkpoint
+    )
     retried = runtime.install(InstallRequest())
     assert retried.outcome == "reused"
     assert retried.changed is False
