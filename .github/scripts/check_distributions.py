@@ -16,7 +16,10 @@ DEPENDENCIES = {
     "anyio==4.15.1",
     "httpcore==1.0.9",
     "node-semver==0.9.1",
+    "Appium-Python-Client==6.0.8",
+    "selenium==4.51.0",
 }
+METADATA_DEPENDENCIES = {dependency.lower() for dependency in DEPENDENCIES}
 STUB = "typings/nodesemver/__init__.pyi"
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = """
@@ -38,7 +41,8 @@ assert metadata['Name'] == 'appium-connect-agent'
 assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
 assert set(metadata.get_all('Requires-Dist')) == {
-    'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1'
+    'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1',
+    'appium-python-client==6.0.8', 'selenium==4.51.0'
 }
 if sys.platform == 'darwin':
     from appium_connect_agent.runtime import InstallRequest, LocalSettings as RuntimeSettings
@@ -68,10 +72,15 @@ def run(command: list[str], cwd: Path) -> None:
 
 
 def main() -> None:
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    project = configuration["project"]
     require(set(project["dependencies"]) == DEPENDENCIES, "Unapproved dependencies")
     version = str(project["version"])
     python_requirement = str(project["requires-python"])
+    index_arguments: list[str] = []
+    for index in configuration.get("tool", {}).get("uv", {}).get("index", []):
+        if index.get("explicit") is True:
+            index_arguments.extend(("--index", str(index["url"])))
     stem = f"{PACKAGE}-{version}"
     expected = {
         p.relative_to(ROOT / "src").as_posix(): p.read_bytes()
@@ -157,7 +166,7 @@ def main() -> None:
             parsed["Requires-Python"] == python_requirement, "Incorrect Python range"
         )
         require(
-            set(parsed.get_all("Requires-Dist", [])) == DEPENDENCIES,
+            set(parsed.get_all("Requires-Dist", [])) == METADATA_DEPENDENCIES,
             "Incorrect runtime dependencies",
         )
         print(f"Archive contents and metadata: {artifact.name} OK", flush=True)
@@ -190,6 +199,7 @@ def main() -> None:
                     "install",
                     "--python",
                     str(python),
+                    *index_arguments,
                     str(artifact),
                 ],
                 outside,
