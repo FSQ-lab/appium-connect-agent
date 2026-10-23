@@ -22,12 +22,12 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现；自管服务、组件生命周期与 Automation Session/设备操作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现及明确 Session 生命周期；自管服务、组件生命周期与 Automation 设备动作/观测仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
-- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1 与 httpcore==1.0.9。HTTPX 继续负责已有本地连接 HTTP 请求，AnyIO 仅用于操作内受管异步桥接；HTTPcore 仅用于公开异常类型识别及 HTTPX 公开 trace 事件集合的版本固定，不直接建立另一套客户端或 Transport。其余传递依赖由 uv.lock 固定；发行元数据同样固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。 增加无 extras 的 node-semver==0.9.1，供 Runtime 静态诊断及连接共用版本识别和 npm 范围匹配；不执行 Node/npm，不增加实测兼容组合。
+- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8 与 selenium==4.51.0。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
 - Runtime、Contracts、Configuration 及 Automation 的当前公开契约由对应模块 SPEC 维护；Integrations 仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
@@ -103,4 +103,13 @@
 - 同步 `list_devices()` 只执行调用方显式绝对路径对应的固定参数数组 `adb devices -l`，不使用 shell、PATH、SDK 扫描或回退。该命令按 ADB 官方行为可能启动宿主 ADB server；这不表示本库取得 server 或设备生命周期所有权。
 - 成功返回按设备 ID 排序的不可变设备信息；空设备列表是成功。命令失败、非法输出、超限、超时和取消必须明确失败，不能伪装为空列表。
 - Automation 首包出现后启用适用的生产 import-linter 约束：允许依赖 Runtime 与 Contracts，禁止依赖 Configuration 与 Integrations；不改变既有模块依赖方向。
+
+## Automation Session Lifecycle
+
+- Automation 在一个 active `RuntimeConnection` 范围内创建、复用和显式关闭 macOS / Android / UiAutomator2 Session；不改变 Runtime 账号锁或连接退出语义，不交付界面动作、观测、全局 Registry、跨进程占用、自动恢复或 Appium 服务管理。
+- 产品直接运行依赖新增无 extras 的 `Appium-Python-Client==6.0.8` 与 `selenium==4.51.0`，仅供 Automation Session/WebDriver/Appium 命令及其传输使用；不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。发行元数据固定这两个直接版本，传递依赖由 `uv.lock` 固定。
+- 正常顺序为进入一次 Runtime connection、为明确设备创建一个或多个独立 Session、逐个 `quit()`、再退出 connection。Runtime 不替 Automation 关闭 Session；Automation 不缓存已退出 connection 的 URL 继续发送命令。
+- 同设备占用和 UiAutomator2 `systemPort` 只在当前 Python 进程内协调；不同 Session 不共享 WebDriver、sessionId 或命令连接。创建、存活、关闭及结果未知期间保留占用，只有可证明未创建或确认关闭且本地收尾完成后释放。
+- 默认能力包括 `appium:newCommandTimeout=500`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方初始 Settings 能力。契约确认不表示真实 Session 或 Automation 模块整体已验收。
+
 
