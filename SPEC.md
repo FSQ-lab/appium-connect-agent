@@ -95,3 +95,23 @@
 - Configuration 首批增加同步项目 TOML 加载，公开映射 `appium_connect_agent.configuration`，源码位于 `src/appium_connect_agent/configuration/`；只依赖 Contracts 的唯一 LocalSettings 和 Python 3.11 标准库，无新增第三方依赖。
 - 仅显式文件、local 已有环境，返回不可变设置与字段来源；Configuration 不导入 Runtime 或启动任何环境/服务操作。详细输入、错误和边界由 Configuration SPEC 维护。
 - 原 Runtime 及 Contracts 契约保持；本契约不新增 remote、自管安装、真实服务/设备验证或新的平台支持承诺。
+
+## Local Managed Installation Preparation
+
+本节定义RT-LOCAL-03A增量，不表示产品能力已实现或整模块已验收。依据为已确认的[安装设计](docs/superpowers/specs/2026-10-23-runtime-local-installation-design.md)，具体接口与当前资格限制见Runtime SPEC对应章节。
+
+- Runtime增加显式同步独立安装准备，首批只管理一组明确指定的Appium3.7.0与UiAutomator2 8.7.0；不自动换版、升级、降级或为传递依赖补包。组合选择/资格证据及随包清单归Runtime，具体条目和默认值由维护者批准；调用方、Configuration和外部Agent不自行扩大支持范围。
+- 当前macOS登录账号固定使用系统账号home下的 `~/.appium-connect-agent/`，跨项目复用，不支持自定义根。现有账号协调锁路径保持，避免不同版本进程使用不同锁；现有用户安装路径仍仅用于已有环境。
+- 安装调用可执行选定Node/npm及受管Appium公开CLI，通过npm负责依赖解析与下载安装；Python只做项目规则和必要薄适配，不自行实现安装器/版本解析协议。基础依赖仅检查，不自动安装Node/npm/JDK/SDK；Runtime产品不创建Session。
+- 默认安装总预算600秒，取消/超时额外最多30秒收尾；失败保留实际完成部分及明确恢复状态，不能自动回滚/重装/删除未知内容。03A先提供新建、相同完整组合复用及失败安全阻断；部分继续由依赖03A验收的03B承接，不提前交付其占位实现。
+- 直接Python产品依赖保持不变。复用已批准CPython3.11标准库进程/有界状态原语及现有node-semver0.9.1版本规则；资格用Appium-Python-Client、Selenium和临时JDK不进入发行依赖或自动安装流程。
+- 当前实际资格仅覆盖明确记录的macOS arm64、Node26.7.0/npm11.19.0与单台Pixel6 Android17/API37的一次原生Session创建/关闭；原npm树存在已记录sharp可选原生依赖缺口，不能宣称图像处理/整个驱动/其他组合支持。本契约批准指定条目及限定边界，不把一次Session成功等同于03A产品或Runtime/M01验收。
+
+## Local Managed Partial Continuation
+
+本节定义RT-LOCAL-03B增量；03A已在其限定范围内验收，本节不改变指定版本、固定根、基础依赖、服务或Session边界。详细继续资格和恢复阻断由Runtime SPEC对应章节定义。
+
+- 对03A正常失败并完成收尾后持久化的终态记录，后续显式安装请求可在重新取得账号锁、复查记录和整组实际状态后继续缺失组件。首批只允许精确Appium3.7.0已verified且UiAutomator2 8.7.0明确missing时跳过Appium安装、只准备driver；不能把反向部分状态、损坏或未知内容当作可继续。
+- 完整同版本组合若仍带正常失败终态记录，须通过公开CLI完整复查后原子更新为complete并返回reused；成功继续driver后同样完整复查、记录complete并返回installed。重复调用保持完整复用，不自动下载或覆盖组件。
+- cleanup_pending、recovery_required、截断/非法记录、归属或空闲证据不足仍保持阻断；空闲锁、旧PID/PGID、目录内容或组件看似完整不能单独清除崩溃遗留。03B不跨进程杀旧进程、不自动删除记录、不修复损坏或切换版本。
+- 复用03A已批准的标准库、node-semver和固定公开npm/Appium CLI，无新增产品依赖。预算、进程组、npm网络配置、错误身份、有界证据及sharp warning保持；不新增平台、服务、设备或Session行为。

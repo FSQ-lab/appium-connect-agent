@@ -27,6 +27,8 @@ from ._models import (
     DiagnosticCheck,
     DiagnosticReport,
     EnvironmentBusyError,
+    InstallationResult,
+    InstallRequest,
     OperationCancelledError,
     OperationControl,
     OperationTimeoutError,
@@ -38,6 +40,7 @@ from ._semver import constraint, satisfies
 
 if TYPE_CHECKING:
     from ._connection import RuntimeConnection
+    from ._installation import _Installer
 
 
 class _Operation:
@@ -304,6 +307,8 @@ class Runtime:
         self._on_progress = on_progress
         self._active_thread: int | None = None
         self._diagnosing = False
+        self._installing = False
+        self._installation_cleanup: _Installer | None = None
 
     def connect(
         self, *, control: OperationControl | None = None
@@ -313,6 +318,40 @@ class Runtime:
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
         return _ConnectionScope(self, control or OperationControl())
+
+    def install(
+        self,
+        request: InstallRequest,
+        *,
+        control: OperationControl | None = None,
+    ) -> InstallationResult:
+        if not isinstance(request, InstallRequest):
+            raise ValueError("request must be InstallRequest")
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        if (
+            self._settings.appium_executable is not None
+            or self._settings.appium_home is not None
+        ):
+            raise ValueError(
+                "managed installation cannot use appium_executable or appium_home"
+            )
+        from ._installation import install
+
+        return install(
+            self, request, control or OperationControl(timeout_seconds=600.0)
+        )
+
+    def cleanup_installation(
+        self, *, control: OperationControl | None = None
+    ) -> InstallationResult:
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        from ._installation import cleanup_installation
+
+        return cleanup_installation(
+            self, control or OperationControl(timeout_seconds=30.0)
+        )
 
     def diagnose(self, *, control: OperationControl | None = None) -> DiagnosticReport:
         if control is not None and not isinstance(control, OperationControl):

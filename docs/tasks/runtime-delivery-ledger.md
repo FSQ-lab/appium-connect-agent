@@ -2,10 +2,57 @@
 
 本页是 Runtime 的唯一当前进度来源。设计维护需求、方案及 feature 拆分，SPEC 维护已确认契约；代码、测试存在和历史聊天中的“完成”都不能单独替代验收证据。
 
-- 更新日期：2026-10-22。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
+- 更新日期：2026-10-23。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
 - 本轮验收恢复基线：`master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始工作区干净；台账初建时的核对基线为 `4a3640eef5be3704874b22f0d1a1a91015258287`。
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
-- 当前结论：**RT-LOCAL-01 静态诊断和 RT-LOCAL-02 已有本地外部 Appium 连接均已在各自范围内验收。02 的 full 审查四项问题已修复并通过一轮 repair-only，397 项测试及真实 GET-only 链路通过，Tech Lead 判定 RT-LOCAL-02 Done。Runtime 首批及 M01 仍未整体验收，未推进 03–06。**
+- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03A和RT-LOCAL-03B均已在各自feature范围通过验证与独审；RT-LOCAL-03的A+B功能和整体验收/独审已通过，Tech Lead判定03 Done。Runtime首批、Runtime/M01及04–06仍未整体验收，不宣称Runtime、项目或其他平台Done。**
+
+## RT-LOCAL-03A 独立安装准备
+
+- 用户显式 `$spec-driven` 授权沿确认设计按03A→03B推进；本会话先逐条审阅并确认根/Runtime SPEC，另确认Node/npm保留声明范围、只有实际工具链称为实测，并授权真实固定账号根一次安装加一次复用验收。工作区固定为 `/Users/qunmi/.codex/worktrees/runtime-local-03/Appium_connect_agent`、分支 `codex/runtime-local-03`、起点 `fa0eb4bddae0f61379833ae4d2f5a8d18d62be00`，不新建/重置worktree。
+- 生效契约身份：根SPEC `13907572d22e5b0cd81e2d24e916c457589ce275b6a3cab467e689fb0971025f`；Runtime SPEC `52a1d2da7669b42614d2e0872282f8bc521388b5b458d4f57eaeaaa2e5b3e569`；确认设计 `a0d670d7ec83dd92803d80bd8805d4c113798c13f7d2d5253f68c7dddfd492c5`。工程任务包 `RT03A-IMPL-01` SHA-256 `8d909323dcbfea5b5aa2a81b8f241505949210dec22b6bb53b92e99579a3009f`。
+- 当前实现只覆盖03A：唯一Appium3.7.0/UiAutomator2 8.7.0清单、固定账号根、完整新建、完整同版本复用、冲突/损坏/部分/未知/遗留阻断、600秒总预算、30秒共享收尾、同实例显式清理及结构化结果/错误。无03B部分继续占位，不换版、不补sharp、不新增依赖，不启动服务或操作设备/Session。
+- 工程交付后Tech Lead首轮定向验证发现2项行为失败、11项mypy错误和Ruff导入问题；原工程上下文限定修复后，安装测试21项、完整pytest **795 passed**，全仓Ruff format/check、strict mypy（29 files）和import-linter（3 kept/0 broken）通过。`uv build`通过；首次隔离分发安装因未带项目批准镜像而访问公共PyPI失败，随后显式使用既有公司PyPI镜像，wheel/sdist内容、元数据、各9个依赖隔离安装、`uv pip check`、包导入及`py.typed`全部通过。失败记录保留，不冒充首次成功。
+- 用户授权真实验收通过：产品公开入口在原本不存在的 `~/.appium-connect-agent/` 创建指定组合，首次 `installed/changed=true`，实际Node26.12.1/npm11.20.0处于已确认声明范围；Appium/driver分别精确3.7.0/8.7.0且均verified，保留`optional_image_dependencies_unverified` warning。第二个新Runtime实例返回`reused/changed=false`；两包772目录、6583文件、5链接的内容/权限/mtime聚合SHA-256前后同为`573cb4e3b35ab300cf81ae7bc2795e9e89a3a72f71b81c1343f2737a00da83a6`，证明未覆盖组件。无服务、端口、Java/ADB、设备或Session调用；受管安装按授权保留。
+- 真实验收脚本SHA-256 `8b65da2785ed3f09061a99338e7c8edc9247d8e5d26dd6f42af09d01a8b1852c`，结果SHA-256 `2ebd751f6dd7fe6ca1a64b32e925c8145912b3cd87e25d949e4c38b4d461b481`；首次约114.55秒、复用约1.21秒、总约119.16秒。此前固定26.7.0绝对路径因外部Homebrew更新已不存在，产品首次明确报`tool_not_found`且未创建根；切换为当前Homebrew链接后按已确认声明范围执行，失败证据不覆盖。
+- 最终相对03A产品起点的当前源码差异为1246行新增+删除（新安装模块1112，既有Runtime导出/入口/模型134）；首轮工程交付1233行，限定修复另增51删27，故按规则保守累计产品规模为 **1311行**，约比1200目标多111行。完整安全进程、记录和恢复边界是同一可验收03A行为，不能按技术层独立交付；发现时实现已闭合，未删除保护或伪拆分凑数，作为接近但高于目标的审查风险明确提交独审。测试最终607行，修复增2删1；分发脚本10行。README及本台账由Tech Lead维护，文档另计。
+- 首次独立full审查`RT03A-FULL-AUDIT-01`为`findings`，冻结结果SHA-256 `89ad2b80687e373b2f0fcbdd32f335bcbde66f796df72f5c3b1d4c838a0d21a2`：F1/P1为leader退出/EOF后未追踪同组后代；F2/P1为30秒预算未覆盖最终复查/记录；F3/P2为非网络npm配置可改变脚本/依赖形态；F4/P2为组件写入进程启动前即置changed。审查确认差异/日志/真实验收身份完整、选型方向和范围正确，规模小幅超目标本身当时不构成finding。
+- 原工程上下文一次有界修复F1–F4：保留本机已有registry/proxy/certificate/auth网络配置和公司npm镜像，但以更高优先级隔离/固定非网络安装行为；在实例持有期检查自有进程组并覆盖leader先退、继承/关闭pipe；单一收尾deadline贯穿进程、复查和记录；changed只在writer成功Popen后置位。首轮父验证暴露cleanup组状态、确定性changed测试和类型问题，继续在同一修复轮校正，不降低断言。
+- 修复后安装定向 **31 passed**，完整pytest **805 passed**；全仓Ruff format/check、strict mypy（29 files）、import-linter（3 kept/0 broken）、uv build和公司PyPI镜像下wheel/sdist隔离安装/uv pip check/导入/py.typed均通过。没有再次运行真实根产品入口：用户授权的一次安装+一次复用已完成，修复验证使用受控子进程/临时根；既有受管安装保留。
+- 当前最终源码差异为1395行新增+删除（安装模块1261加既有文件134），测试870，分发10。相对首次full冻结的修复累计增220删71，故03A自起点保守累计产品规模 **1602行**，明显高于约1200目标；新增重量直接对应独审要求的进程组、共享收尾、npm配置及changed安全合同，未混入03B或通用框架。该规模偏差明确提交repair-only审查和Tech Lead边界判断，不用最终净差异掩盖、不删除保护凑数。
+- 当前状态为`pending-review`：冻结修复增量与最终验证身份后，由原独立审查上下文仅核F1–F4及直接回归，`audit_mode=repair-only`。通过前不判03A Done、不进入03B。
+- 原独审首次repair-only复核关闭F1/F2/F4，保留F3/P2：npm11.19固定公开配置仍有allow-scripts/strict/dangerous override、allow-directory/file/git/remote及before等策略可从用户npmrc改变脚本或依赖资格。复审原文SHA-256 `61c9651b4c8d675ac070295b24acc83809141de1334ad48672781dde058d2619`；其余无确认直接回归，真实入口未重跑被列为有界缺口而非阻塞。
+- 第二轮也是最后一轮自动修复只处理F3：保持本机npmrc与registry/proxy/cert/auth公司镜像配置生效，以npm11.19公开环境优先级固定allow-scripts/strict/dangerous override、directory/file/git/remote、before/min-release-age/exclude及include-staged等非网络策略；受控fake npm在有效生命周期/依赖形态不满足时直接失败并要求写出lifecycle marker， hostile userconfig/env内容保持不变但不能改变产品行为。
+- 第二轮后定向31、完整 **805 tests**，Ruff、strict mypy、import-linter、构建及两种分发隔离安装继续通过；未额外调用真实根。当前最终产品差异1406行、测试898、分发10；第二轮增产品11、测试增36删8，故保守累计产品 **1613行**、测试累计940。当前冻结第二轮增量，交原独审再次repair-only；若F3仍未关闭，按流程不再自动追加第三轮，交用户决定。
+- 第二轮repair-only仍保留F3：npm11.19的`loadEnv()`会跳过空字符串，因此`before=''`、`omit=''`等不能覆盖user/global npmrc；fake测试只看原始env形成假阳性。按两轮上限暂停后，用户明确选择“授权一次最终 F3 修复”，仅允许这一项例外，不放宽SPEC。
+- 用户授权修复在任何受管根准备/writer Popen前，使用npm公开`config get <单个非敏感行为键>`核对有效值；不调用config list、不读取/复制npmrc、不查询或输出凭据。非空高优先级值固定脚本/依赖策略，空值会被npm跳过的键若仍受下层配置影响则以`installation_state_unknown`在下载前拒绝。fake npm模拟11.19空值跳过和hostile userconfig：恶意配置请求不产生安装命令/根；仅网络镜像配置时保留registry/proxy/cafile/auth并实际写lifecycle marker。
+- 授权修复增产品74删3、测试增43删1；定向31、完整 **805 tests**，全仓Ruff、strict mypy、import-linter、构建及公司PyPI镜像下wheel/sdist隔离验证通过。当前最终产品差异1477，测试940，分发10；保守累计产品 **1690行**、测试984。安全配置核验使规模进一步超目标，但范围仍仅F3且无03B/通用框架；不删安全保护。当前冻结用户授权修复，交原独审最终repair-only。
+- 用户授权修复终审仍为`findings`，结论SHA-256 `3756d6f80a3599892a68c22deaea398c5227a384d1c0790f6f4628f71dce81ac`。F1/F2/F4保持关闭；F3大部关闭，但npm11.19会将低层`only=prod|production`经flatten别名转换为`omit=dev`，当前只核raw omit/include且`npm_config_only=''`被loadEnv跳过。恶意only配置可在预检后改变Appium extension的`--save-dev`行为，fake尚未模拟别名。当前03A继续阻塞，不进入03B；未经用户新决定不再修复。
+- 用户随后明确选择“授权别名限定修复”：仅将npm11.19 buildOmitList同类的`only/production/optional/also`加入非敏感有效配置核对，非默认依赖集合在受管根/writer前拒绝。首轮父验证发现clean fake对production/optional默认输出建模错误，产品与测试期望同轮校正为实际`false/true`；hostile `only=production`仍在零写入时阻断。
+- 别名修复合计增产品6删2、测试增5删1；定向31、完整 **805 tests**，Ruff、strict mypy、import-linter、构建及两种分发隔离验证通过。最终当前产品差异1481、测试944、分发10；保守累计产品 **1698行**、测试990。当前冻结别名增量并交原独审repair-only；未经新决定不再修改。
+- 最终别名修复原独审repair-only/pass，F3关闭且F1/F2/F4保持关闭，无确认直接回归；结论SHA-256 `ea3fdc4adfafa0e2d50524f742f619c33e8e7666095387d193e7b03c29749f9e`。审查核对最终manifest、全部差异/文件和805测试/质量/分发证据；真实安装+复用未重复执行，其结果按明确授权和证据边界保留。
+- **Tech Lead判定RT-LOCAL-03A Done。** 已确认SPEC、设计/版本/标准库用途、工程实现、受控验证、用户授权真实固定根新建+复用、full审查及限定修复链均闭合；保留sharp warning、Node/npm资格范围和产品累计1698行的规模风险。本条为审后状态同步，不冒称旧审查hash覆盖后续台账。03整体仍未完成，下一步只进入依赖03A的03B SPEC gate。
+
+## RT-LOCAL-03B 部分状态继续
+
+- 03A验收后沿原授权进入03B SPEC gate。用户审阅摘要后明确选择“确认两份03B增量”；生效根SPEC SHA-256 `f74415363419980484dc026af08e154ac9219f8c805f5887fad9c587f8a37631`，Runtime SPEC `f14ef0e6e60a2a596fc4909ad68b5aa7ce551c4d24a8bf7c7632deef7b029396`。无新依赖/API/版本/模块/设备权限。
+- `RT03B-IMPL-01`任务包SHA-256 `0358f196c85c42b754c8bee9ba89ce09649c5a81e17108cc44b26f30f5afff6b`，以03A最终安装实现 `7b71f1de23981accfd5b677889d2a1f97fad68e82680923f4a30b2d08d05199c` 和测试 `89128777dd201806fa38107415c2c6b4d5b14794445e92005bd8437519980710` 为未提交固定基线。唯一工程所有权为安装实现/测试，Tech Lead维护文档和独审证据。
+- 工程`pending-review`实现：有效failed记录+Appium verified/driver missing下一请求只执行driver；failed+完整事实复查后推进complete；failed+双missing保持完整显式重试；invalid/incomplete/recovery/damaged/reverse/CLI矛盾零writer阻断。复用03A已审进程组、共享收尾deadline、npm有效策略/公司镜像、changed和错误边界。
+- 工程报告相对03A基线产品增142删92（234 churn），测试增377删28（405）；无依赖/公共文件。父验证安装选择器 **51 passed**、完整 **825 passed**，Ruff format/check、strict mypy（29 files）、import-linter（3 kept/0 broken）、构建和公司PyPI镜像下wheel/sdist隔离安装/uv pip check/导入/py.typed均通过。
+- 按已确认SPEC不破坏现有真实固定根，不重复真实产品入口、不运行服务/ADB/设备/Session。03整体真实证据沿用03A真实新建/复用与历史限定Session，03B失败→只补driver采用受控临时账号根/fake npm-Appium；此边界待独审核对。
+- 当前状态`pending-review`：冻结03B增量及完整当前差异，交未参与03A/03B实现与测试的新质量上下文首次full审查；通过前不判03B或03整体Done。
+- 03B首次独立full审查结果`findings`，冻结结论SHA-256 `c5a17697b37169dd848c1fc51f95766514780bf6e27927bad411f74b672aba97`。唯一F1/P2：03B严格record改动误伤03A已接受的“本人拥有且完全空的预创建固定根”，将其报recovery_required；其余03B核心路径、库复用、范围和验证身份通过核对。
+- 原工程上下文首轮限定修复只恢复真正空根资格；一旦存在marker、record、受管子目录或其他内容，缺record仍零writer阻断。修复产品增1删1、测试增56；定向54、完整 **828 passed**，Ruff、strict mypy、import-linter、构建及两种分发隔离验证通过。03B保守累计产品236行、测试461行；未触碰真实根/服务/设备。当前待原独审repair-only。
+- 原独审repair-only/pass，F1关闭且无直接回归；结论SHA-256 `12be2939297fdb675fe5eb988ae4ad18cc0a9358c552d89c54bc6d5663983033`。最终manifest/差异/文件和828测试/质量/分发证据一致；真正空根恢复03A资格，marker/内容根缺record继续保守阻断。
+- **Tech Lead判定RT-LOCAL-03B Done。** 已确认SPEC、03A依赖、限定实现、受控失败→只补driver→复用链路、完整验证及full+repair-only独审闭合；产品累计236、测试461，无真实根破坏或服务/设备操作。本条为审后状态同步。RT-LOCAL-03的A+B功能已齐，下一步仅做03整体验收/差异独审，不扩大为Runtime/M01或04–06。
+
+## RT-LOCAL-03 整体验收
+
+- A+B最终产品身份与03B repair-only/pass一致；最终整体验证为 **828 passed**、Ruff、strict mypy、import-linter、构建及wheel/sdist隔离安装全部通过。真实证据组合为03A授权固定根新建+复用、03B受控临时根正常failed→只补driver→复用，以及限定真机Session资格；不破坏真实根制造部分状态。
+- 新独立整体验收审查`RT03-OVERALL-AUDIT-01`核对完整当前差异、A/B任务/审查链、SPEC、文档、验证和真实证据，唯一`RT03-INT-F1/P2`为本页第8行仍称03A待审/03B未开始；产品、库、范围和证据未发现其他确认问题。full结论SHA-256 `cc7b3c33ecc602b86af19170aee579afcfc08c97ba0177d1ce3a1b703f32b066`。
+- 本次只同步顶层当前结论和本整体验收记录，不修改产品、测试、SPEC、依赖或feature结论；当前待原独审上下文repair-only。通过前不进入最终commit/merge检查。
+- 原整体验收审查repair-only/pass，`RT03-INT-F1`关闭且无其他finding；结论SHA-256 `4b836839cf516df75e41fa989d9330b961541c248878e426b4b33d5c0259e2d0`。修复仅为本页状态同步，产品/测试/SPEC/依赖身份及828验证保持。
+- **Tech Lead最终判定RT-LOCAL-03 Done。** 范围严格为macOS/Android/UiAutomator2、指定Appium3.7.0/driver8.7.0的独立准备与正常failed部分继续；真实/受控证据边界、sharp warning、Node/npm资格范围、03A规模风险和崩溃遗留阻断全部保留。下一步只执行用户已授权的最终提交与安全合并master，不推送；不自动进入04–06。
 
 ## RT-LIB-01 / RT-LIB-02 库迁移
 

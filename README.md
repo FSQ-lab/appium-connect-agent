@@ -1,16 +1,10 @@
 # Appium Connect Agent
 
-当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接及 Python 工程基础；
-具体实现验收状态以[交付台账](docs/tasks/runtime-delivery-ledger.md)为准。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备及 Python 工程基础；具体实现验收状态以[交付台账](docs/tasks/runtime-delivery-ledger.md)为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 不安装、启停 Appium 或管理 Session；
-自管服务、设备操作、MCP 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖
-为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于
-错误识别与 trace 版本固定，迁移验收状态见台账。尚无经真实
-Android Session 验证的兼容组合。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见
-[AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备一组指定的本地 Appium 组件，但不启停服务或管理 Session；设备操作、MCP 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于错误识别与 trace 版本固定，迁移验收状态见台账。Appium 3.7.0 / UiAutomator2 8.7.0 只有已记录的限定原生 Session 资格，不表示图像功能、整个 driver 或 Runtime 模块已验收。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -80,8 +74,7 @@ import-linter；锁定同步后无需另行安装质量工具。依赖变更使�
 `uv remove --dev` 等 uv 命令，并同步提交锁文件。运行依赖用于 Runtime HTTP 连接与操作内受管异步桥接，
 实际版本由锁文件固定。
 
-pytest 覆盖包导入、Runtime 静态诊断、受控 HTTP 连接、错误恢复及真实跨进程协调锁；
-使用已安装包，不注入源码搜索路径。测试锁隔离于临时账号目录。
+pytest 覆盖包导入、Runtime 静态诊断、受控 HTTP 连接、受管安装状态与子进程边界、错误恢复及真实跨进程协调锁；使用已安装包，不注入源码搜索路径。测试锁和安装根隔离于临时账号目录。
 mypy 对 `src`、`tests` 和诊断工具使用 strict 基线。默认验证不要求服务或设备。
 
 ## 安装构建产物
@@ -140,8 +133,7 @@ Runtime 使用 node-semver 0.9.1 的严格公开版本/范围能力；支持经�
 caret/tilde、部分版本、x 和 hyphen 范围，并采用默认 prerelease 规则。
 非法声明仍为 unknown；有效声明的识别扩展可能将原 unknown 变为明确匹配或不匹配。
 报告保留已验证版本的 build 信息；匹配不执行 Node/npm，也不表示设备或组合已实测。
-qualified_support 独立保持 unknown，直到后续获授权的真实 Android Session 资格验证。
-当前 Appium 3.7.0 / UiAutomator2 8.7.0 仅为观测候选，不构成支持承诺。
+静态诊断的 qualified_support 仍独立保持 unknown；受管安装清单和已记录资格不能反向把只读元数据检查改成设备或整个组合通过。Appium 3.7.0 / UiAutomator2 8.7.0 的指定条目及限制由下节公开安装入口单独呈现。
 
 诊断对组件只读，但会创建/复用当前登录账号固定协调资源
 ~/Library/Application Support/appium-connect-agent/runtime.lock。
@@ -156,8 +148,50 @@ observer_errors 后停止通知，诊断继续；KeyboardInterrupt 仍传播并�
 回调直接抛出的 OperationCancelledError 同样原样传播，不作为普通观察者错误吞掉。
 每文件最多 1 MiB，每次最多 64 份，证据有界并仅提取白名单字段。
 
-本静态 feature 无需服务或设备；已有本地连接见下节，安装、自管服务、维护和启停尚未交付。
-Runtime 首批整体仍须完成其余 feature 及真实 Android Session 创建/关闭验收。
+本静态 feature 无需服务或设备；受管安装准备见下节，已有本地连接见其后。Runtime 首批整体仍须完成后续自管服务、维护和合并验收，不因03A安装准备通过而完成。
+
+## 本地受管安装准备
+
+RT-LOCAL-03A 为当前 macOS 登录账号显式准备唯一指定组合：Appium 3.7.0 和
+UiAutomator2 8.7.0。当前验收及独立审查状态见
+[交付台账](docs/tasks/runtime-delivery-ledger.md)；本能力不启动服务、不访问设备或创建 Session。
+
+```python
+from pathlib import Path
+
+from appium_connect_agent.runtime import (
+    InstallRequest,
+    LocalSettings,
+    Runtime,
+    supported_combinations,
+)
+
+print(supported_combinations())
+runtime = Runtime(
+    LocalSettings(
+        node_executable=Path("/absolute/path/to/node"),
+        npm_executable=Path("/absolute/path/to/npm"),
+    )
+)
+result = runtime.install(InstallRequest())
+print(result.outcome, result.changed, result.settings)
+```
+
+- 固定根为系统账号 home 下的 `~/.appium-connect-agent/`，跨项目复用；不能传自定义根。
+  现有账号锁路径保持不变。若 LocalSettings 已指定 `appium_executable` 或
+  `appium_home`，安装入口在 I/O 前拒绝，避免把已有环境当作写入目标。
+- 调用方不能填写任意 Appium/driver 版本。Node 接受条目声明的
+  `^20.19.0 || ^22.12.0 || >=24.0.0`，npm 接受 `>=10`；显式绝对路径失败不回退，
+  未指定时只有唯一可证明配对的 PATH 工具链才可使用。
+- 首次请求只接受空且归属明确的根；完整同版本组合会复查后返回 `reused`，不重新安装。
+  正常失败已完成收尾且记录为 `failed` 时，只有Appium精确verified、driver明确missing的
+  部分状态可在下一次显式请求只补driver。反向部分、损坏、未知、崩溃遗留或非法记录仍阻断。
+- 默认安装总预算600秒；显式 OperationControl 沿调用方预算。取消、超时或命令失败后
+  共享最多30秒收尾，只处理本实例可证明归属的进程。崩溃遗留或空闲不能证明时保持
+  `recovery_required`，不凭旧PID、目录或空闲锁接管。
+- 成功结果仍包含 `optional_image_dependencies_unverified` warning。Runtime 不手动补
+  sharp原生包、不换版、不修改npmrc/全局PATH，也不自动安装Node/npm/JDK/Android工具。
+  `cleanup_installation()`只重试同一Runtime实例保留的安装清理；不是卸载或跨进程恢复入口。
 
 ## 已有本地 Appium 连接
 
