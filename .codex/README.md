@@ -48,7 +48,25 @@ Codex 从 `.agents/skills/` 发现仓库技能，从 `.codex/agents/*.toml` 读�
 
 ## 权限与审查
 
-不固定模型、不设置审批策略、不扩大执行、网络或设备权限；这些沿用宿主配置。三个研究角色仅将 `sandbox_mode` 降为 `read-only`。Copilot frontmatter 的工具列表不映射为 Codex 工具 ACL；禁止执行命令、仅修改测试文件、只读审查、禁止再委派等角色要求仍需行为遵循，不是文件系统权限或工具拦截器。
+不固定模型、不设置审批策略、不扩大执行、网络或设备权限；这些沿用宿主配置。自定义角色文件不能被当作沙箱隔离保证：2026-10-22 核对的官方子 Agent 文档说明，自定义角色中的 sandbox_mode 不覆盖父配置；本机失败专家与成功专家记录均继承宿主全访问模式。因此移除 appium-expert.toml 中无实测隔离效果的声明，实际权限不作改变；其他角色保留的字段也不作为已降权证据，本任务不修改它们。研究只读由任务/角色行为约束，并须核对实际调用记录。Copilot frontmatter 的工具列表不映射为 Codex 工具 ACL；权限保证必须以宿主实际支持及验证结果为准。
+
+## Appium 专家可用性
+
+启动/停止规则统一见[源 tech-lead](../.github/agents/tech-lead.agent.md#appium-专家启动与停止)和[源专家](../.github/agents/appium-expert.agent.md#首次执行与失败退出)。Codex 默认新建专家上下文并使用 `fork_turns="none"`，通过完整任务包传原文位置与固定身份，不能用父会话聊天替代证据。
+
+专家首个实际工具调用必须完成文件读取和哈希核验；必要的入口发现与读取可在同一真实编排中执行。首次结果前不调用send_message/list_agents宣告能力。缺入口或身份失败直接最终报告一次blocked并退出。主会话遇到只发声明、没有读取结果的专家任务即停止，不持续催促、不复用循环上下文、不自动重建同类角色。状态实质改变后可按明确授权做一次新的验证，失败即报告。
+
+这是执行协议修正，不是恢复工具的权限开关，也没有证明 `fork_turns="all"` 必然失效。2026-10-22原失败上下文 automation_boundary_expert 实际只有16次send_message和1次list_agents、零exec；同版本cfg_empty_config_appium_research有7次exec并成功读取。新规则须用新上下文实际验证读取、哈希及任务所需官方资料查询，再经新独立上下文审查完整差异；TOML可解析和历史成功不代替当前可用。修改前已加载的旧会话不会被本次文件编辑自动修复。
+
+### EXPERT-FLOW-01 当前验证状态
+
+2026-10-22，用户显式授权修复上述配置/调度、实际只读验证及独审，不改产品代码/权限、不提交推送。本任务为根SPEC流程所有权下的no-delta配置任务，产品/测试0行，设备链路和库选型不适用。主会话为六份配置/说明文件的唯一修改者；固定起点master/81523c9，原有未跟踪Runtime迁移设计保留。
+
+当前为 **validation-blocked，未证明专家可用**。本轮仅创建一次全新 appium-expert，`fork_turns="none"`，thread `01a163f3-5c1e-7312-b58a-ea40b8a6066c`。实际rollout确认新启动规则已注入、权限仍沿用宿主disabled沙箱；但其首调用为spawn_agent，随后interrupt_agent和send_message，违反首调用和叶角色禁委派约定。空子角色已中断且无工作调用，本轮文件/命令/哈希/官方查询次数均为0，不计通过，不再重建同类专家。
+
+本次证据说明“没有加载新配置”不足以解释失败；文本规则无法保证工具选择或禁用协作入口，宿主注入/模型选择的底层原因尚未定位。主会话网页读取官方v8.7.0元数据成功、Python直连一次超时，均不代替专家查询证据。未经新的明确状态变化与验证，不应恢复该专家任务或声称当前已修复。
+
+原始临时证据位于 `/var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/appium-expert-flow-50cc7vr6`：baseline.json、完整task-package.json、expert-validation.json及静态检查/差异身份；专家原始调用另有rollout定位及hash。配置解析与独审结论、工程预检按实际结果分别记录，不能将配置审查通过冒充专家能力通过。
 
 本项目通过 `.codex/config.toml` 将 `unified-computer-use@openai-bundled` 插件设为 `enabled = false`，避免仓库开发中反复误调用其 `cua_repl` 工具。该设置不卸载插件，也不修改其他项目或用户全局设置；多 Agent 和命令工具继续启用。它是项目工具隔离方案，未定位模型反复选错工具的底层原因。此插件还承载浏览器自动化，相关入口在本项目同样不可用；后续任务确需浏览器或桌面自动化时，须重新核对工具范围。
 
