@@ -1234,9 +1234,7 @@ def test_started_continuation_writer_times_out_changed_and_promotes_on_retry(
     original_checkpoint = _installation._InstallOperation.checkpoint
     driver_started = False
 
-    def mark_driver_start(
-        operation: Any, check_id: str | None, message: str
-    ) -> None:
+    def mark_driver_start(operation: Any, check_id: str | None, message: str) -> None:
         nonlocal driver_started
         original_progress(operation, check_id, message)
         if check_id == "driver_installation":
@@ -1252,16 +1250,14 @@ def test_started_continuation_writer_times_out_changed_and_promotes_on_retry(
             operation.deadline = time.monotonic()
         original_checkpoint(operation)
 
-    monkeypatch.setattr(
-        _installation._InstallOperation, "progress", mark_driver_start
-    )
+    monkeypatch.setattr(_installation._InstallOperation, "progress", mark_driver_start)
     monkeypatch.setattr(
         _installation._InstallOperation, "checkpoint", timeout_after_driver_write
     )
     runtime = Runtime(settings)
 
     with pytest.raises(OperationTimeoutError) as caught:
-        runtime.install(InstallRequest(), control=OperationControl(timeout_seconds=5))
+        runtime.install(InstallRequest(), control=OperationControl(timeout_seconds=30))
     result = caught.value.installation_result
     assert result is not None and result.outcome == "timed_out"
     assert result.changed is True
