@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 Android Native 结构观测与 Element 接缝；自管服务、组件生命周期与 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝，以及 Element 单击/双击/长按和必要等待；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -140,3 +140,11 @@
 - AIF-03 复用 `Appium-Python-Client==6.0.8`、`selenium==4.51.0`、Runtime `OperationControl` 和现有 Session 生命周期；不引入新的模块依赖方向，Runtime 与 Contracts 本轮 no-delta。
 - 所有公开观测结果为 Automation 拥有的不可变纯值，并能序列化为最多 65,536 UTF-8 bytes 的 schema=1 规范 JSON；原始 page source 另受 4 MiB、20,000 节点、128 深度及逐节点资源限制。TreeNode 分别陈述可见性和相对视口位置；page-source 中语法合法但坐标反向的 bounds 不伪造几何，记为 unknown，并仅在坐标证据充分时陈述 outside 方向。完整范围超限时只允许收敛到当前可见、未知、视口外节点及必要祖先；仍超限则明确失败，不截断文字、丢尾、分页或游标。Automation 不返回建议手势、导航要求、直接操作许可或自动滑动，由 LLM 根据事实决定后续动作。
 - 契约确认不表示真实页面、AIF-03 feature、Automation 模块或当前平台完整链路已经验收；详细 Interface、错误、Settings 恢复、XML 安全和验证义务由 Automation 模块 SPEC 定义。
+
+## Automation Element Click Actions
+
+- Automation AIF-04 延续 macOS 宿主 / Android / UiAutomator2 组合，在既有明确 Session 和项目 Element 上增加单击、双击、长按及必要 wait-until；不交付坐标动作、输入、滚动、弹窗、截图/evidence、业务成功判断或 Integrations 产品实现。
+- Automation 公开三个语义方法并隐藏 WebElement、elementId、Android script、轮询和平台差异；未来 Integrations 可将其呈现为一个 `click(kind=single|double|long)` 工具，但只负责校验、分派和错误映射。
+- AIF-04 复用现有 Appium-Python-Client 6.0.8、Selenium 4.51.0、Python 3.11 标准库、Runtime OperationControl、Session gate/生命周期及 AIF-03 Element/解析/Settings 接缝；不新增依赖或模块方向，Runtime、Contracts、Integrations 本轮 no-delta。
+- 条件满足后只发送一次获证原生动作；动作开始后不自动重放。成功仅表示命令完成，不保证页面、菜单、业务效果或用户任务完成；不自动滚动、观测、处理弹窗或模拟缺失平台能力。
+- 契约确认不表示 AIF-04 已实现、设备动作已验收、Automation 模块或当前平台完整链路已完成；详细 Interface、等待、错误、raw-ID Settings、平台 Adapter 与验证义务由 Automation 模块 SPEC 定义。

@@ -272,4 +272,4 @@ class TargetError(AutomationError):
 
 
 class ExecutionUnknownError(AutomationError):
-    """An Appium observation request may still be executing."""
+    """An Appium request may have executed without a provable terminal response."""

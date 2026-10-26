@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from functools import partial
 from typing import TYPE_CHECKING, Literal, TypeVar, cast
 from xml.etree.ElementTree import Element as XmlElement
 from xml.etree.ElementTree import ParseError
@@ -20,11 +19,12 @@ from defusedxml.common import (
 from defusedxml.ElementTree import fromstring
 from selenium.webdriver.remote.webelement import WebElement
 
-from ._element import (
-    Element,
-    _locator_chain,
-    _standard_resource_id,
-    _trusted_chain_error,
+from ._element import Element, _locator_chain, _standard_resource_id
+from ._element_target import (
+    _resolve_required_once,
+    _restore_setting,
+    _validate_owner,
+    _with_raw_id_guard,
 )
 from ._models import (
     AttributeObservation,
@@ -40,7 +40,6 @@ from ._models import (
     ObservedValue,
     RawNode,
     RawStructureObservation,
-    ResourceStateError,
     SourceMetadata,
     TargetError,
     TreeNode,
@@ -51,7 +50,7 @@ from ._models import (
 )
 
 if TYPE_CHECKING:
-    from ._session import _ObservationGateway
+    from ._session import _SessionOperationGateway
 _Result = TypeVar("_Result")
 
 _MAX_JSON = 65_536
@@ -140,7 +139,7 @@ _UPSTREAM = {
 def _error(
     error_type: type[AutomationError],
     code: str,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     request_state: Literal["not_sent", "response_received"] = "response_received",
 ) -> AutomationError:
     return error_type(
@@ -149,15 +148,6 @@ def _error(
         request_state,
         completed_steps=gateway.completed_steps,
     )
-
-
-def _validate_owner(element: object, owner: object, operation_id: str) -> Element:
-    if not isinstance(element, Element):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    error_code = _trusted_chain_error(element, owner)
-    if error_code is not None:
-        raise InvalidRequestError(error_code, operation_id, "not_sent")
-    return element
 
 
 def _validate_attributes(
@@ -170,14 +160,6 @@ def _validate_attributes(
     if len(set(attributes)) != len(attributes):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return cast(tuple[ElementAttribute, ...], attributes)
-
-
-def _validate_raw_chain(element: Element, operation_id: str) -> None:
-    chain = _locator_chain(element)
-    if any(item.raw_id for item in chain) and any(
-        item.by == "id" and not item.raw_id and item.package is None for item in chain
-    ):
-        raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
 
 
 def _locator_value(element: Element | None) -> LocatorValue | None:
@@ -240,7 +222,7 @@ def _json_value(value: object) -> object:
     return value
 
 
-def _canonical(value: object, gateway: _ObservationGateway) -> bytes | None:
+def _canonical(value: object, gateway: _SessionOperationGateway) -> bytes | None:
     encoder = json.JSONEncoder(
         ensure_ascii=False,
         allow_nan=False,
@@ -259,7 +241,7 @@ def _canonical(value: object, gateway: _ObservationGateway) -> bytes | None:
     return bytes(result)
 
 
-def _parse_boolean(value: object, gateway: _ObservationGateway) -> bool:
+def _parse_boolean(value: object, gateway: _SessionOperationGateway) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str) and value.lower() in {"true", "false"}:
@@ -267,7 +249,7 @@ def _parse_boolean(value: object, gateway: _ObservationGateway) -> bool:
     raise _error(CommandError, "source_invalid", gateway)
 
 
-def _parse_bounds(value: object, gateway: _ObservationGateway) -> Bounds:
+def _parse_bounds(value: object, gateway: _SessionOperationGateway) -> Bounds:
     if isinstance(value, Mapping):
         parts = tuple(value.get(name) for name in ("x", "y", "width", "height"))
         if all(type(part) is int for part in parts):
@@ -286,80 +268,10 @@ def _parse_bounds(value: object, gateway: _ObservationGateway) -> Bounds:
     raise _error(CommandError, "source_invalid", gateway)
 
 
-def _find_elements(
-    context: WebDriver | WebElement, element: Element
-) -> Sequence[WebElement]:
-    return context.find_elements(element.by, element.value)
-
-
-def _resolve_element(
-    driver: WebDriver, element: Element, gateway: _ObservationGateway
-) -> WebElement:
-    parent: WebDriver | WebElement = driver
-    target: WebElement | None = None
-    for locator in _locator_chain(element):
-        gateway.checkpoint()
-        matches = gateway.request(partial(_find_elements, parent, locator))
-        if not matches:
-            raise _error(TargetError, "target_not_found", gateway)
-        if len(matches) != 1:
-            raise _error(TargetError, "target_ambiguous", gateway)
-        target = matches[0]
-        parent = target
-    assert target is not None
-    gateway.complete("target_resolved")
-    return target
-
-
-def _restore_setting(
-    driver: WebDriver,
-    gateway: _ObservationGateway,
-    setting: str,
-    value: bool,
-    primary: BaseException | None,
-) -> None:
-    if not gateway.can_send:
-        if primary is not None:
-            raise primary
-        return
-    try:
-        gateway.request(
-            lambda: driver.update_settings({setting: value}),
-            "settings_restored",
-            cleanup=True,
-        )
-    except AutomationError as restoration:
-        close_errors = () if not gateway.can_send else gateway.abandon()
-        if primary is not None:
-            if isinstance(primary, AutomationError):
-                primary.completed_steps = gateway.completed_steps
-                primary.cleanup_errors += (restoration, *close_errors)
-            else:
-                primary.__dict__["automation_cleanup_errors"] = (
-                    restoration,
-                    *close_errors,
-                )
-            raise primary from primary.__cause__
-        if restoration.request_state == "response_unknown":
-            raise restoration
-        error = ResourceStateError(
-            "cleanup_failed",
-            gateway.operation_id,
-            restoration.request_state,
-            completed_steps=gateway.completed_steps,
-            cleanup_errors=(restoration, *close_errors),
-        )
-        raise error from restoration
-    if primary is not None:
-        if isinstance(primary, AutomationError):
-            primary.completed_steps = gateway.completed_steps
-        raise primary from primary.__cause__
-
-
 def _read_attribute(
     element: WebElement,
     name: ElementAttribute,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     cache: dict[ElementAttribute, AttributeObservation],
 ) -> AttributeObservation:
     if name in cache:
@@ -417,9 +329,9 @@ def _inspect_values(
     driver: WebDriver,
     element: Element,
     attributes: tuple[ElementAttribute, ...],
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> tuple[AttributeObservation, ...]:
-    target = _resolve_element(driver, element, gateway)
+    target = _resolve_required_once(driver, element, gateway)
     cache: dict[ElementAttribute, AttributeObservation] = {}
     result = tuple(_read_attribute(target, name, gateway, cache) for name in attributes)
     gateway.complete("attributes_read")
@@ -430,37 +342,14 @@ def _inspect_element(
     driver: WebDriver,
     element: Element,
     attributes: tuple[ElementAttribute, ...],
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> ElementInspection:
-    raw_id = any(locator.raw_id for locator in _locator_chain(element))
-    changed = False
-    primary: AutomationError | None = None
-    values: tuple[AttributeObservation, ...] = ()
-    try:
-        if raw_id:
-            settings = gateway.request(driver.get_settings, "settings_read")
-            if (
-                not isinstance(settings, dict)
-                or type(settings.get("disableIdLocatorAutocompletion")) is not bool
-            ):
-                raise _error(CommandError, "source_settings_invalid", gateway)
-            changed = not settings["disableIdLocatorAutocompletion"]
-            if changed:
-                gateway.request(
-                    lambda: driver.update_settings(
-                        {"disableIdLocatorAutocompletion": True}
-                    ),
-                    "settings_changed",
-                )
-        values = _inspect_values(driver, element, attributes, gateway)
-    except AutomationError as error:
-        primary = error
-    if changed and "settings_changed" in gateway.completed_steps:
-        _restore_setting(
-            driver, gateway, "disableIdLocatorAutocompletion", False, primary
-        )
-    if primary is not None:
-        raise primary
+    values = _with_raw_id_guard(
+        driver,
+        element,
+        gateway,
+        lambda: _inspect_values(driver, element, attributes, gateway),
+    )
     gateway.checkpoint(response_received=True)
 
     locator = _locator_value(element)
@@ -538,7 +427,7 @@ def _viewport(root: _ParsedNode) -> Viewport:
 
 
 def _spatial_facts(
-    raw: str, width: int, height: int, gateway: _ObservationGateway
+    raw: str, width: int, height: int, gateway: _SessionOperationGateway
 ) -> tuple[ViewportRelation, bool, Bounds | None]:
     match = _XML_BOUNDS.fullmatch(raw)
     if match is None:
@@ -613,7 +502,7 @@ def _spatial_facts(
 
 
 def _parse_source(
-    source: object, gateway: _ObservationGateway
+    source: object, gateway: _SessionOperationGateway
 ) -> tuple[_ParsedNode, Viewport]:
     if not isinstance(source, str):
         raise _error(CommandError, "source_invalid", gateway)
@@ -724,13 +613,13 @@ def _descendants(node: _ParsedNode) -> tuple[_ParsedNode, ...]:
 
 
 def _resolve_local(
-    root: _ParsedNode, element: Element, gateway: _ObservationGateway
+    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
 ) -> _ParsedNode:
     return _resolve_local_chain(root, element, gateway)[1]
 
 
 def _xml_value(
-    node: _ParsedNode, name: str, gateway: _ObservationGateway
+    node: _ParsedNode, name: str, gateway: _SessionOperationGateway
 ) -> ObservedValue:
     upstream = _UPSTREAM.get(name, name)
     raw = node.attribute(upstream)
@@ -755,7 +644,9 @@ def _xml_value(
 
 
 def _tree_node(
-    node: _ParsedNode, children: tuple[TreeNode, ...], gateway: _ObservationGateway
+    node: _ParsedNode,
+    children: tuple[TreeNode, ...],
+    gateway: _SessionOperationGateway,
 ) -> TreeNode:
     checked = _xml_value(node, "checked", gateway)
     checkable = node.attribute("checkable")
@@ -782,7 +673,7 @@ def _tree_node(
 def _project_tree(
     roots: tuple[_ParsedNode, ...],
     keep: set[_ParsedNode] | None,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> tuple[TreeNode, ...]:
     projected: dict[_ParsedNode, TreeNode] = {}
     for index, node in enumerate(reversed(_all_nodes(roots))):
@@ -862,7 +753,7 @@ def _tree_result(
     source_text: str,
     metadata: SourceMetadata,
     parent: Element | None,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> TreeObservation:
     root, viewport = _parse_source(source_text, gateway)
     roots = tuple(root.children)
@@ -927,7 +818,7 @@ def _tree_result(
 
 def _source_operation(
     driver: WebDriver,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     build: Callable[[str, SourceMetadata], _Result],
 ) -> _Result:
     settings = gateway.request(driver.get_settings, "settings_read")
@@ -962,7 +853,9 @@ def _source_operation(
 
 
 def _observe_tree(
-    driver: WebDriver, parent: Element | None, gateway: _ObservationGateway
+    driver: WebDriver,
+    parent: Element | None,
+    gateway: _SessionOperationGateway,
 ) -> TreeObservation:
     return _source_operation(
         driver,
@@ -972,7 +865,7 @@ def _observe_tree(
 
 
 def _resolve_local_chain(
-    root: _ParsedNode, element: Element, gateway: _ObservationGateway
+    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
 ) -> tuple[tuple[_ParsedNode, ...], _ParsedNode]:
     current = root
     matched: list[_ParsedNode] = []
@@ -1050,7 +943,7 @@ def _structure_result(
     metadata: SourceMetadata,
     element: Element,
     scope_name: Literal["target", "declared_parent"],
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> RawStructureObservation:
     root, _ = _parse_source(source_text, gateway)
     matched, target = _resolve_local_chain(root, element, gateway)
@@ -1121,7 +1014,7 @@ def _inspect_structure(
     driver: WebDriver,
     element: Element,
     scope: Literal["target", "declared_parent"],
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> RawStructureObservation:
     return _source_operation(
         driver,

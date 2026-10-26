@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import socket
 import time
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, cast
 from urllib.parse import ParseResult
 
@@ -14,8 +14,6 @@ from selenium.common.exceptions import SessionNotCreatedException
 from selenium.webdriver.common.proxy import Proxy
 from selenium.webdriver.remote.command import Command
 from selenium.webdriver.remote.errorhandler import ErrorHandler
-
-from appium_connect_agent.runtime import OperationControl
 
 _HEADER_LOCK = Lock()
 
@@ -34,8 +32,8 @@ class _LifecycleConnection(AppiumConnection):
     def __init__(self, client_config: AppiumClientConfig) -> None:
         super().__init__(client_config=client_config)
         self._record_lock = Lock()
-        self._control: OperationControl | None = None
-        self._deadline: float | None = None
+        self._cancellation: Event | None = None
+        self._request_deadline: float | None = None
         self._request_started = False
         self._response_received = False
         self._terminal_not_created = False
@@ -55,11 +53,11 @@ class _LifecycleConnection(AppiumConnection):
             )
 
     def prepare_request(
-        self, control: OperationControl | None, deadline: float | None
+        self, cancellation: Event | None, request_deadline: float | None
     ) -> None:
         with self._record_lock:
-            self._control = control
-            self._deadline = deadline
+            self._cancellation = cancellation
+            self._request_deadline = request_deadline
             self._request_started = False
             self._response_received = False
             self._terminal_not_created = False
@@ -67,16 +65,16 @@ class _LifecycleConnection(AppiumConnection):
 
     def _apply_request_control(self) -> None:
         with self._record_lock:
-            control, deadline = self._control, self._deadline
-            self._control = None
-            self._deadline = None
-        if control is None:
+            cancellation = self._cancellation
+            request_deadline = self._request_deadline
+            self._cancellation = None
+            self._request_deadline = None
+        if cancellation is not None and cancellation.is_set():
+            raise _RequestCancelled
+        if request_deadline is None:
             self.client_config.timeout = socket.getdefaulttimeout()
             return
-        if control.cancellation is not None and control.cancellation.is_set():
-            raise _RequestCancelled
-        assert deadline is not None
-        remaining = deadline - time.monotonic()
+        remaining = request_deadline - time.monotonic()
         if remaining <= 0:
             raise _RequestTimedOut
         self.client_config.timeout = remaining

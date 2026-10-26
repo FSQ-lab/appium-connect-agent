@@ -1,4 +1,4 @@
-"""Synchronous Android discovery, Sessions, and element inspection."""
+"""Synchronous Android discovery, Sessions, Element inspection, and actions."""
 
 from ._discovery import list_devices as list_devices
 from ._element import Element as Element
