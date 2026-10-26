@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝，以及 Element 单击/双击/长按和必要等待；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待，以及 Element 文本输入/清空/替换；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -148,3 +148,12 @@
 - AIF-04 复用现有 Appium-Python-Client 6.0.8、Selenium 4.51.0、Python 3.11 标准库、Runtime OperationControl、Session gate/生命周期及 AIF-03 Element/解析/Settings 接缝；不新增依赖或模块方向，Runtime、Contracts、Integrations 本轮 no-delta。
 - 条件满足后只发送一次获证原生动作；动作开始后不自动重放。成功仅表示命令完成，不保证页面、菜单、业务效果或用户任务完成；不自动滚动、观测、处理弹窗或模拟缺失平台能力。
 - 契约确认不表示 AIF-04 已实现、设备动作已验收、Automation 模块或当前平台完整链路已完成；详细 Interface、等待、错误、raw-ID Settings、平台 Adapter 与验证义务由 Automation 模块 SPEC 定义。
+
+## Automation Element Text Actions
+
+- Automation AIF-05 延续 macOS 宿主 / Android / UiAutomator2 组合，在既有明确 Session 和项目 Element 上增加普通输入、清空、替换三个独立文本意图及必要 wait-until；不交付当前焦点输入、IME/提交、键盘、剪贴板、自动聚焦、滚动、观测、业务校验或 Integrations 产品实现。
+- Automation 公开 `send_keys`、`clear`、`replace_element_value` 三个方法并隐藏 WebElement、elementId、Android script、轮询和平台差异。业务友好的统一 type_text、换行授权、submit、verify、分段/续传等策略属于未来 Integrations 或调用方编排，不进入本 feature。
+- AIF-05 复用现有 Appium-Python-Client 6.0.8、Selenium 4.51.0、Python 3.11 标准库、Runtime OperationControl、Session gate/生命周期及 AIF-03/04 的 Element resolver、raw-ID Settings guard、wait/stale/no-replay 接缝；不新增依赖或模块方向，Runtime、Contracts、Integrations 本轮 no-delta。
+- send/replace 文本是未经转换、归一化或截断的 strict UTF-8 字符串，最多65,536 bytes；send空串、NUL、孤立surrogate和末尾字面反斜线+n在任何设备请求前拒绝，replace空串允许；其他实际换行和Unicode控制字符原样传递但不保证控件保留。
+- 条件满足后只发送一次对应官方文本命令；动作开始后不自动重放或回滚。成功仅表示命令完成，不保证最终文本、光标、焦点、键盘、页面或业务结果；不自研editable判断，不自动读回。
+- 契约确认不表示AIF-05已实现、文本动作已验收、Automation模块或当前平台完整链路已完成；详细Interface、等待、错误、partial side effect、平台Adapter和验证义务由Automation模块SPEC定义。

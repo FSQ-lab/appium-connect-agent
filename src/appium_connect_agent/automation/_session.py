@@ -23,12 +23,13 @@ from selenium.common.exceptions import (
 
 from appium_connect_agent.runtime import OperationControl, RuntimeConnection
 
-from ._actions import _perform_action, _validate_duration, _validate_wait_timeout
+from ._actions import _perform_action, _validate_duration
 from ._element import Element, _make_element
 from ._element_target import (
     _PreActionStale,
     _validate_owner,
     _validate_raw_chain,
+    _validate_wait_timeout,
 )
 from ._models import (
     AutomationError,
@@ -69,6 +70,7 @@ from ._session_coordination import (
     _reserve,
     _SystemPortUnavailable,
 )
+from ._text_actions import _perform_text_action, _validate_text
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -774,6 +776,88 @@ class Session:
                 gateway,
                 kind="long",
                 duration_ms=duration,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def send_keys(
+        self,
+        element: Element,
+        text: str,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Wait for one Element and issue one native text-send command."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_text = _validate_text(text, operation_id, allow_empty=False)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chain(valid_element, operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_text_action(
+                driver,
+                valid_element,
+                gateway,
+                action="send_keys",
+                text=valid_text,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def clear(
+        self,
+        element: Element,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Wait for one Element and issue one native clear command."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chain(valid_element, operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_text_action(
+                driver,
+                valid_element,
+                gateway,
+                action="clear",
+                text=None,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def replace_element_value(
+        self,
+        element: Element,
+        text: str,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Wait for one Element and issue one native text-replace command."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_text = _validate_text(text, operation_id, allow_empty=True)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chain(valid_element, operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_text_action(
+                driver,
+                valid_element,
+                gateway,
+                action="replace",
+                text=valid_text,
                 condition_deadline=started + wait_timeout,
             ),
         )

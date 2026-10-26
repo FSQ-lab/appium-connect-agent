@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝及 AIF-04 Element 点击动作；输入、其他手势、系统/应用动作及其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作及 AIF-05 Element 文本输入/清空/替换；其他手势、系统/应用动作及其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测及 Element 点击动作契约已确认，实际实现与验证以交付证据为准；其他设备动作尚未实现。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击及文本动作契约已确认，实际实现与验证以交付证据为准；其他设备动作尚未实现。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -202,3 +202,53 @@
 - 当前 AIF-04 feature 的获准真实验收可在固定 Pixel 6 和预装普通 App 上验证 single、double、默认/显式 long、精确命令数量/载荷/None 结果及无自动滚动/观测/业务等待；延迟出现/显示/启用、歧义、pre-action stale、raw-ID、condition/operation timeout、response_unknown 和取消等精确合同以锁定真实客户端的受控协议服务为本 feature 权威证据。故障注入不得为真机验收破坏链路。
 - 用户确认将可制造完整动态状态的专用 Android 测试 App、跨 feature 真实场景矩阵和评分测评后置到 Automation 能力建成后的模块级验收；AIF-04 不创建 Android 构建工具链或测试 APK。该后置不降低受控测试、独立差异审查和基础真机动作链门槛，也不表示 Automation 模块或平台完成。
 - AIF-04 通过只表示三个 Element 点击动作及必要等待，不表示输入、其他手势、系统/应用能力、Automation 模块或平台完整链路完成；模块最终验收前必须另走测试 App/测评设计与授权。
+
+## AIF-05 Element Text Actions
+
+### Dependencies And Platform Boundary
+
+- 当前资格组合固定为macOS宿主 / Android / Appium3.7.0 / UiAutomator2 Driver8.7.0；该资格安装实例解析Android driver14.2.0和device-server10.6.6，实施与真机验收前必须重取实际manifest身份，差异即停止。Python侧继续固定Appium-Python-Client6.0.8、Selenium4.51.0和Python3.11标准库。
+- 只使用公开WebElement `send_keys`/`clear`、固定公开 `execute_script`、find/state/异常入口以及现有Session operation gateway；不新增依赖、私有client API、raw HTTP parser、ADB、剪贴板、Selenium Manager、BiDi或浏览器能力。Runtime、Contracts与Integrations本轮no-delta。
+- 公共语义属于跨平台Automation Interface，但本feature只实现Android Adapter。未来iOS/macOS须分别固定版本、SPEC、实现和真实验收；缺少获证原生replace时 `unsupported_operation/not_sent`，不得用clear+send模拟。
+
+### Public Interface And Text Values
+
+- 同步入口为 `Session.send_keys(element: Element, text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`、`Session.clear(element: Element, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None` 和 `Session.replace_element_value(element: Element, text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- element只接受本Session创建的可信项目Element；完整parent chain须同owner、无循环且深度有效。拒绝裸WebElement、elementId、坐标、snapshot ref、伪造或跨Session Element；每次调用重新解析，不缓存跨调用句柄。
+- send/replace的text必须是str，不做强转、Unicode normalization、strip、换行转换、escape、截断或替换；以strict UTF-8编码后的原始text计量，恰好65,536 bytes允许，65,537拒绝。NUL、不可编码的孤立surrogate及末尾U+005C/U+006E字面反斜线+n拒绝；内部相同序列及实际LF/CR/TAB、其他Unicode control和普通Unicode原样传递，但不保证控件接受、保留或不规范化。
+- `send_keys("")` 在任何设备请求前 `invalid_argument/not_sent`；`replace_element_value("")` 允许并仍发送一次replace=true，不映射为clear。clear没有text参数。
+- `wait_timeout_seconds` 沿AIF-04：接受实际int/float、拒绝bool，必须finite且>0。所有owner/text/wait/raw-chain纯值错误发生在Session gate和任何Settings/find/action请求前。
+- 成功只返回None，表示固定公开客户端取得完整合法成功响应且必要raw-ID恢复完成；不保证最终文本、strict append、光标/selection、clear后空值、完整写入、焦点、键盘、页面或业务结果。
+
+### Preconditions And Wait-Until
+
+- 三个文本动作都要求最终目标唯一、displayed=true、enabled=true；不要求focused、clickable或editable，不使用class白名单。Automation不自动点击/聚焦、滚动、切页、处理弹窗、隐藏键盘、提交、观测或读回。
+- 默认目标等待15秒，显式值由OperationControl剩余总预算截断。每轮从根重新解析完整Element chain：0匹配、displayed=false、enabled=false继续；任一层多匹配立即 `target_ambiguous/response_received`。
+- find/child-find/displayed/enabled的公开 `StaleElementReferenceException` 仅在取得有效响应且final action尚未开始时丢弃整条临时链并从根重新定位；其他错误立即失败。response_unknown不按stale重试。
+- 条件满足后只用同一最终轮临时元素发送一次对应文本命令。final action开始后，stale、有效错误、取消、超时或断连都不触发重定位、fallback、重放或回滚。
+- click/text共用 `_element_target.py` 唯一拥有的wait timeout校验、固定0.5秒poll、bool状态检查和ready-target helper；不同动作不得复制resolver、轮询或request分类状态机。
+
+### Shared Resolution, Settings And Android Adapter
+
+- AIF-03/04/05共用单一Session operation gateway、单次唯一resolver、ready-target wait和raw-ID Settings guard；不得复制request_state、uncertain、cleanup或locator状态机。
+- raw-ID chain在同一Session gate内读取 `disableIdLocatorAutocompletion`，必要时临时设true，覆盖全部wait轮次和至多一次文本动作，并在known-terminal安全路径恢复。raw ID与unresolved标准短ID混用在任何请求前 `unsupported_operation/not_sent`；当前请求unknown时不得发送可能重叠的restore。
+- 当前Android Adapter：send调用本轮临时Appium WebElement的 `send_keys(text)`；clear调用一次 `clear()`；replace固定调用 `driver.execute_script("mobile: replaceElementValue", {"elementId": target.id, "text": text})`。script、payload、WebElement和elementId不进入公共Interface。
+- send client请求为 `POST /session/{sid}/element/{eid}/value` 且body含text/value；clear为独立clear route；replace为一次execute/sync。send/clear固定helper必须返回同一target self后归一None；replace结果必须 `is None`。不得为检查wire null读取私有 `_execute`。
+- 普通send的固定device-server路径可能在同一个上游命令内部clear旧值再设置旧值+新值；有效错误也可能已部分改变字段。Automation只保证本项目不另发clear，不保证上游内部无clear、光标追加或真实键事件。可设置progress的非文本控件可能改变进度；本项目不将其升级为独立能力，也不保证误选必失败。
+
+### Deadlines, Errors And Lifecycle
+
+- 目标deadline与OperationControl总deadline分开；wait请求使用两者较早值。请求/睡眠间condition到期为 `condition_timeout/not_sent`，完整read响应后的post-check到期为 `condition_timeout/response_received`，在途无完整终态为 `condition_timeout/response_unknown` 并使Session uncertain。
+- 发送前同时看到cancellation/deadline时cancellation优先；等待期总预算优先于condition timeout。目标就绪后condition deadline不再限制final action，动作只受总预算；control=None沿锁定客户端默认响应处理。
+- 合法动作成功事实优先于随后观察到的取消/deadline，写 `action_completed` 并返回None。final stale、有效错误或非法返回为 `command_failed/response_received`，Session可保持active但不保证无副作用；无终态为execution_unknown或可证明的cancel/timeout，`request_state=response_unknown`，Session uncertain、本地client关闭、占用保留且不重放。
+- 稳定completed_steps沿用 `settings_read`、`settings_changed`、`target_resolved`、`target_displayed`、`target_enabled`、`action_completed`、`settings_restored`；失败wait轮次不提交target steps，只有固定helper/execute成功才写action_completed。
+- raw-ID动作成功后仍须完成必要restore。restore有效失败为 `cleanup_failed/response_received`，保留action_completed、追加cleanup_errors、Session uncertain；restore response_unknown为 `execution_unknown/response_unknown`，保留action_completed、Session uncertain。已有主错误保持，恢复/关闭错误有序追加。
+
+### Verification Scope
+
+- 受控测试必须使用锁定真实Appium/Selenium Python客户端与临时HTTP协议服务，不只mock WebDriver；该服务只证明项目到Appium client边界及故障时序，覆盖根/子find、displayed、enabled、三个final route/body、返回归一、一次命令、有效错误、慢响应、断连、响应未知和client关闭。
+- text须覆盖非str、NUL、lone surrogate、65,535/65,536/65,537 UTF-8 bytes、ASCII/CJK/emoji/astral/组合/ZWJ/RTL、内部/末尾字面反斜线+n、实际LF/CR/TAB/其他control、send空和replace空；非法输入须在任何协议请求前拒绝，合法输入client payload不得改写。
+- 必须覆盖0→出现、displayed/enabled变化、持续timeout、每层0/1/多、每个pre-action stale点、final stale/有效错误/非法返回、response_unknown/慢头/体/断连、gate/state/connection、取消与三类condition request_state、completed_steps/cleanup_errors、raw-ID完整矩阵及AIF-02/03/04回归。
+- Appium route过滤、driver下游replace flag、device-server内部clear/ACTION_SET_TEXT/progress/maxTextLength和字面反斜线+n冲突只由固定提交源码及实际manifest资格证明，用于限定不保证项；临时协议服务或mock不得冒充运行时证明。实际源码/manifest不符时停止。
+- 获准基础真机验收只在固定资格组合和无账号/网络/提交副作用的普通文本字段验证短ASCII replace、send、clear、replace empty、每调用一次final命令、项目None及显式AIF-03观测；不故障注入，不验证65KiB、特殊control、progress或全部控件。
+- 专用动态Android测试App、多行/Unicode/长文本/自定义控件、延迟/stale/故障及跨feature评分后置到Automation模块最终验收；该后置不降低AIF-05受控验证、独立差异审查和基础真机链门槛。AIF-05通过不表示手势、系统/应用能力、Automation模块或当前平台完整链路完成。
