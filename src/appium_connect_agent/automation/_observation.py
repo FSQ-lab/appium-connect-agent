@@ -346,7 +346,7 @@ def _inspect_element(
 ) -> ElementInspection:
     values = _with_raw_id_guard(
         driver,
-        element,
+        (element,),
         gateway,
         lambda: _inspect_values(driver, element, attributes, gateway),
     )

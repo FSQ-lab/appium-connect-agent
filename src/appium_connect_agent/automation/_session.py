@@ -28,8 +28,19 @@ from ._element import Element, _make_element
 from ._element_target import (
     _PreActionStale,
     _validate_owner,
-    _validate_raw_chain,
+    _validate_raw_chains,
     _validate_wait_timeout,
+)
+from ._gestures import (
+    _perform_drag_and_drop,
+    _perform_official_scroll,
+    _perform_scroll_gesture,
+    _perform_swipe_gesture,
+    _validate_direction,
+    _validate_max_swipes,
+    _validate_percent,
+    _validate_ratio,
+    _validate_scroll_mapping,
 )
 from ._models import (
     AutomationError,
@@ -690,7 +701,7 @@ class Session:
         operation_id, control, _, deadline = _new_operation(control)
         valid_element = _validate_owner(element, self, operation_id)
         valid_attributes = _validate_attributes(attributes, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         return self._run_operation(
             operation_id,
             control,
@@ -711,7 +722,7 @@ class Session:
         operation_id, control, started, deadline = _new_operation(control)
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -737,7 +748,7 @@ class Session:
         operation_id, control, started, deadline = _new_operation(control)
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -765,7 +776,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         duration = _validate_duration(duration_ms, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -793,7 +804,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -819,7 +830,7 @@ class Session:
         operation_id, control, started, deadline = _new_operation(control)
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -847,7 +858,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         valid_text = _validate_text(text, operation_id, allow_empty=True)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        _validate_raw_chain(valid_element, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -858,6 +869,129 @@ class Session:
                 gateway,
                 action="replace",
                 text=valid_text,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def swipe_gesture(
+        self,
+        element: Element,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        percent: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Wait for a displayed Element and issue one native swipe."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_direction = _validate_direction(direction, operation_id)
+        valid_percent = _validate_percent(percent, operation_id, maximum=1.0)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_swipe_gesture(
+                driver,
+                valid_element,
+                gateway,
+                direction=valid_direction,
+                percent=valid_percent,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def scroll_gesture(
+        self,
+        element: Element,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        percent: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> bool:
+        """Wait for a displayed Element and issue one native scroll gesture."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_direction = _validate_direction(direction, operation_id)
+        valid_percent = _validate_percent(percent, operation_id, maximum=3.0)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        return self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_scroll_gesture(
+                driver,
+                valid_element,
+                gateway,
+                direction=valid_direction,
+                percent=valid_percent,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def scroll(
+        self,
+        container: Element,
+        target: Element,
+        *,
+        max_swipes: int,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Use one restricted official UiScrollable target search."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_container = _validate_owner(container, self, operation_id)
+        valid_target = _validate_owner(target, self, operation_id)
+        valid_max_swipes = _validate_max_swipes(max_swipes, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        mapping = _validate_scroll_mapping(valid_container, valid_target, operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_official_scroll(
+                driver,
+                valid_target,
+                gateway,
+                mapping=mapping,
+                max_swipes=valid_max_swipes,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def drag_and_drop(
+        self,
+        source: Element,
+        destination: Element,
+        *,
+        destination_x_ratio: float,
+        destination_y_ratio: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Drag one displayed Element to a point inside another."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_source = _validate_owner(source, self, operation_id)
+        valid_destination = _validate_owner(destination, self, operation_id)
+        x_ratio = _validate_ratio(destination_x_ratio, operation_id)
+        y_ratio = _validate_ratio(destination_y_ratio, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_source, valid_destination), operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_drag_and_drop(
+                driver,
+                valid_source,
+                valid_destination,
+                gateway,
+                x_ratio=x_ratio,
+                y_ratio=y_ratio,
                 condition_deadline=started + wait_timeout,
             ),
         )

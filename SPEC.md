@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待，以及 Element 文本输入/清空/替换；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -157,3 +157,12 @@
 - send/replace 文本是未经转换、归一化或截断的 strict UTF-8 字符串，最多65,536 bytes；send空串、NUL、孤立surrogate和末尾字面反斜线+n在任何设备请求前拒绝，replace空串允许；其他实际换行和Unicode控制字符原样传递但不保证控件保留。
 - 条件满足后只发送一次对应官方文本命令；动作开始后不自动重放或回滚。成功仅表示命令完成，不保证最终文本、光标、焦点、键盘、页面或业务结果；不自研editable判断，不自动读回。
 - 契约确认不表示AIF-05已实现、文本动作已验收、Automation模块或当前平台完整链路已完成；详细Interface、等待、错误、partial side effect、平台Adapter和验证义务由Automation模块SPEC定义。
+
+## Automation Element Gestures And Restricted Scroll Search
+
+- AIF-06 延续 macOS 宿主 / Android / UiAutomator2 组合，在既有明确 Session 和项目 Element 上增加 `swipe_gesture`、`scroll_gesture`、受限官方 `scroll` 查找与 `drag_and_drop`；不交付绝对坐标、speed/duration、任意轨迹、其他手势、系统/应用能力或 Integrations 实现。
+- 四个意图复用现有 Appium-Python-Client 6.0.8、Selenium 4.51.0、Python 3.11 标准库、Runtime OperationControl、Session gate/生命周期及 AIF-03/04/05 的 Element resolver、raw-ID Settings guard、wait/stale/no-replay/uncertain cleanup；不新增依赖或模块方向，Runtime、Contracts、Integrations 本轮 no-delta。
+- 实际手势目标必须唯一且 displayed=true，不强制 enabled/clickable/scrollable。swipe方向表示触点方向，scrollGesture方向表示内容方向；percent由调用方显式提供，swipe为 `(0,1]`，scrollGesture为 `(0,3]`并返回官方strict bool。
+- official scroll只接受受限、可无损映射的项目Element：canonical-ID根container、以同一container为parent的canonical-ID或accessibility-id target，以及必填 `max_swipes=1..30`；不解析XPath、不接收raw/unresolved/class/任意UiAutomator、不自建滚动循环。final no-such保持CommandError；只有合法成功后的项目唯一/displayed后验可产生TargetError。
+- drag由source/destination Element及目标内 `[0,1]` ratio确定；Automation内部将ratio换算为目标内部像素并只发送一次获证原生drag命令。四个意图final动作开始后不自动重放或回滚；成功只表示命令及必要收尾完成，不保证内容、页面或业务结果。
+- 契约确认不表示AIF-06已实现、真机拖放已验收、Automation模块或当前平台完整链路已完成；详细Interface、值域、受限Adapter、错误、completed steps和验证义务由Automation模块SPEC定义。

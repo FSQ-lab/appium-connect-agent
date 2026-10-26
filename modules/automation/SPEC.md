@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作及 AIF-05 Element 文本输入/清空/替换；其他手势、系统/应用动作及其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；系统/应用动作及其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击及文本动作契约已确认，实际实现与验证以交付证据为准；其他设备动作尚未实现。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击、文本动作及手势/受限滚动查找契约已确认；实际实现与验证以交付证据为准，系统/应用动作尚未实现。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -252,3 +252,65 @@
 - Appium route过滤、driver下游replace flag、device-server内部clear/ACTION_SET_TEXT/progress/maxTextLength和字面反斜线+n冲突只由固定提交源码及实际manifest资格证明，用于限定不保证项；临时协议服务或mock不得冒充运行时证明。实际源码/manifest不符时停止。
 - 获准基础真机验收只在固定资格组合和无账号/网络/提交副作用的普通文本字段验证短ASCII replace、send、clear、replace empty、每调用一次final命令、项目None及显式AIF-03观测；不故障注入，不验证65KiB、特殊control、progress或全部控件。
 - 专用动态Android测试App、多行/Unicode/长文本/自定义控件、延迟/stale/故障及跨feature评分后置到Automation模块最终验收；该后置不降低AIF-05受控验证、独立差异审查和基础真机链门槛。AIF-05通过不表示手势、系统/应用能力、Automation模块或当前平台完整链路完成。
+
+## AIF-06 Element Gestures And Restricted Scroll Search
+
+### Dependencies And Platform Boundary
+
+- 当前资格组合固定为macOS宿主 / Android / Appium3.7.0 / UiAutomator2 Driver8.7.0；资格安装实例解析Android driver14.2.0、device-server10.6.6和AndroidX UiAutomator2.3.0。实施与真机验收前必须重取实际manifest/API身份，差异即停止。Python侧继续固定Appium-Python-Client6.0.8、Selenium4.51.0和Python3.11标准库。
+- 只使用公开 `execute_script`、WebElement rect、find/state/异常入口以及现有Session operation gateway；不新增依赖、私有client API、raw HTTP parser、Selenium Manager、BiDi、浏览器或任意公开script入口。Runtime、Contracts与Integrations本轮no-delta。
+- 复用现有Element resolver、0.5秒poll、OperationControl、raw-ID guard、request-state/no-replay/uncertain cleanup。不得复制这些状态机；raw guard须以同一操作的Element集合联合处理raw/unresolved冲突。
+- 公共语义属于跨平台Automation Interface，但本feature只实现Android Adapter。未来iOS/macOS须分别固定版本、SPEC、实现和真实验收；缺少获证原生能力时 `unsupported_operation/not_sent`，不得以多次动作、坐标公共入口或Integrations循环模拟。
+
+### Public Interface And Values
+
+- 同步入口为 `Session.swipe_gesture(element: Element, *, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Session.scroll_gesture(element: Element, *, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> bool`。
+- 同步入口为 `Session.scroll(container: Element, target: Element, *, max_swipes: int, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Session.drag_and_drop(source: Element, destination: Element, *, destination_x_ratio: float, destination_y_ratio: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 所有Element必须由本Session创建且完整链可信；拒绝裸WebElement、elementId、bounds、坐标、snapshot ref、伪造或跨Session对象。每次调用重新定位，不缓存跨调用句柄。
+- direction只接受精确lowercase四值。swipe方向是触点移动方向；scrollGesture方向是内容滚动方向，Adapter不二次反转。
+- percent接受实际int/float、拒绝bool，必须finite；swipe固定 `0 < percent <= 1.0`，scrollGesture固定 `0 < percent <= 3.0`。发送前用Python3.11标准库验证转换为固定后端binary32后仍finite且 `>0`；下溢到0在任何设备请求前拒绝，发送值不归一化。
+- `max_swipes` 必须 `type(value) is int` 且 `1..30`；不提供Automation默认。该值限制UiScrollable每阶段搜索，整个命令最坏可接近先回起点30次再向前搜索30次。
+- 两个destination ratio接受实际int/float、拒绝bool，必须finite且在闭区间 `[0,1]`。wait timeout沿AIF-04/05：实际int/float、拒绝bool、finite且 `>0`。
+
+### Preconditions And Target Preparation
+
+- swipe/scrollGesture的element、drag的source与destination及official scroll的container都必须唯一且displayed=true；不读取或强制enabled/clickable/scrollable。0匹配或hidden可在15秒默认目标预算内等待，多匹配立即 `target_ambiguous/response_received`。
+- find/displayed及drag rect在final动作前取得完整 `StaleElementReferenceException` 时丢弃本轮临时句柄并从根重定位。drag任一source/destination/rect stale都重开完整双目标轮；失败轮不提交target completed steps。
+- 条件满足后只使用同一最终轮临时元素发送一次final命令。final动作开始后的stale、有效错误、取消、超时或断连不触发重定位、fallback、重放或回滚。
+- 默认目标预算只覆盖pre-action条件；OperationControl总预算从公共调用开始。同步请求不能被Event即时抢占；必要收尾结束前不释放Session gate。
+
+### Restricted Official Scroll Adapter
+
+- container必须是无parent、非raw、已固化package的canonical标准ID。Adapter只把其安全ASCII resource-id插入固定 `new UiSelector().resourceId("<id>")` 模板，并用公开 `-android uiautomator` locator取得UiObject-backed origin；不实现通用literal encoder/parser。
+- target必须以同一个container对象为唯一parent且没有更深链；leaf只允许canonical标准ID或accessibility id。ID使用相同固定resourceId模板并发送 `strategy="-android uiautomator"`；accessibility直接发送结构化 `strategy="accessibility id"`。
+- XPath、raw/unresolved ID、class、无parent/其他parent/深parent、accessibility container和调用方UiAutomator字符串均在Settings/find前 `unsupported_operation/not_sent`；不得丢条件、扩大到全屏或回退首个scrollable view。
+- gate内、container定位前读取Settings；`mapTestTagToResourceId`必须是实际false。true为 `unsupported_operation/response_received`，缺失或非bool为 `source_settings_invalid/response_received`；本项目不修改该setting。
+- target允许调用开始时不存在；项目不先poll target，也不自建滚动循环。只发送一次 `mobile: scroll`，payload固定为container elementId、strategy、selector和maxSwipes，不接收direction/percent/speed。
+- final `NoSuchElementException`无法区分目标耗尽与origin失效，统一 `CommandError/command_failed/response_received`，不得解析message/stack/private response。合法成功后只做一次普通target唯一/displayed后验：0匹配为 `target_not_found`，多匹配为 `target_ambiguous`，唯一但hidden为 `precondition_not_met`；postcheck stale、非法displayed或其他完整读取错误为 `command_failed`，均不重试或重放scroll。
+
+### Android Adapter And Drag Geometry
+
+- swipe固定 `mobile: swipeGesture`，payload只含本轮elementId、direction、percent；合法结果必须 `is None`。
+- scrollGesture固定 `mobile: scrollGesture`，同形payload；合法结果必须 `type(result) is bool`并原样返回。false是成功，不触发继续滚动，也不表示业务列表完整。
+- drag固定 `mobile: dragGesture`，payload只含本轮source elementId和内部endX/endY；不发送startX/startY/speed。destination rect必须为对象形且x/y/width/height均为实际int，width/height `>0`。
+- 固定 `endX = x + floor(destination_x_ratio * (width - 1))`、`endY = y + floor(destination_y_ratio * (height - 1))`；结果必须在Java signed-int范围。ratio=1落在目标最后一个内部像素，不使用排他right/bottom。
+- swipe/drag/official scroll成功返回None；scrollGesture返回strict bool。成功只表示官方命令和必要收尾完成，不保证内容移动、页面边界、拖放业务成功或任务完成。
+
+### Deadlines, Errors And Lifecycle
+
+- 纯值、owner、白名单错误在任何Settings/find/final请求前使用 `invalid_argument`、`element_session_mismatch` 或 `unsupported_operation/not_sent`。同Session重叠仍立即 `session_busy/not_sent`。
+- pre-action持续缺失/hidden到deadline为 `condition_timeout`；多匹配为 `target_ambiguous`。有效pre-action stale仅在final未开始时重定位；其他有效读取错误为 `command_failed/response_received`。
+- final合法None/bool写 `action_completed`。final stale、其他有效错误或非法返回为 `command_failed/response_received`；response_unknown为execution_unknown或可证明的cancel/timeout，Session转uncertain、关闭本地client、保留占用且不重放。
+- official scroll成功后验的0/多/hidden分别为 `target_not_found`、`target_ambiguous`、`precondition_not_met`；均保留 `action_completed`，唯一目标另保留 `target_resolved`。postcheck known/unknown错误保留错误发生前已有completed steps，final scroll仍恰好一次。
+- completed steps按实际路径从 `settings_read`、`settings_changed`、`source_resolved`、`source_displayed`、`container_resolved`、`container_displayed`、`destination_resolved`、`destination_displayed`、`destination_geometry_read`、`action_completed`、`target_resolved`、`target_displayed`、`settings_restored` 中有序取值。cleanup/restore失败不得删除已确认事实。
+
+### Verification Scope
+
+- 受控测试必须使用锁定真实Appium/Selenium Python客户端与现有临时HTTP协议服务，不只mock WebDriver；精确覆盖四个execute/sync script/payload、无speed/duration/坐标字段、每调用一个final请求、strict返回、有效错误、慢头/体、断连、response_unknown和client关闭。
+- 必须覆盖direction四值、swipe `(0,1]`、scrollGesture `(0,3]`、binary32下溢边界、maxSwipes `1..30`、ratio `[0,1]`、非法bool/NaN/Inf、目标0/1/多/hidden、每个pre-action stale点、raw guard联合语义、gate/state/connection、取消/预算和AIF-02/03/04/05回归。
+- official scroll须覆盖canonical-ID模板、target ID/accessibility、全部拒绝形状、mapTestTagToResourceId状态、target初始缺失、恰好一个final、no-such统一CommandError，以及成功后验0/多/hidden/stale/非法bool/unknown的分类和completed steps。
+- drag须覆盖rect形状、负坐标、0/1/正常尺寸、Java int边界、ratio 0/0.5/1、内部floor坐标、双目标整轮stale与一次final payload。
+- 临时协议服务只证明项目到Python client/Appium HTTP边界；固定源码/manifest证明driver/device-server调用链；获准真机页面证明实际触点、内容和drag。三层证据不得互相冒充。
+- 当前没有获准的安全drag目标应用；仍缺资源时报告 `device-validation-blocked`。专用动态App、跨feature场景和评分后置到Automation模块最终验收；AIF-06通过不表示系统/应用能力、Automation模块或平台完整链路完成。

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable, Sequence
-from functools import partial
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from appium.webdriver.webdriver import WebDriver
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
 
 _Result = TypeVar("_Result")
+_Prepared = TypeVar("_Prepared")
 _MISSING = object()
 
 
@@ -47,29 +47,63 @@ def _validate_owner(element: object, owner: object, operation_id: str) -> Elemen
     return element
 
 
-def _validate_raw_chain(element: Element, operation_id: str) -> None:
-    chain = _locator_chain(element)
-    if any(item.raw_id for item in chain) and any(
-        item.by == "id" and not item.raw_id and item.package is None for item in chain
+def _validate_raw_chains(elements: tuple[Element, ...], operation_id: str) -> None:
+    locators = tuple(
+        locator for element in elements for locator in _locator_chain(element)
+    )
+    if any(item.raw_id for item in locators) and any(
+        item.by == "id" and not item.raw_id and item.package is None
+        for item in locators
     ):
         raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
 
 
 def _validate_wait_timeout(value: object, operation_id: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value <= 0
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    return float(value)
+    try:
+        normalized = float(value)
+    except OverflowError:
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if not math.isfinite(normalized) or normalized <= 0:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return normalized
 
 
 def _find_elements(
-    context: WebDriver | WebElement, element: Element
+    context: WebDriver | WebElement, by: str, value: str
 ) -> Sequence[WebElement]:
-    return context.find_elements(element.by, element.value)
+    return context.find_elements(by, value)
+
+
+def _resolve_unique_locator_once(
+    context: WebDriver | WebElement,
+    by: str,
+    value: str,
+    gateway: _SessionOperationGateway,
+    *,
+    condition_deadline: float | None = None,
+) -> WebElement | None:
+    def action() -> Sequence[WebElement]:
+        return _find_elements(context, by, value)
+
+    matches = (
+        gateway.request(action)
+        if condition_deadline is None
+        else gateway.wait_request(action, condition_deadline)
+    )
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise TargetError(
+            "target_ambiguous",
+            gateway.operation_id,
+            "response_received",
+            completed_steps=gateway.completed_steps,
+        )
+    return matches[0]
 
 
 def _resolve_unique_once(
@@ -83,22 +117,15 @@ def _resolve_unique_once(
     parent: WebDriver | WebElement = driver
     target: WebElement | None = None
     for locator in _locator_chain(element):
-        action = partial(_find_elements, parent, locator)
-        matches = (
-            gateway.request(action)
-            if condition_deadline is None
-            else gateway.wait_request(action, condition_deadline)
+        target = _resolve_unique_locator_once(
+            parent,
+            locator.by,
+            locator.value,
+            gateway,
+            condition_deadline=condition_deadline,
         )
-        if not matches:
+        if target is None:
             return None
-        if len(matches) != 1:
-            raise TargetError(
-                "target_ambiguous",
-                gateway.operation_id,
-                "response_received",
-                completed_steps=gateway.completed_steps,
-            )
-        target = matches[0]
         parent = target
     return target
 
@@ -117,36 +144,136 @@ def _wait_bool(
     return gateway.wait_request(checked, condition_deadline)
 
 
+def _read_displayed_once(
+    element: WebElement, gateway: _SessionOperationGateway
+) -> bool:
+    def checked() -> bool:
+        result = element.is_displayed()
+        if type(result) is not bool:
+            raise _InvalidTargetState
+        return result
+
+    return gateway.request(checked)
+
+
+def _wait_for_targets(
+    resolvers: tuple[tuple[Callable[[], WebElement | None], str], ...],
+    gateway: _SessionOperationGateway,
+    condition_deadline: float,
+    *,
+    require_enabled: bool,
+    prepare: Callable[[tuple[WebElement, ...]], _Prepared],
+) -> _Prepared:
+    while True:
+        round_started = time.monotonic()
+        gateway.wait_checkpoint(condition_deadline)
+        try:
+            resolved: list[WebElement] = []
+            ready = True
+            for resolve, _ in resolvers:
+                target = resolve()
+                if target is None or not _wait_bool(
+                    target.is_displayed, gateway, condition_deadline
+                ):
+                    ready = False
+                    break
+                if require_enabled and not _wait_bool(
+                    target.is_enabled, gateway, condition_deadline
+                ):
+                    ready = False
+                    break
+                resolved.append(target)
+            if ready:
+                result = prepare(tuple(resolved))
+                for _, role in resolvers:
+                    gateway.complete(f"{role}_resolved")
+                    gateway.complete(f"{role}_displayed")
+                    if require_enabled:
+                        gateway.complete(f"{role}_enabled")
+                return result
+        except _PreActionStale:
+            pass
+        gateway.wait_until(
+            round_started + _READY_POLL_INTERVAL_SECONDS, condition_deadline
+        )
+
+
+def _wait_for_displayed_elements(
+    driver: WebDriver,
+    elements: tuple[tuple[Element, str], ...],
+    gateway: _SessionOperationGateway,
+    condition_deadline: float,
+    *,
+    prepare: Callable[[tuple[WebElement, ...]], _Prepared],
+) -> _Prepared:
+    def resolver_for(element: Element) -> Callable[[], WebElement | None]:
+        def resolve() -> WebElement | None:
+            return _resolve_unique_once(
+                driver,
+                element,
+                gateway,
+                condition_deadline=condition_deadline,
+            )
+
+        return resolve
+
+    resolvers = tuple((resolver_for(element), role) for element, role in elements)
+    return _wait_for_targets(
+        resolvers,
+        gateway,
+        condition_deadline,
+        require_enabled=False,
+        prepare=prepare,
+    )
+
+
+def _wait_for_displayed_locator(
+    driver: WebDriver,
+    by: str,
+    value: str,
+    role: str,
+    gateway: _SessionOperationGateway,
+    condition_deadline: float,
+) -> WebElement:
+    def resolve() -> WebElement | None:
+        return _resolve_unique_locator_once(
+            driver,
+            by,
+            value,
+            gateway,
+            condition_deadline=condition_deadline,
+        )
+
+    return _wait_for_targets(
+        ((resolve, role),),
+        gateway,
+        condition_deadline,
+        require_enabled=False,
+        prepare=lambda resolved: resolved[0],
+    )
+
+
 def _wait_for_ready_element(
     driver: WebDriver,
     element: Element,
     gateway: _SessionOperationGateway,
     condition_deadline: float,
 ) -> WebElement:
-    while True:
-        round_started = time.monotonic()
-        gateway.wait_checkpoint(condition_deadline)
-        try:
-            target = _resolve_unique_once(
-                driver,
-                element,
-                gateway,
-                condition_deadline=condition_deadline,
-            )
-            if (
-                target is not None
-                and _wait_bool(target.is_displayed, gateway, condition_deadline)
-                and _wait_bool(target.is_enabled, gateway, condition_deadline)
-            ):
-                gateway.complete("target_resolved")
-                gateway.complete("target_displayed")
-                gateway.complete("target_enabled")
-                return target
-        except _PreActionStale:
-            pass
-        gateway.wait_until(
-            round_started + _READY_POLL_INTERVAL_SECONDS, condition_deadline
+    def resolve() -> WebElement | None:
+        return _resolve_unique_once(
+            driver,
+            element,
+            gateway,
+            condition_deadline=condition_deadline,
         )
+
+    return _wait_for_targets(
+        ((resolve, "target"),),
+        gateway,
+        condition_deadline,
+        require_enabled=True,
+        prepare=lambda resolved: resolved[0],
+    )
 
 
 def _resolve_required_once(
@@ -211,12 +338,14 @@ def _restore_setting(
 
 def _with_raw_id_guard(
     driver: WebDriver,
-    element: Element,
+    elements: tuple[Element, ...],
     gateway: _SessionOperationGateway,
     action: Callable[[], _Result],
 ) -> _Result:
-    """Hold raw-ID autocompletion semantics across one complete Session operation."""
-    if not any(locator.raw_id for locator in _locator_chain(element)):
+    """Hold raw-ID semantics across every Element chain in one operation."""
+    if not any(
+        locator.raw_id for element in elements for locator in _locator_chain(element)
+    ):
         return action()
 
     changed = False

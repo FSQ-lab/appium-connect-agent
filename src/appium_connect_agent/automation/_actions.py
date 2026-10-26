@@ -91,4 +91,4 @@ def _perform_action(
         )
         gateway.complete("action_completed")
 
-    _with_raw_id_guard(driver, element, gateway, guarded_action)
+    _with_raw_id_guard(driver, (element,), gateway, guarded_action)

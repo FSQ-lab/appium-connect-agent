@@ -55,6 +55,7 @@ class ActionProtocolService:
             "allowInvisibleElements": False,
             "disableIdLocatorAutocompletion": False,
             "enableMultiWindows": True,
+            "mapTestTagToResourceId": False,
             "snapshotMaxDepth": 70,
         }
         self._lock = threading.Lock()
@@ -149,12 +150,16 @@ class ActionProtocolService:
         if path.endswith("/appium/settings"):
             return f"settings:{request.method.lower()}"
         if request.method == "POST" and path.endswith("/execute/sync"):
-            if (
-                request.body is not None
-                and request.body.get("script") == "mobile: replaceElementValue"
-            ):
-                return "replace"
-            return "action"
+            script = None if request.body is None else request.body.get("script")
+            if not isinstance(script, str):
+                return "action"
+            return {
+                "mobile: replaceElementValue": "replace",
+                "mobile: swipeGesture": "swipe",
+                "mobile: scrollGesture": "scroll_gesture",
+                "mobile: scroll": "scroll",
+                "mobile: dragGesture": "drag",
+            }.get(script, "action")
         if request.method == "POST" and path.endswith("/elements"):
             return "find"
         if request.method == "POST" and path.endswith("/value"):
@@ -165,6 +170,8 @@ class ActionProtocolService:
             return "displayed"
         if path.endswith("/enabled"):
             return "enabled"
+        if path.endswith("/rect"):
+            return "rect"
         if "/attribute/" in path or path.endswith("/text"):
             return "attribute"
         return "unknown"
@@ -188,6 +195,9 @@ class ActionProtocolService:
         if kind in {
             "quit",
             "action",
+            "swipe",
+            "scroll",
+            "drag",
             "send",
             "clear",
             "replace",
@@ -199,6 +209,8 @@ class ActionProtocolService:
                 assert isinstance(update, dict)
                 self.settings.update(update)
             return {"value": None}
+        if kind == "scroll_gesture":
+            return {"value": True}
         if kind == "settings:get":
             return {"value": dict(self.settings)}
         if kind == "find":
@@ -214,6 +226,13 @@ class ActionProtocolService:
         element_id = unquote(request.path.split("/element/", 1)[1].split("/", 1)[0])
         if kind in {"displayed", "enabled"}:
             return {"value": self.states.get((element_id, kind), True)}
+        if kind == "rect":
+            return {
+                "value": self.states.get(
+                    (element_id, "rect"),
+                    {"x": 10, "y": 20, "width": 30, "height": 40},
+                )
+            }
         if kind == "attribute":
             name = unquote(request.path.rsplit("/", 1)[1])
             return {"value": self.states.get((element_id, name))}
@@ -289,6 +308,16 @@ def session_for(
 
 def w3c_error(message: str = "failed") -> dict[str, object]:
     return {"value": {"error": "unknown error", "message": message, "stacktrace": ""}}
+
+
+def no_such_error() -> dict[str, object]:
+    return {
+        "value": {
+            "error": "no such element",
+            "message": "element was not found",
+            "stacktrace": "",
+        }
+    }
 
 
 def stale_error() -> dict[str, object]:
