@@ -22,12 +22,12 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现及明确 Session 生命周期；自管服务、组件生命周期与 Automation 设备动作/观测仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 Android Native 结构观测与 Element 接缝；自管服务、组件生命周期与 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
-- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8 与 selenium==4.51.0。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
+- 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8、selenium==4.51.0 与 defusedxml==0.7.1。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及其传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi；defusedxml 仅用于 Automation AIF-03 page-source XML 安全解析。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
 - Runtime、Contracts、Configuration 及 Automation 的当前公开契约由对应模块 SPEC 维护；Integrations 仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
@@ -41,7 +41,7 @@
 ## Tooling and Verification Constraints
 
 - 使用 `pyproject.toml` 统一项目元数据、构建后端、依赖组和质量工具配置；构建后端为带兼容版本范围的 `uv_build`。
-- 使用 uv 管理环境和依赖，`uv.lock` 纳入版本控制；直接运行依赖与上文一致。pytest、Ruff、mypy 和 import-linter 放入单一默认 `dev` 组，`uv sync --locked` 应能从全新环境安装所需运行及开发依赖。
+- 使用 uv 管理环境和依赖，`uv.lock` 纳入版本控制；直接运行依赖与上文一致。pytest、Ruff、mypy、import-linter 和 `types-defusedxml==0.7.0.20260504` 放入单一默认 `dev` 组；类型包仅为 AIF-03 使用的 defusedxml 公开入口提供 strict mypy 类型。`uv sync --locked` 应能从全新环境安装所需运行及开发依赖。
 - pytest 从 `tests/` 收集测试，使用已安装包，不注入源码搜索路径；初始测试只验证包可导入。默认测试不得隐式要求 Appium 服务或设备。
 - Ruff 使用 Python 3.11 目标、88 字符行宽、四空格缩进和双引号，统一格式化与 lint；mypy 对源码和测试采用 strict 基线，不全局忽略缺失类型。
 - 基础验证入口为 `uv sync --locked`、`uv run ruff format --check .`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest` 和 `uv build`；构建产物还须在隔离环境安装并验证导入及 `py.typed`。
@@ -132,3 +132,11 @@
 - 完整同版本组合若仍带正常失败终态记录，须通过公开CLI完整复查后原子更新为complete并返回reused；成功继续driver后同样完整复查、记录complete并返回installed。重复调用保持完整复用，不自动下载或覆盖组件。
 - cleanup_pending、recovery_required、截断/非法记录、归属或空闲证据不足仍保持阻断；空闲锁、旧PID/PGID、目录内容或组件看似完整不能单独清除崩溃遗留。03B不跨进程杀旧进程、不自动删除记录、不修复损坏或切换版本。
 - 复用03A已批准的标准库、node-semver和固定公开npm/Appium CLI，无新增产品依赖。预算、进程组、npm网络配置、错误身份、有界证据及sharp warning保持；不新增平台、服务、设备或Session行为。
+
+## Automation Structure Observation
+
+- Automation AIF-03 延续 macOS 宿主 / Android / UiAutomator2 组合，在既有明确 Session 上增加惰性 Element、范围结构观测、唯一控件属性读取和局部原始结构依据；不交付点击/输入等动作、截图/evidence/图像识别、WebView/DOM/CSS、分页、游标或跨调用元素引用。
+- 产品直接运行依赖新增 `defusedxml==0.7.1`，仅用于安全解析 AIF-03 page-source XML；默认开发组新增 `types-defusedxml==0.7.0.20260504`，仅为该公开入口提供 strict mypy 类型。两者不扩大 Runtime、Contracts 或其他模块用途。
+- AIF-03 复用 `Appium-Python-Client==6.0.8`、`selenium==4.51.0`、Runtime `OperationControl` 和现有 Session 生命周期；不引入新的模块依赖方向，Runtime 与 Contracts 本轮 no-delta。
+- 所有公开观测结果为 Automation 拥有的不可变纯值，并能序列化为最多 65,536 UTF-8 bytes 的 schema=1 规范 JSON；原始 page source 另受 4 MiB、20,000 节点、128 深度及逐节点资源限制。TreeNode 分别陈述可见性和相对视口位置；page-source 中语法合法但坐标反向的 bounds 不伪造几何，记为 unknown，并仅在坐标证据充分时陈述 outside 方向。完整范围超限时只允许收敛到当前可见、未知、视口外节点及必要祖先；仍超限则明确失败，不截断文字、丢尾、分页或游标。Automation 不返回建议手势、导航要求、直接操作许可或自动滑动，由 LLM 根据事实决定后续动作。
+- 契约确认不表示真实页面、AIF-03 feature、Automation 模块或当前平台完整链路已经验收；详细 Interface、错误、Settings 恢复、XML 安全和验证义务由 Automation 模块 SPEC 定义。

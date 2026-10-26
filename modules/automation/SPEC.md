@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现及 AIF-02 明确 Session 生命周期；设备动作、观测能力及其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 AIF-03 Android Native 结构观测与 Element 接缝；设备动作及其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现与明确 Session 生命周期契约已确认，实际实现与验证以交付证据为准；设备动作与观测尚未实现。
+只读设备发现、明确 Session 生命周期及结构观测契约已确认，实际实现与验证以交付证据为准；设备动作尚未实现。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -107,3 +107,50 @@
 - 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/closing/closed、同 Session 立即忙、closed quit 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
 - 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 和专用 Android 设备，覆盖已安装包与本地 APK、500 秒协商、多设备独立 Session 和分别 quit；不得执行界面动作。没有服务、设备或 APK 时须明确报告缺口，模拟通过不代表真实 Session 链路通过。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
+
+## AIF-03 Structure Observation
+
+### Python Architecture And Dependencies
+
+- AIF-03 继续由 `appium_connect_agent.automation` 拥有，只依赖既有 Runtime `OperationControl`、Appium-Python-Client 6.0.8、Selenium 4.51.0 和 Python 3.11 能力；新增运行依赖 `defusedxml==0.7.1` 仅用于安全解析 page-source XML，新增开发依赖 `types-defusedxml==0.7.0.20260504` 仅用于 strict mypy。Runtime 与 Contracts 不新增类型或反向依赖。
+- 目标组合固定为 macOS 宿主 / Android / UiAutomator2 Driver 8.7.0 / Appium Server 3.x。实际 Server patch、driver 解析的 device-server 版本、CPython/Expat 和所用 wheel 必须在实现资格验证中记录；不符合已确认公开行为时停止，不以私有 API、自研 XML parser 或替换依赖兜底。
+- Session 隐藏 WebDriver、Settings transaction、唯一 resolver、request gateway、XML parser 和 canonical encoder；Element 与所有观测值属于 Automation。不得返回或缓存裸 WebElement、elementId、driver、XML 节点、跨调用 snapshot ref 或可用于后续设备命令的节点引用。
+
+### Public Interface And Element Values
+
+- `Session.element(by: str, value: str, *, parent: Element | None = None, package: str | None = None, raw_id: bool = False) -> Element` 是零 I/O 纯值工厂；成功或失败均不生成 operation_id，不取得 Session gate。`Element` 为绑定创建 Session 的不可变惰性定位描述，保存 `by/value/package/raw_id/parent`；实际使用时每次重新定位。
+- `by` 只允许 ID、accessibility id 和 XPath 的 Appium/Selenium 实际字符串；value 为 1–4,096 个 Unicode code points 且不含 NUL。parent 必须属于同一 Session，链深最多 16；parent+XPath 在创建时拒绝。package 只适用于 ID，必须匹配 ASCII grammar `[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*` 且最多 255 字符。
+- 非 raw ID 只接受标准 local name `[A-Za-z_][A-Za-z0-9_]*` 或完整 `<package>:id/<local>`；短 ID 按显式 package、合法 Session target_app_id 的顺序规范化，均无来源时保留为 unresolved。其他形状须显式 `raw_id=True`；raw ID 禁止 package 和 Unicode control，不做自动补全。unresolved 短 ID 可用于官方属性查询，但不能作为本地结构范围。
+- `ElementValidationError(ValueError)` 是纯值工厂唯一受控失败，不带 operation_id/request_state；code 只取 `invalid_argument`、`unsupported_operation`、`element_session_mismatch`。Element 在观测调用中发生 owner 不匹配时改用带 operation_id 的 `InvalidRequestError/element_session_mismatch/not_sent`。
+- 同步观测入口为 `Session.observe_tree(*, parent: Element | None = None, control: OperationControl | None = None) -> TreeObservation`、`Session.inspect_element(element: Element, *, attributes: tuple[ElementAttribute, ...], control: OperationControl | None = None) -> ElementInspection` 和 `Session.inspect_structure(element: Element, *, scope: Literal["target", "declared_parent"] = "declared_parent", control: OperationControl | None = None) -> RawStructureObservation`。
+- 三种结果及其嵌套值均为 `frozen=True, slots=True` 不可变值，公开 `to_json() -> bytes`；返回的是成功前已生成和计量的同一份规范 JSON bytes，重复调用不发 I/O。共同字段含 operation_id、六位微秒 UTC `observed_at`、`ObservationScope(locator, range_locator)`、coverage、complete_for_requested_scope 和固定 `upstream_completeness="unknown"`；结构结果另含 SourceMetadata，属性结果固定 `consistency="sequential_non_atomic"`。
+
+### Observation Values And Scope
+
+- `inspect_element` 的 attributes 必须是 tuple、1–18 项、无重复且属于 `id/text/desc/type/package/enabled/focused/checkable/checked/selected/clickable/focusable/long_clickable/password/scrollable/displayed/bounds/window_id`。结果保持请求顺序；checked 依赖 checkable，已知 false 时为 not_applicable。属性多命令不是原子快照，不返回部分成功值。
+- 属性和结构字段区分 `value`、`missing`、`unknown`、`not_applicable`；合法 `""`、0 和 false 均保持 value。布尔值只接受上游 true/false 语义。`inspect_element` 的 bounds 必须是四个有限整数且宽高非负，非法 rect 明确失败。page-source TreeNode 的 bounds 若语法不是四整数、超出资源限制或无法解析仍为 `source_invalid`；若语法合法但 right<left 或 bottom<top，则不交换、裁剪或推测坐标，记为 `bounds.state="unknown"`，RawStructure 继续保留上游原字符串。
+- `TreeObservation` 保留 Appium hierarchy 的窗口/父子/sibling 顺序、全文、定位属性、必要状态和几何；不合并文本或节点。`visibility` 只取 `visible`、`partially_visible`、`not_visible`、`unknown`，`viewport_relation` 独立只取 `inside`、`intersects`、`outside_left`、`outside_right`、`outside_above`、`outside_below`、`unknown`。displayed=false 仍为 not_visible；只有坐标和 Viewport 证据充分时陈述相对方向，冲突时 unknown。固定 device-server 10.6.6 在 hierarchy 根写入 current display 尺寸，并在 Android API 30+ 将 enableMultiWindows 的窗口根过滤到 currentDisplayId，因此同一 source 的多 window roots 共用该 Viewport；Viewport 缺失、非法或非正时 relation 才保持 unknown。window-id 可缺失，多窗口不得只保留活动或首个窗口。Automation 只返回事实，不输出 `requires_navigation`、`suggested_gesture`、`direct_action_allowed` 或自动动作。
+- `RawStructureObservation` 保留 tag、parser 属性顺序、空字符串和父子层级；`target_path` 仅在本返回文档内按 children index 指向目标。原始指 XML tag/attribute/hierarchy 语义，不承诺 declaration、缩进、引号、转义词法或属性词法顺序逐字还原。
+- 公开 page source 无 elementId 接缝。局部范围链只支持完整/已规范化 ID、raw ID 或 accessibility id 的精确 XML 匹配；任一 XPath 或 unresolved 短 ID 在 source/Settings 请求前以 `structure_scope_unavailable/not_sent` 拒绝。每层在上一唯一范围的全部后代中查找，0/多匹配分别为 target_not_found/target_ambiguous。
+- `inspect_structure(scope="target")` 返回目标子树；`declared_parent` 在有声明 parent 时返回该 parent 子树并以 target_path 标出目标，无声明 parent 时等同 target。不猜 Android 实际父节点，不用 XPath `..`。
+
+### Settings, XML And Size Boundaries
+
+- 结构观测在同一 Session gate 内读取 Settings，要求 `enableMultiWindows` 为实际 true，并读取 `allowInvisibleElements` 与可用的 `snapshotMaxDepth`；必要时临时设置 `allowInvisibleElements=true`，取得一次 page source 后在安全路径恢复原值。raw ID 官方查询同样在 gate 内必要时临时设置 `disableIdLocatorAutocompletion=true` 并恢复；guard 合并设置、错误和清理规则，不永久改变 Session 定位语义。
+- XML 只用 `defusedxml.ElementTree.fromstring` 等价公开入口并显式禁止 DTD、entity 和 external resource；取得完整 Python str 后先严格 UTF-8 计量。上限为原始 XML 4,194,304 bytes、20,000 节点、深度 128、每节点 64 属性、tag/属性名 256 code points、单属性值 1,048,576 UTF-8 bytes；恰好上限允许，超限不返回部分树。解析后使用显式 stack 遍历，解析前后检查取消，不宣称同步 parser 可被即时抢占。
+- schema=1 使用 `json.dumps(..., ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True).encode("utf-8", errors="strict")` 的等价规范编码；计量对象是包含 envelope、scope、状态和 payload 的完整项目文档，最大 65,536 bytes，`to_json()` 必须与计量 bytes 相同。
+- 完整请求范围超限后，tree 只保留 visible、partially_visible、unknown 以及 `viewport_relation` 为 outside_* 的节点和必要祖先；包含视口外节点时 coverage 为 `visible_with_ancestors_and_offscreen`，否则为 `visible_with_ancestors`。structure 还无条件保留目标及其完整路径，过滤后重算 target_path。保留 sibling/父子和全部节点原值，并对所有实际窗口取并集；仍超限或单节点、祖先链、可见/视口外兄弟、多窗口整体超限时 `observation_too_large`。禁止截断字段、前 N、丢窗口、提升孙节点、分页、游标或跨页遍历。inspect_element 不做可见回退。
+
+### Resolution, Errors And Lifecycle
+
+- 唯一 resolver 从根沿 parent 链逐层调用公开 `find_elements`；父唯一后调用临时父 WebElement 的 `find_elements`。每层 0/多匹配分别失败，绝不使用选择第一个的 `find_element`；临时 WebElement 仅存活于当前调用。AIF-03 不等待、轮询或自动重试。
+- 三个 I/O 入口按纯值校验→非阻塞 Session gate→Session/Runtime connection 状态→取消优先于 deadline→外部请求的顺序执行。纯值合法的重叠操作立即 `session_busy/not_sent`，不排队或打断；所有请求、解析、JSON 计量、必要恢复和本地收尾共用一个 OperationControl 总预算及明确检查点。
+- 新增 `TargetError(AutomationError)` 与 `ExecutionUnknownError(AutomationError)`。新增稳定 code：`element_session_mismatch`、`structure_scope_unavailable`、`target_not_found`、`target_ambiguous`、`source_settings_invalid`、`source_forbidden_xml`、`source_invalid`、`source_too_large`、`source_resource_limit`、`observation_too_large`、`execution_unknown`；沿用既有 invalid/session/busy/cancel/timeout/command/cleanup code 和 request_state 语义。
+- 任何 AIF-03 Appium 请求 response_unknown，或 Settings 恢复无法证明终态时，Session 转 uncertain；不得发送可能与未知请求重叠的 restore/DELETE。同步请求返回本地后，仍在 gate 内关闭本地 Appium client/连接池并记录 cleanup_errors，保留 device/systemPort 占用；随后只允许 session_info。有效命令错误、XML/投影错误或已安全恢复后的超限不使 active Session uncertain。
+- `control=None` 不增加 Automation 总预算；显式 control 从公共调用纯值检查前计时。同步 Appium 请求和 XML parser 不能被 Event 即时抢占；成功响应事实及必要 Settings 恢复优先，清理可超过业务 deadline。主错误保持，清理错误有序附加；未知程序缺陷不得宽泛包装。
+
+### Verification Scope
+
+- 受控验证必须使用锁定真实 Appium/Selenium/defusedxml 客户端与临时 HTTP 协议服务，覆盖 Settings/source、根/子 find_elements、属性/text/rect、有效错误、慢响应、断连、响应未知和连接池关闭；不得只 mock WebDriver 成功。
+- 必须覆盖 Element grammar/owner/depth/raw ID、逐层唯一性、属性状态、三种完整 schema、XML 安全与全部资源 ±1 边界、每种结果 65,536/65,537、full→visible、不可见 structure 目标、多窗口、Settings 恢复、gate 优先级、取消/预算、uncertain 本地收尾、无缓存资源及 AIF-01/AIF-02 回归。空间事实须覆盖 inside/intersects/outside 四方向/unknown、page-source 反向 bounds→unknown、inspect_element 非法 rect 仍失败、offscreen fallback/coverage 与仍超限；并通过 strict mypy、Ruff、import-linter、pytest、build 和发行物检查。
+- 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 与专用 Android 设备或已启动模拟器，覆盖普通 View、适用 Compose/自定义控件、多窗口/overlay、不可见节点、深层/长文本、局部范围、真实 4 MiB/64 KiB 边界和 Session 隔离；不执行 AIF-04 动作。没有相应资源时必须报告 `device-validation-blocked`，受控测试通过不等于 AIF-03 Done、Automation 模块完成或真实链路验收。

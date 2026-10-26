@@ -7,10 +7,11 @@ import os
 import stat
 import time
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Never, TypeAlias, cast
+from typing import Any, Literal, Never, TypeAlias, TypeVar, cast
 from uuid import uuid4
 
 from appium import webdriver
@@ -19,17 +20,33 @@ from selenium.common.exceptions import SessionNotCreatedException
 
 from appium_connect_agent.runtime import OperationControl, RuntimeConnection
 
+from ._element import Element, _make_element
 from ._models import (
+    AutomationError,
     CommandError,
+    ElementAttribute,
+    ElementInspection,
+    ExecutionUnknownError,
     InvalidRequestError,
     InvalidSessionStateError,
     OperationCancelledError,
     OperationTimeoutError,
+    RawStructureObservation,
     RequestState,
     ResourceStateError,
     SessionBusyError,
     SessionInfo,
     SessionState,
+    TreeObservation,
+)
+from ._observation import (
+    _inspect_element,
+    _inspect_structure,
+    _observe_tree,
+    _validate_attributes,
+    _validate_owner,
+    _validate_raw_chain,
+    _validate_tree_parent,
 )
 from ._session_client import (
     _CreateErrorHandler,
@@ -48,6 +65,7 @@ from ._session_coordination import (
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
+_Result = TypeVar("_Result")
 _ALLOWED_CAPABILITIES = frozenset({"appium:deviceName", "appium:platformVersion"})
 
 
@@ -260,6 +278,134 @@ class _SessionWebDriver(webdriver.Remote):
         self.error_handler = _CreateErrorHandler(connection)
 
 
+class _ObservationGateway:
+    def __init__(
+        self,
+        session: Session,
+        operation_id: str,
+        control: OperationControl | None,
+        deadline: float | None,
+    ) -> None:
+        self._session = session
+        self.operation_id = operation_id
+        self._control = control
+        self._deadline = deadline
+        self._completed: list[str] = []
+        self.observed_at: datetime | None = None
+
+    @property
+    def completed_steps(self) -> tuple[str, ...]:
+        return tuple(self._completed)
+
+    @property
+    def can_send(self) -> bool:
+        with self._session._state_lock:
+            return self._session._state == "active"
+
+    def complete(self, step: str) -> None:
+        if step not in self._completed:
+            self._completed.append(step)
+
+    def checkpoint(self, *, response_received: bool = False) -> None:
+        try:
+            _checkpoint(self._control, self._deadline, self.operation_id)
+        except (OperationCancelledError, OperationTimeoutError) as error:
+            error.request_state = (
+                "response_received" if response_received else "not_sent"
+            )
+            error.completed_steps = self.completed_steps
+            raise
+
+    def abandon(self) -> tuple[BaseException, ...]:
+        self._session._set_state("uncertain")
+        return _close_client(self._session._client)
+
+    def failure(
+        self,
+        error_type: type[AutomationError],
+        code: str,
+        state: RequestState,
+        cleanup_errors: tuple[BaseException, ...] = (),
+    ) -> AutomationError:
+        return error_type(
+            code,
+            self.operation_id,
+            state,
+            completed_steps=self.completed_steps,
+            cleanup_errors=cleanup_errors,
+        )
+
+    def request(
+        self,
+        action: Callable[[], _Result],
+        step: str | None = None,
+        *,
+        cleanup: bool = False,
+    ) -> _Result:
+        if not cleanup:
+            self.checkpoint()
+        client = self._session._client
+        client.prepare_request(
+            None if cleanup else self._control,
+            None if cleanup else self._deadline,
+        )
+        try:
+            result = action()
+        except _RequestCancelled as cause:
+            raise self.failure(
+                OperationCancelledError, "operation_cancelled", "not_sent"
+            ) from cause
+        except _RequestTimedOut as cause:
+            raise self.failure(
+                OperationTimeoutError, "operation_timeout", "not_sent"
+            ) from cause
+        except Exception as cause:
+            if client.response_received:
+                raise self.failure(
+                    CommandError, "command_failed", "response_received"
+                ) from cause
+            if not client.request_started:
+                raise
+            code = "execution_unknown"
+            error_type: type[AutomationError] = ExecutionUnknownError
+            if (
+                not cleanup
+                and self._control is not None
+                and self._control.cancellation is not None
+                and self._control.cancellation.is_set()
+            ):
+                error_type, code = OperationCancelledError, "operation_cancelled"
+            elif (
+                not cleanup
+                and self._deadline is not None
+                and time.monotonic() >= self._deadline
+            ):
+                error_type, code = OperationTimeoutError, "operation_timeout"
+            raise self.failure(
+                error_type, code, "response_unknown", self.abandon()
+            ) from cause
+        except BaseException as cause:
+            if client.request_started and not client.response_received:
+                cleanup_errors = self.abandon()
+                if cleanup_errors:
+                    cause.__dict__["automation_cleanup_errors"] = cleanup_errors
+            raise
+        if not client.response_received:
+            raise self.failure(
+                ExecutionUnknownError,
+                "execution_unknown",
+                "response_unknown",
+                self.abandon(),
+            )
+        if not cleanup:
+            self.observed_at = datetime.now(UTC)
+        if step is not None:
+            self.complete(step)
+        if not cleanup:
+            self.checkpoint(response_received=True)
+        return result
+
+
 class Session:
     """An explicit Appium Session with local lifecycle observation only."""
 
@@ -326,6 +472,111 @@ class Session:
                 state=self._state,
                 busy=self._operation_gate.locked(),
             )
+
+    def element(
+        self,
+        by: str,
+        value: str,
+        *,
+        parent: Element | None = None,
+        package: str | None = None,
+        raw_id: bool = False,
+    ) -> Element:
+        """Create a Session-bound locator without performing I/O."""
+        return _make_element(
+            self,
+            self._target_app_id,
+            by,
+            value,
+            parent=parent,
+            package=package,
+            raw_id=raw_id,
+        )
+
+    def _run_observation(
+        self,
+        operation_id: str,
+        control: OperationControl | None,
+        deadline: float | None,
+        action: Callable[[webdriver.Remote, _ObservationGateway], _Result],
+    ) -> _Result:
+        if not self._operation_gate.acquire(blocking=False):
+            raise SessionBusyError("session_busy", operation_id, "not_sent")
+        try:
+            with self._state_lock:
+                state = self._state
+            if state != "active":
+                code = "session_closed" if state == "closed" else "session_invalid"
+                raise InvalidSessionStateError(code, operation_id, "not_sent")
+            self._connection_is_active(operation_id)
+            _checkpoint(control, deadline, operation_id)
+            driver = self._driver
+            if driver is None:
+                raise RuntimeError("active Session has no Appium client")
+            return action(
+                driver, _ObservationGateway(self, operation_id, control, deadline)
+            )
+        finally:
+            self._operation_gate.release()
+
+    def observe_tree(
+        self,
+        *,
+        parent: Element | None = None,
+        control: OperationControl | None = None,
+    ) -> TreeObservation:
+        operation_id, control, deadline = _new_operation(control)
+        valid_parent = (
+            None
+            if parent is None
+            else _validate_tree_parent(parent, self, operation_id)
+        )
+        return self._run_observation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
+        )
+
+    def inspect_structure(
+        self,
+        element: Element,
+        *,
+        scope: Literal["target", "declared_parent"] = "declared_parent",
+        control: OperationControl | None = None,
+    ) -> RawStructureObservation:
+        operation_id, control, deadline = _new_operation(control)
+        if scope not in ("target", "declared_parent"):
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        valid_element = _validate_tree_parent(element, self, operation_id)
+        return self._run_observation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _inspect_structure(
+                driver, valid_element, scope, gateway
+            ),
+        )
+
+    def inspect_element(
+        self,
+        element: Element,
+        *,
+        attributes: tuple[ElementAttribute, ...],
+        control: OperationControl | None = None,
+    ) -> ElementInspection:
+        operation_id, control, deadline = _new_operation(control)
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_attributes = _validate_attributes(attributes, operation_id)
+        _validate_raw_chain(valid_element, operation_id)
+        return self._run_observation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _inspect_element(
+                driver, valid_element, valid_attributes, gateway
+            ),
+        )
 
     def _activate(self, driver: webdriver.Remote) -> None:
         response = self._client.new_session_response

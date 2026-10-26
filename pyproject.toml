@@ -15,6 +15,7 @@ dependencies = [
     "node-semver==0.9.1",
     "Appium-Python-Client==6.0.8",
     "selenium==4.51.0",
+    "defusedxml==0.7.1",
 ]
 
 [dependency-groups]
@@ -23,6 +24,7 @@ dev = [
     "mypy",
     "pytest",
     "ruff",
+    "types-defusedxml==0.7.0.20260504",
 ]
 
 [tool.uv]
