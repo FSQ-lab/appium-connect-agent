@@ -434,3 +434,41 @@
 - IME必须验证已聚焦零点击、必要一次点击、同handle复核、点击后stale/失败/取消/超时无第二次点击或IME、原raw guard恢复及完成事实；严格剪贴板解码须区分合法空与错误，不放宽合同求通过。
 - 必须通过直接消费者smoke、适用真实设备链和完整独立差异审查。此前AIF-ED安全设备授权不自动扩展至Home/其他按键、剪贴板读写、IME提交或接受弹窗权限；实施前仍需明确设备、安全页面/数据、命令及副作用授权，模拟不冒充真机。
 - AIF-07不等于面板/应用管理、Automation模块或平台完整链。专用动态App、跨feature/故障/清理/多设备与真实Agent链仍属模块最终验收；详细依据见 [AIF-07设计](../../docs/superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。
+
+## AIF-08 System Panels And Existing Tiles
+
+本节定义已确认的AIF-08契约增量，不表示实现或验收。依据为[已确认AIF-08设计](../../docs/superpowers/specs/2026-10-27-automation-aif-08-system-panels-design.md)。未列出的既有契约不变。
+
+### Dependencies And Ownership
+
+- 当前组合延续macOS / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / Client6.0.8 / Selenium4.51.0 / Python3.11；实际资格Android driver14.2.0、appium-adb16.0.5、server10.6.6、Settings8.0.9。面板官方能力最低Android8/API26，不承诺全部OEM；实施资格须核对实际身份/API。
+- 仅复用既有Device绑定、Session gateway、公开固定execute_script、Element操作和Python3.11字符串/typing；不新增依赖、通用协议/编码器、独立设备通道、client、gate或状态机。Runtime、Contracts、Configuration、Integrations及依赖/lock保持不变。
+
+### Public Interface And Values
+
+- 唯一新增同步入口为 `Device.status_bar(command: Literal["expandNotifications", "expandSettings", "collapse"], *, control: OperationControl | None = None) -> str`；接收者只允许所属Session创建的可信Device。无Session/Element同义入口、三个便利别名、额外options或全局当前设备。
+- command必须为str且精确属于三个名称；不strip/lower/强转，不接受component/subpanel/args/独立timeout、addTile/removeTile/clickTile/getStatusIcons或shell片段。非法值在任何请求前invalid_argument/not_sent；可信绑定/纯值校验及原错误优先级保持。
+- 固定调用一次 `driver.execute_script("mobile: statusBar", {"command": command})`；expandNotifications/expandSettings/collapse分别沿官方expand-notifications/expand-settings/collapse路径。不额外读取Android版本、Settings、页面或面板状态，不自动滑动、返回、等待动画、处理确认框或核验可见性。
+- 合法返回必须为str，允许空串；保留客户端交付值的空白、换行和Unicode，不追加trim/normalization。strict UTF-8最大65,536 bytes，恰好允许；非法形状（含None/bool/数字/对象/数组）、不可编码surrogate或超限均command_failed/response_received，不截断/强转/转空串。计量发生在官方client完整接收解析后，不构成网络硬内存限制。
+
+### Execution, Errors And Completion Facts
+
+- 一次公共调用只产生一次operation_id/started/deadline，可信Device/owner/身份与纯值检查后进入所属Session原非阻塞gate；Device、Element、观测及quit共享准入。非法先于busy；合法重叠session_busy/not_sent；Session/connection及取消优先deadline顺序不变。
+- 返回形状/编码/大小校验在gateway action callable内完成，统一沿原CommandError/command_failed/response_received及异常链；合法全部校验完成后仅记action_completed并返回str，不生成panel_visible/panel_collapsed/tile_toggled事实。不解析输出文本或异常message猜权限、支持性或业务成功。
+- 不额外轮询、重放或补发collapse/back/手势/DELETE。完整已知错误沿原可用路径；在途终态未知沿execution_unknown或可证明cancel/timeout分类，response_unknown使Session uncertain，关闭本地client并保留device/port占用。
+- 合法final成功优先于随后取消/预算到期；control=None沿原客户端默认、可能无有限响应上限，显式Control仅约束客户端剩余预算。不能即时抢占同步请求，也不能由客户端timeout证明上游/设备命令停止；500秒Session空闲预算不是本次动作预算。
+- 固定官方ADB层会过滤linker warning并trim stdout；项目原样返回不等于原始设备stdout逐字节无损，不提供完整stderr。上游特定连接故障可能触发重连及原命令再执行一次；本库一次请求/no-replay不保证设备端exactly-once。ADB默认单次20秒不等于含内部恢复/重试的整次动作硬上限；不新增下游timeout、root或adb_shell insecure授权要求。
+
+### Existing Tile Element Boundary
+
+- 调用方显式展开所需面板、按既有观测取得事实，再以同Session明确Element.click操作已有磁贴；三者各自生成操作起点/预算和gate准入，不是跨调用原子复合操作，不自动拼接或跨调用持锁。
+- 磁贴使用实际观测到的完整resource-id/显式package、既有accessibility id或XPath；不从Session target_app_id推断SystemUI包，不硬编码统一OEM定位或新增tile-name策略，不选首个重复标签。
+- 沿原唯一性、displayed/enabled、15秒目标等待、pre-action stale、raw-ID guard和final no-replay。缺失/歧义/不可访问沿原失败，不自动展开/换面板/滑动、坐标兜底或换clickTile。点击成功不等于设置成on/off，不自动确认、读回或回滚磁贴状态。
+- 不添加、移除、排序磁贴，不交付TileService组件、通知读取/点击/清除、面板状态查询或系统设置专用API；已有磁贴本身仍可能改变设置或打开页面，不被宣称无副作用。
+
+### Verification And Authorization Boundary
+
+- 需以固定真实Client/Selenium和既有临时HTTP服务验证三值/严格返回与边界、请求次数、共享gate/生命周期/unknown及原回归；必须有直接消费者smoke、适用三命令＋安全已有磁贴真实链与恢复证据，以及独立完整差异审查。协议/上游源码或空成功输出不能代替实际UI效果证据。
+- 真机须另明确设备/服务、通知隐私、安全磁贴及允许状态变化/恢复动作；既有设备授权不自动扩展至本feature。没有安全磁贴资源须device-validation-blocked，不缩减为只验三命令；不为验收擅自添加磁贴或改变网络/权限等未获准设置。
+- 获准测试方仅在终态已知、Session仍active时可作独立显式collapse/恢复，不属于库fallback；unknown后不使用uncertain Session补发恢复或DELETE，不保证自动恢复原面板/焦点/通知或磁贴状态。AIF-08不等于Automation模块/平台整体验收。
+

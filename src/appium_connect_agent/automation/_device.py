@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from appium_connect_agent.runtime import OperationControl
 
@@ -19,6 +19,8 @@ from ._system_actions import (
     _label,
     _press_keycode,
     _set_clipboard_text,
+    _status_bar,
+    _status_bar_command,
 )
 
 if TYPE_CHECKING:
@@ -34,6 +36,22 @@ class Device:
 
     def __init__(self) -> None:
         raise TypeError("Device objects are created by Session.device")
+
+    def status_bar(
+        self,
+        command: Literal["expandNotifications", "expandSettings", "collapse"],
+        *,
+        control: OperationControl | None = None,
+    ) -> str:
+        """Send one panel command; output does not prove panel visibility."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        command = _status_bar_command(command, operation_id)
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _status_bar(driver, gateway, command),
+        )
 
     def back(self, *, control: OperationControl | None = None) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)

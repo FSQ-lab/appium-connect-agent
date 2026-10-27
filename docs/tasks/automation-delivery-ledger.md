@@ -2,6 +2,22 @@
 
 当前进度更新：2026-10-27。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
 
+## 当前 AIF-08 进度
+
+- TaskID `AUTO-AIF08-IMPL-20261027`，平台macOS / Android Native / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。用户已确认[详细设计](../superpowers/specs/2026-10-27-automation-aif-08-system-panels-design.md)、显式spec-driven授权及独立根/Automation SPEC delta。状态：**Done（本feature限定范围）**；依据下列完整验证及独立full/pass，不推进AIF-09/10，不代表模块/平台Done。
+- 任务包与验收入口见[实施材料](automation-aif08-implementation.md)。起点master / `fd8cd0f18d4e1c00e225e43e14c0f834870e8d6a`已有14 tracked修改与10 untracked，完整132文件快照在证据根 `baseline.json` / `starting-workspace.zip`；本feature按该工作区快照计，不混前序ED/07差异。产品churn56、测试491（含服务窄改）、文档另计、移动排除0；无依赖/lock变更。
+- 新增Device.status_bar三个精确命令，严格保留string/合法空串、UTF-8最多65,536 bytes；复用原绑定/gate/预算/gateway，非法返回不转空、不补发面板或手势。官方trim/有限重试限制保留，磁贴仍为显式Element.click，不提升为UI可见或设置状态保证。
+- 直接消费者使用真实Client6.0.8/Selenium4.51.0→临时HTTP服务，观察三命令、Unicode/空输出、非法命令零请求拒绝、None返回command_failed/response_received及active可继续、SystemUI scoped tile句柄before→after重定位，最终closed/busy=false；此项不是设备证据。
+- 最终串行未过滤全量回归：**1,949 passed，689.20秒**，原始输出pytest-final.log及JUnit pytest-final.xml保留。曾有601个并行真机触发的Runtime账号锁environment_busy和1个新增gate测试路由分类错误；原始失败日志及归因/修正均保留，不改生产锁或跳过用例。集成还纠正了新增测试的0等待参数；旧测试快照已取消、不计为通过。最终测试修正后Ruff lint、代码范围format58文件、strict mypy56文件、import-linter5项均通过；wheel/sdist构建及源码一致性通过。初轮质量链在两文件format处停止，只格式化本批文件后通过。
+- wheel/sdist均在全新CPython3.11.16 venv中按元数据及锁定运行依赖约束安装，uv pip check、仓库外python -I导入、py.typed及Device.status_bar/无Session同义入口通过。首次默认镜像缺少固定Client版本，使用项目已有批准镜像重试成功；没有换版或依赖变更。32份wheel源码/类型标记逐字节与本批源码一致；隔离venv已移除。
+- 用户在问题`aif08_native`选择“授权面板＋安全手电筒磁贴验收”，明确同Pixel6、临时固定服务/预装helper、必要Session临时策略及恢复、本地通知截图/结构隐私、仅已有手电筒及恢复；没有通知点击/清除、网络/其他设置磁贴或helper重装授权，也未执行。
+- 真机`AUTO-AIF08-NATIVE-20261027`：Pixel6/Android17 API37、CPython3.11.16、Client6.0.8/Selenium4.51.0、完整隔离Appium3.7.0/UiA8.7.0（peer亦3.7.0）、Android driver14.2.0/ADB16.0.5/server10.6.6/Settings8.0.9。40对SDK请求/响应均HTTP200；三命令各一次且返回合法空串，稳定截图分别确认通知栏、快捷设置及收起返回Launcher，不将空输出冒充UI证据。
+- 已有手电筒通过实际SystemUI结构/accessibility id=Flashlight唯一、显示/启用核对，原独立FlashlightController与Tile布尔状态均false。Element点击一次后独立controller=true及截图高亮，再以新的显式Element操作恢复false并核对；恰好两次clickGesture，不动Wi-Fi/飞行模式等其他磁贴，不使用clickTile/component。
+- 整体通知树出现一次observation_too_large/response_received，保留原上限、实际settings_restored且Session继续active。随后独立显式命令展开快捷设置，使用截图确认的明确磁贴及局部结构核对；没有库内fallback或重放。Session最终closed/busy=false，hidden API/默认及完整启用IME/三个helper版本安装时间与基线逐项一致，无需手工IME/策略恢复；无ADB forward/UIA进程。
+- 原PID31900/4723的3.8.0服务保留；owned consumer正常exit0、临时4731服务停止、临时安装目录及隔离venv移除。消费者源码改存txt以保留证据，不遗留可执行harness。未提交/推送。
+- 证据根：`/var/folders/xg/5v7ktvdx04vct4g1cjpcb9880000gn/T/aif08-implementation-7t6g_i0e`。受控入口`direct-consumer-source.txt`、stdout/stderr；最终质量`final-quality-command-records.json`保留实际命令/输出，早期构建`quality-and-build-record.json`据实际bg_6完成记录（原proc已过保留期），分发`distribution-install-records.json`保留失败与成功命令输出。真机入口`native-evidence/manifest.json`及`summary.json`，35份文件，manifest SHA-256 `270e37845a6f647e6eefe2ca1aa957b93feb94638b3c1c3a52888547f5f8960e`，含consumer-source、完整wire/client/server日志、前后事实/截图/组件manifest与恢复记录；显式交互命令另存`native-interactive-commands.txt`。
+- 独立新上下文`Aif08ImplementationAudit`完成`AUTO-AIF08-IMPL-AUDIT-01` full审查，pass、无finding/阻塞，建议本feature限定验收。实际独立核对完整九路径54,881bytes/9diff增量（SHA-256 `c51d8668d3608c9deaf2f88ea9e3308b85ab03fa5ebacd94595aff06d24119ad`）、HEAD14路径/12份未跟踪补充、132文件ZIP起点、官方复用、JUnit/分发与完整真机证据。审查结果`audit/review-result.txt` SHA-256 `d7c86a102efe0b1e739899e3cab2683d59c2b2e1757af1e911a949c94185521f`；主会话核对原始工具轨迹后判定Done。本条及任务包状态为其后交付元数据，产品/测试/SPEC/设计身份不变，不将审核版hash当作最终文稿身份。
+
 ## 当前 AIF-ED / AIF-07 进度
 
 - 当前TaskID `AUTO-AIF07-IMPL-20261027`，前序为`AUTO-ED-IMPL-20261027`；平台macOS宿主 / Android Native / UiAutomator2 8.7.0，模块Automation。用户显式spec-driven授权AIF-ED后AIF-07，前序限定验收完成后再次对AIF-07设计/值域/资源上限与独立SPEC delta回复“确认”；现进入本feature限定实现，不自动扩大平台、模块或副作用范围。

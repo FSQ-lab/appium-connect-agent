@@ -64,6 +64,7 @@ class DeviceProtocolService(ActionProtocolService):
                 "mobile: setClipboard": "set_clipboard_text",
                 "mobile: acceptAlert": "accept_alert",
                 "mobile: dismissAlert": "dismiss_alert",
+                "mobile: statusBar": "status_bar",
             }
             if isinstance(script, str) and script in kinds:
                 return kinds[script]
@@ -72,7 +73,7 @@ class DeviceProtocolService(ActionProtocolService):
     def _default_payload(self, request: Request, kind: str) -> object:
         if kind == "hide_keyboard":
             return {"value": False}
-        if kind == "get_clipboard_text":
+        if kind in {"get_clipboard_text", "status_bar"}:
             return {"value": ""}
         if kind in _ACTIONS:
             return {"value": None}

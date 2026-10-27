@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from appium.webdriver.webdriver import WebDriver
 
@@ -12,6 +12,40 @@ from ._models import InvalidRequestError
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
+
+
+def _status_bar_command(
+    command: object, operation_id: str
+) -> Literal["expandNotifications", "expandSettings", "collapse"]:
+    if not isinstance(command, str):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if command == "expandNotifications":
+        return "expandNotifications"
+    if command == "expandSettings":
+        return "expandSettings"
+    if command == "collapse":
+        return "collapse"
+    raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+
+
+def _status_bar(
+    driver: WebDriver, gateway: _SessionOperationGateway, command: str
+) -> str:
+    def action() -> str:
+        result: object = driver.execute_script(
+            "mobile: statusBar", {"command": command}
+        )
+        # This is response validation, not an invalid-argument input boundary.
+        # Bound character count before allocating the strict UTF-8 encoding.
+        if not isinstance(result, str) or len(result) > 65_536:
+            raise ValueError("invalid statusBar response shape or size")
+        if len(result.encode("utf-8", errors="strict")) > 65_536:
+            raise ValueError("statusBar response exceeds UTF-8 size limit")
+        return result
+
+    result = gateway.final_action(action)
+    gateway.complete("action_completed")
+    return result
 
 
 def _integer(value: object, minimum: int, operation_id: str) -> int:

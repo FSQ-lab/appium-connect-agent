@@ -189,3 +189,15 @@
 - 系统按键只接受规定范围的整数及可选 metastate/flags；不公开长按时长、source 或 Home 字符串别名。剪贴板只支持设备端纯文本，保留空串、严格 Base64/UTF-8、限制65,536字节；标签限制1,024字节，不自动粘贴或提交。
 - 项目不追加隐藏键盘/返回/弹窗点击等兜底或重放。官方隐藏键盘内部可能使用 ESC/BACK；剪贴板/IME 内部可能切换辅助应用或输入法；空/false 结果、弹窗启发式及焦点非原子性只按官方能力解释，不承诺业务结果或无副作用回滚。
 - 本节不新增面板、应用管理、系统设置家族、其他平台或 Integrations 能力。详细签名、值域、完成事实及安全边界见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-07 条款；设计依据为 [AIF-07 详细设计](docs/superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。
+
+## Automation System Panels And Existing Tiles（AIF-08）
+
+本节定义已确认的AIF-08契约增量，不表示已实现或验收。设计依据为[已确认 AIF-08 设计](docs/superpowers/specs/2026-10-27-automation-aif-08-system-panels-design.md)。
+
+- 延续macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0与既有Client6.0.8、Selenium4.51.0、Python3.11；不新增依赖、平台或模块方向，Runtime、Contracts、Configuration、Integrations和依赖/lock不变。
+- 在绑定的Device上增加同步 `status_bar(command: Literal["expandNotifications", "expandSettings", "collapse"], *, control: OperationControl | None = None) -> str`，仅接受三个精确命令；无Session别名、component、任意shell/script或其他statusBar命令入口。
+- 固定复用官方 `mobile: statusBar`，保留客户端交付字符串及合法空串，strict UTF-8最多65,536 bytes；非法形状/编码/超限明确失败，不截断、强转或伪造成UI成功。
+- 面板命令沿唯一Session gate、一次操作起点/总预算、取消、稳定错误及unknown保留机制。本库不重放或自动collapse/back；上游ADB可能trim输出、在特定连接错误时内部重试一次，不承诺设备端exactly-once或面板已可见。
+- 已有磁贴继续使用明确Element及原click规则；展开、观测、点击为独立调用，不自动选择面板/目标或推断开关状态，不新增磁贴组件API、设置家族、通知处理或自动恢复。
+- 详细输入、输出、生命周期与授权边界见[Automation模块SPEC](modules/automation/SPEC.md)的AIF-08条款；真实面板/安全磁贴操作仍须明确授权，feature验收不等于模块/平台完整链验收。
+

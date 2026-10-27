@@ -80,6 +80,79 @@ Element、Device、Session 观测及退出共用一个准入、总预算与未�
 状态分别见 [Automation 台账](docs/tasks/automation-delivery-ledger.md)，
 既有安全文本/手势授权不会自动扩大到剪贴板、IME 提交或弹窗等副作用。
 
+### 系统面板与已有磁贴
+
+在已创建的 Android Native Session 上，面板命令使用绑定的
+`session.device.status_bar(command, *, control=None) -> str`。
+仅接受以下三个精确字符串，不转换大小写或剔除空白：
+
+| command | 意图 |
+| --- | --- |
+| `expandNotifications` | 展开通知面板 |
+| `expandSettings` | 展开快捷设置 |
+| `collapse` | 收起面板 |
+
+例如，在明确获准展开快捷设置的前提下：
+
+```python
+from appium_connect_agent.runtime import OperationControl
+
+output = session.device.status_bar(
+    "expandSettings", control=OperationControl(timeout_seconds=10)
+)
+```
+
+返回的是官方客户端交付的字符串，`""` 是合法成功输出，不是失败占位值。
+库保留该字符串的 Unicode、前后空白、换行和 NUL，不解析诊断文字来猜测
+权限或 UI 效果。返回必须可 strict UTF-8 编码且不超过 65,536 bytes；
+恰好上限允许。非字符串、孤立 surrogate 或超限会明确报告
+`CommandError / command_failed / response_received`，不强转、截断或返回部分内容。
+计量发生在客户端完整接收及 JSON 解析之后，不是网络接收的硬内存上限。
+
+成功只说明命令与返回校验完成，不证明面板可见、动画结束或某个磁贴可操作。
+官方 ADB 层可能过滤 linker warning 并 trim stdout，因此这里的“保留”不等于
+设备原始 stdout 逐字节无损，也不提供完整 stderr。固定上游在特定连接错误后
+可能重连并再次执行原命令一次：本库每次只发一个 final 请求、不自行重放，
+**不承诺设备端 exactly-once**。不因 OEM 拒绝而申请 root 或扩大 insecure 权限。
+
+已有磁贴仍然是普通 `Element`，不是新的 Tile/组件 API。展开、观测、点击是
+三个独立操作，各有准入、operation_id 与预算，不是一个原子事务。
+先显式展开，再通过既有 `observe_tree` / `Element.inspect` 获取实际定位事实；
+只有已确认实际包名、目标唯一且可显示/启用后，才显式调用 `tile.click()`。
+例如，**仅当实际观测与授权确认了这些 ID 时**，可使用这样的绑定描述：
+
+```python
+panel = session.element("id", "observed_panel_id", package="com.android.systemui")
+tile = session.element(
+    "id", "observed_tile_id", package="com.android.systemui", parent=panel
+)
+# 调用方在明确获准且已核对定位事实后，单独执行 tile.click()。
+```
+
+这些 ID 不是跨设备通用选择器；不要从 Session 的业务应用包推断 SystemUI 包。
+重复标签需显式 parent 或其他定位条件消歧，不能选首个。
+每次点击重新定位，沿用 Element 原唯一性、displayed/enabled、等待、stale 与
+raw-ID Settings guard 规则。缺失、歧义或不可访问不会自动换面板、滑动寻找、
+坐标兜底或换用 `clickTile`。点击完成不表示“设成 on/off”；如需判断效果，
+调用方必须后续独立观测，不能反复点击猜状态。
+
+面板与其他 Device、Element、Session 观测及退出共用原 Session gate。
+显式 Control 约束客户端剩余总预算；同步在途请求不能即时抢占，客户端超时
+不证明设备命令停止。`control=None` 沿原客户端默认，可能没有有限响应上限；
+Session 的 500 秒空闲超时也不是本次动作预算。
+终态未知时 Session 沿原规则变为 uncertain 并保留设备/端口占用；
+库不补发 `collapse`、back、手势或 DELETE，也不自动恢复磁贴状态。
+
+真实面板与磁贴操作需要**单独明确设备和服务授权**；此前文本/手势或其他
+Session 许可不自动覆盖它们。展开通知可能暴露通知、账号等隐私，须事前明确
+可展示范围与证据保留方式，不点击或清除通知。磁贴可能修改真实设置或打开页面，
+不能从“已有磁贴”泛化到 Wi-Fi、飞行模式、权限、录屏、付款等未获准副作用。
+安全目标、允许状态变化及恢复动作均须事先确定；不能为了验收擅自添加磁贴。
+获准的显式收起/恢复也是独立操作，只能在终态已知、Session 仍 active 时执行；
+unknown 后不得用 uncertain Session 追加恢复或退出请求。
+当前 feature/真机/模块验收状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)
+为准，空字符串和协议测试都不等于实际 UI 或 Automation 模块验收通过。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。
