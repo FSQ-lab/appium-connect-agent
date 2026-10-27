@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import math
 import threading
 import time
@@ -98,7 +97,6 @@ def assert_clean_error(
 
 
 def invoke_single(
-    session: Session,
     element: Element,
     kind: SingleGesture,
     *,
@@ -110,16 +108,14 @@ def invoke_single(
     if kind == "swipe":
         return cast(
             bool | None,
-            cast(Callable[..., object], session.swipe_gesture)(
-                element,
+            cast(Callable[..., object], element.swipe_gesture)(
                 direction=cast(Any, direction),
                 percent=percent,
                 wait_timeout_seconds=wait_timeout_seconds,
                 control=control,
             ),
         )
-    return session.scroll_gesture(
-        element,
+    return element.scroll_gesture(
         direction=cast(Any, direction),
         percent=percent,
         wait_timeout_seconds=wait_timeout_seconds,
@@ -164,16 +160,14 @@ def invoke_final(
     if kind == "swipe":
         return cast(
             bool | None,
-            cast(Callable[..., object], session.swipe_gesture)(
-                session.element("id", "target"),
+            cast(Callable[..., object], session.element("id", "target").swipe_gesture)(
                 direction="up",
                 percent=0.5,
                 control=control,
             ),
         )
     if kind == "scroll_gesture":
-        return session.scroll_gesture(
-            session.element("id", "target"),
+        return session.element("id", "target").scroll_gesture(
             direction="down",
             percent=1.5,
             control=control,
@@ -182,8 +176,7 @@ def invoke_final(
         container, target = scroll_elements(service, session)
         return cast(
             bool | None,
-            cast(Callable[..., object], session.scroll)(
-                container,
+            cast(Callable[..., object], container.scroll)(
                 target,
                 max_swipes=3,
                 control=control,
@@ -193,8 +186,7 @@ def invoke_final(
     source, destination = drag_elements(session)
     return cast(
         bool | None,
-        cast(Callable[..., object], session.drag_and_drop)(
-            source,
+        cast(Callable[..., object], source.drag_and_drop)(
             destination,
             destination_x_ratio=0.5,
             destination_y_ratio=0.5,
@@ -210,77 +202,6 @@ def final_steps(kind: FinalKind) -> tuple[str, ...]:
         "scroll": _SCROLL_STEPS,
         "drag": _DRAG_STEPS,
     }[kind]
-
-
-@pytest.mark.parametrize(
-    ("method", "names"),
-    [
-        (
-            Session.swipe_gesture,
-            (
-                "self",
-                "element",
-                "direction",
-                "percent",
-                "wait_timeout_seconds",
-                "control",
-            ),
-        ),
-        (
-            Session.scroll_gesture,
-            (
-                "self",
-                "element",
-                "direction",
-                "percent",
-                "wait_timeout_seconds",
-                "control",
-            ),
-        ),
-        (
-            Session.scroll,
-            (
-                "self",
-                "container",
-                "target",
-                "max_swipes",
-                "wait_timeout_seconds",
-                "control",
-            ),
-        ),
-        (
-            Session.drag_and_drop,
-            (
-                "self",
-                "source",
-                "destination",
-                "destination_x_ratio",
-                "destination_y_ratio",
-                "wait_timeout_seconds",
-                "control",
-            ),
-        ),
-    ],
-)
-def test_public_signatures_are_exact(
-    method: Callable[..., object], names: tuple[str, ...]
-) -> None:
-    parameters = inspect.signature(method).parameters
-    assert tuple(parameters) == names
-    first_keyword = (
-        3 if "max_swipes" in parameters or "destination_x_ratio" in parameters else 2
-    )
-    for name in names[first_keyword:]:
-        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["wait_timeout_seconds"].default == 15.0
-    assert parameters["control"].default is None
-    if "percent" in parameters:
-        assert parameters["percent"].default is inspect.Parameter.empty
-    if "max_swipes" in parameters:
-        assert parameters["max_swipes"].default is inspect.Parameter.empty
-    if "destination_x_ratio" in parameters:
-        assert parameters["destination_x_ratio"].default is inspect.Parameter.empty
-        assert parameters["destination_y_ratio"].default is inspect.Parameter.empty
 
 
 @pytest.mark.parametrize(
@@ -308,7 +229,6 @@ def test_single_gestures_use_exact_wire_and_displayed_only_precondition(
     with connected(service) as connection:
         session = session_for(service, connection, f"wire-{kind}-{direction}")
         actual = invoke_single(
-            session,
             session.element("id", "target"),
             kind,
             direction=direction,
@@ -347,7 +267,6 @@ def test_invalid_directions_are_zero_request(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             invoke_single(
-                session,
                 session.element("id", "target"),
                 kind,
                 direction=cast(Any, direction),
@@ -392,7 +311,6 @@ def test_invalid_percent_values_are_zero_request(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             invoke_single(
-                session,
                 session.element("id", "target"),
                 kind,
                 percent=cast(Any, value),
@@ -417,7 +335,6 @@ def test_binary32_positive_boundary_is_checked_without_rewriting_wire_value(
     with connected(service) as connection:
         accepted = session_for(service, connection, f"binary32-ok-{kind}")
         invoke_single(
-            accepted,
             accepted.element("id", "target"),
             kind,
             percent=minimum_binary32,
@@ -437,7 +354,6 @@ def test_binary32_positive_boundary_is_checked_without_rewriting_wire_value(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             invoke_single(
-                rejected,
                 rejected.element("id", "target"),
                 kind,
                 percent=rounds_to_zero,
@@ -464,7 +380,6 @@ def test_invalid_wait_timeout_is_zero_request(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             invoke_single(
-                session,
                 session.element("id", "target"),
                 kind,
                 wait_timeout_seconds=cast(Any, value),
@@ -503,8 +418,7 @@ def test_single_gesture_waits_for_missing_or_hidden_without_enabled_reads(
     service.queue(kind, *plans)
     with connected(service) as connection:
         session = session_for(service, connection, f"wait-visible-{kind}")
-        session.swipe_gesture(
-            session.element("id", "target"),
+        session.element("id", "target").swipe_gesture(
             direction="up",
             percent=0.5,
             wait_timeout_seconds=2,
@@ -524,8 +438,7 @@ def test_single_gesture_ambiguity_is_immediate_and_action_free(
     with connected(service) as connection:
         session = session_for(service, connection, "ambiguous")
         with pytest.raises(TargetError) as caught:
-            session.scroll_gesture(
-                session.element("id", "target"),
+            session.element("id", "target").scroll_gesture(
                 direction="down",
                 percent=1,
             )
@@ -556,7 +469,7 @@ def test_each_single_gesture_pre_action_stale_restarts_the_complete_chain(
         session = session_for(service, connection, f"stale-single-{stage}")
         root = session.element("id", "root")
         target = session.element("id", "target", parent=root)
-        session.swipe_gesture(target, direction="left", percent=0.5)
+        target.swipe_gesture(direction="left", percent=0.5)
         assert len(service.of_kind("find")) >= 3
         assert len(service.of_kind("swipe")) == 1
         assert service.operation_kinds()[-1] == "swipe"
@@ -630,8 +543,7 @@ def test_scroll_gesture_returns_exact_bool_without_automatic_continuation(
     service.queue("scroll_gesture", ResponsePlan(payload={"value": result}))
     with connected(service) as connection:
         session = session_for(service, connection, f"scroll-bool-{result}")
-        actual = session.scroll_gesture(
-            session.element("id", "target"),
+        actual = session.element("id", "target").scroll_gesture(
             direction="up",
             percent=3,
         )
@@ -696,8 +608,7 @@ def test_final_inflight_cancellation_is_unknown_and_not_replayed(
 
         def run() -> None:
             try:
-                session.drag_and_drop(
-                    source,
+                source.drag_and_drop(
                     destination,
                     destination_x_ratio=0.5,
                     destination_y_ratio=0.5,
@@ -742,8 +653,7 @@ def test_combined_raw_guard_rejects_raw_and_unresolved_across_drag_targets(
         destination = session.element("id", "short")
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=0.5,
                 destination_y_ratio=0.5,
@@ -772,8 +682,7 @@ def test_combined_raw_guard_wraps_both_drag_targets_once(
         session = session_for(service, connection, f"raw-drag-{initial}")
         source = session.element("id", source_value, raw_id=True)
         destination = session.element("id", destination_value, raw_id=True)
-        result = cast(Callable[..., object], session.drag_and_drop)(
-            source,
+        result = cast(Callable[..., object], source.drag_and_drop)(
             destination,
             destination_x_ratio=0.5,
             destination_y_ratio=0.5,
@@ -799,7 +708,7 @@ def test_raw_primary_error_survives_restore_error_and_preserves_steps(
         session = session_for(service, connection, "raw-double-error")
         target = session.element("id", "vendor/raw@target", raw_id=True)
         with pytest.raises(CommandError) as caught:
-            session.swipe_gesture(target, direction="up", percent=0.5)
+            target.swipe_gesture(direction="up", percent=0.5)
         assert_error(
             caught.value,
             CommandError,
@@ -840,7 +749,7 @@ def test_raw_success_restore_failure_retains_action_completed(
         session = session_for(service, connection, f"raw-restore-{unknown}")
         target = session.element("id", "vendor/raw@target", raw_id=True)
         with pytest.raises(expected_type) as caught:
-            session.swipe_gesture(target, direction="up", percent=0.5)
+            target.swipe_gesture(direction="up", percent=0.5)
         assert_error(
             caught.value,
             expected_type,
@@ -869,7 +778,7 @@ def test_invalid_max_swipes_is_zero_request(
         container, target = scroll_elements(service, session)
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.scroll(container, target, max_swipes=cast(Any, value))
+            container.scroll(target, max_swipes=cast(Any, value))
         assert_clean_error(
             caught.value,
             InvalidRequestError,
@@ -908,8 +817,7 @@ def test_official_scroll_exact_settings_uiautomator_wire_and_postcheck(
             target_by=target_by,
             target_value=target_value,
         )
-        result = cast(Callable[..., object], session.scroll)(
-            container,
+        result = cast(Callable[..., object], container.scroll)(
             target,
             max_swipes=max_swipes,
         )
@@ -992,7 +900,7 @@ def test_official_scroll_waits_for_missing_or_hidden_container_only(
     with connected(service) as connection:
         session = session_for(service, connection, f"scroll-container-wait-{stage}")
         container, target = scroll_elements(service, session)
-        session.scroll(container, target, max_swipes=1)
+        container.scroll(target, max_swipes=1)
         kinds = service.operation_kinds()
         assert kinds[: len(expected_prefix)] == expected_prefix
         repeated = service.of_kind(stage)
@@ -1013,7 +921,7 @@ def test_official_scroll_ambiguous_container_is_immediate_and_action_free(
             "container-two",
         ]
         with pytest.raises(TargetError) as caught:
-            session.scroll(container, target, max_swipes=1)
+            container.scroll(target, max_swipes=1)
         assert_clean_error(
             caught.value,
             TargetError,
@@ -1035,7 +943,7 @@ def test_official_scroll_pre_action_stale_restarts_container_preparation(
     with connected(service) as connection:
         session = session_for(service, connection, f"scroll-container-stale-{stage}")
         container, target = scroll_elements(service, session)
-        session.scroll(container, target, max_swipes=1)
+        container.scroll(target, max_swipes=1)
         assert len(service.of_kind("find")) >= 3
         assert len(service.of_kind("scroll")) == 1
         assert session.session_info().state == "active"
@@ -1061,7 +969,7 @@ def test_official_scroll_requires_actual_false_map_test_tag_setting(
             "unsupported_operation" if setting is True else "source_settings_invalid"
         )
         with pytest.raises(expected_type) as caught:
-            session.scroll(container, target, max_swipes=1)
+            container.scroll(target, max_swipes=1)
         assert_clean_error(
             caught.value,
             expected_type,
@@ -1084,7 +992,7 @@ def test_official_scroll_target_is_not_polled_before_the_one_final_command(
         container, target = scroll_elements(service, session)
         service.matches[("project-container", "id", _TARGET_ID)] = []
         with pytest.raises(TargetError) as caught:
-            session.scroll(container, target, max_swipes=2)
+            container.scroll(target, max_swipes=2)
         assert_clean_error(
             caught.value,
             TargetError,
@@ -1119,7 +1027,7 @@ def test_official_scroll_final_valid_errors_remain_command_errors(
         session = session_for(service, connection, f"scroll-final-{message}")
         container, target = scroll_elements(service, session)
         with pytest.raises(CommandError) as caught:
-            session.scroll(container, target, max_swipes=3)
+            container.scroll(target, max_swipes=3)
         assert_clean_error(
             caught.value,
             CommandError,
@@ -1161,7 +1069,7 @@ def test_official_scroll_postcheck_target_outcomes_preserve_action_fact(
         else:
             service.states[("target", "displayed")] = False
         with pytest.raises(TargetError) as caught:
-            session.scroll(container, target, max_swipes=2)
+            container.scroll(target, max_swipes=2)
         assert_clean_error(
             caught.value,
             TargetError,
@@ -1211,7 +1119,7 @@ def test_official_scroll_postcheck_known_read_failures_do_not_retry_or_replay(
         session = session_for(service, connection, f"scroll-post-known-{stage}")
         container, target = scroll_elements(service, session)
         with pytest.raises(CommandError) as caught:
-            session.scroll(container, target, max_swipes=2)
+            container.scroll(target, max_swipes=2)
         assert_clean_error(
             caught.value,
             CommandError,
@@ -1241,7 +1149,7 @@ def test_official_scroll_postcheck_unknown_preserves_prior_steps_and_uncertain_s
         session = session_for(service, connection, f"scroll-post-unknown-{stage}")
         container, target = scroll_elements(service, session)
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.scroll(container, target, max_swipes=2)
+            container.scroll(target, max_swipes=2)
         assert_clean_error(
             caught.value,
             ExecutionUnknownError,
@@ -1252,6 +1160,26 @@ def test_official_scroll_postcheck_unknown_preserves_prior_steps_and_uncertain_s
         assert len(service.of_kind("scroll")) == 1
         assert session.session_info().state == "uncertain"
         assert service.of_kind("quit") == []
+
+
+def test_official_scroll_rejects_foreign_target_before_any_request(
+    service: ActionProtocolService,
+) -> None:
+    with connected(service) as connection:
+        owner = session_for(service, connection, "scroll-owner")
+        other = session_for(service, connection, "scroll-other")
+        container = owner.element("id", "container")
+        foreign_container = other.element("id", "container")
+        target = other.element("id", "target", parent=foreign_container)
+        before = service.snapshot()
+        with pytest.raises(InvalidRequestError) as caught:
+            container.scroll(target, max_swipes=1)
+        assert_clean_error(
+            caught.value, InvalidRequestError, "element_session_mismatch", "not_sent"
+        )
+        assert service.snapshot() == before
+        owner.quit()
+        other.quit()
 
 
 def test_official_scroll_whitelist_rejects_unsupported_shapes_before_settings(
@@ -1279,6 +1207,12 @@ def test_official_scroll_whitelist_rejects_unsupported_shapes_before_settings(
             (
                 canonical,
                 session.element(
+                    "id", "target", parent=session.element("id", "container")
+                ),
+            ),
+            (
+                canonical,
+                session.element(
                     "id",
                     "leaf",
                     parent=session.element("id", "middle", parent=canonical),
@@ -1297,7 +1231,7 @@ def test_official_scroll_whitelist_rejects_unsupported_shapes_before_settings(
         for index, (container, target) in enumerate(cases):
             before = service.snapshot()
             with pytest.raises(InvalidRequestError) as caught:
-                session.scroll(container, target, max_swipes=1)
+                container.scroll(target, max_swipes=1)
             assert_clean_error(
                 caught.value,
                 InvalidRequestError,
@@ -1322,7 +1256,7 @@ def test_official_scroll_rejects_unresolved_ids_and_element_factory_rejects_clas
         target = session.element("id", "target", parent=unresolved_container)
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.scroll(unresolved_container, target, max_swipes=1)
+            unresolved_container.scroll(target, max_swipes=1)
         assert_clean_error(
             caught.value,
             InvalidRequestError,
@@ -1362,8 +1296,7 @@ def test_drag_uses_floor_inside_destination_and_exact_minimal_payload(
     with connected(service) as connection:
         session = session_for(service, connection, f"drag-floor-{x_ratio}-{y_ratio}")
         source, destination = drag_elements(session)
-        result = cast(Callable[..., object], session.drag_and_drop)(
-            source,
+        result = cast(Callable[..., object], source.drag_and_drop)(
             destination,
             destination_x_ratio=x_ratio,
             destination_y_ratio=y_ratio,
@@ -1437,8 +1370,7 @@ def test_drag_waits_for_each_missing_or_hidden_target_as_a_complete_round(
     with connected(service) as connection:
         session = session_for(service, connection, f"drag-wait-{mode}")
         source, destination = drag_elements(session)
-        session.drag_and_drop(
-            source,
+        source.drag_and_drop(
             destination,
             destination_x_ratio=0.5,
             destination_y_ratio=0.5,
@@ -1465,8 +1397,7 @@ def test_drag_ambiguity_for_either_target_is_immediate_and_action_free(
         session = session_for(service, connection, f"drag-ambiguous-{role}")
         source, destination = drag_elements(session)
         with pytest.raises(TargetError) as caught:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=0.5,
                 destination_y_ratio=0.5,
@@ -1506,8 +1437,7 @@ def test_invalid_destination_rect_fails_before_drag(
         session = session_for(service, connection, f"drag-rect-{rect!r}")
         source, destination = drag_elements(session)
         with pytest.raises(CommandError) as caught:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=0.5,
                 destination_y_ratio=0.5,
@@ -1559,8 +1489,7 @@ def test_drag_computed_coordinates_enforce_java_int_range(
         session = session_for(service, connection, f"drag-java-{allowed}-{rect['x']}")
         source, destination = drag_elements(session)
         if allowed:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=ratio,
                 destination_y_ratio=ratio,
@@ -1571,8 +1500,7 @@ def test_drag_computed_coordinates_enforce_java_int_range(
             assert (args["endX"], args["endY"]) == expected
         else:
             with pytest.raises(CommandError) as caught:
-                session.drag_and_drop(
-                    source,
+                source.drag_and_drop(
                     destination,
                     destination_x_ratio=ratio,
                     destination_y_ratio=ratio,
@@ -1613,8 +1541,7 @@ def test_invalid_drag_ratios_are_zero_request(
         x_value: object = value if coordinate == "x" else 0.5
         y_value: object = value if coordinate == "y" else 0.5
         with pytest.raises(InvalidRequestError) as caught:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=cast(Any, x_value),
                 destination_y_ratio=cast(Any, y_value),
@@ -1660,8 +1587,7 @@ def test_each_drag_pre_action_stale_restarts_the_entire_two_target_round(
         session = session_for(service, connection, f"drag-stale-{stage}")
         source, destination = drag_elements(session)
         with pytest.raises(CommandError) as caught:
-            session.drag_and_drop(
-                source,
+            source.drag_and_drop(
                 destination,
                 destination_x_ratio=0.5,
                 destination_y_ratio=0.5,
@@ -1685,31 +1611,32 @@ def test_foreign_forged_closed_and_connection_invalid_are_request_free(
     with connected(service) as connection:
         owner = session_for(service, connection, "owner")
         other = session_for(service, connection, "other")
-        foreign = owner.element("id", "target")
-        for element, code in (
-            (foreign, "element_session_mismatch"),
-            (object.__new__(Element), "invalid_argument"),
-        ):
-            before = service.snapshot()
-            with pytest.raises(InvalidRequestError) as caught:
-                other.swipe_gesture(
-                    element,
-                    direction="up",
-                    percent=0.5,
-                )
-            assert_clean_error(
-                caught.value,
-                InvalidRequestError,
-                code,
-                "not_sent",
+        source = owner.element("id", "target")
+        destination = other.element("id", "target")
+        before = service.snapshot()
+        with pytest.raises(InvalidRequestError) as mismatch:
+            source.drag_and_drop(
+                destination,
+                destination_x_ratio=0.5,
+                destination_y_ratio=0.5,
             )
-            assert service.snapshot() == before
+        assert_clean_error(
+            mismatch.value,
+            InvalidRequestError,
+            "element_session_mismatch",
+            "not_sent",
+        )
+        with pytest.raises(InvalidRequestError) as forged:
+            object.__new__(Element).swipe_gesture(direction="up", percent=0.5)
+        assert_clean_error(
+            forged.value, InvalidRequestError, "invalid_argument", "not_sent"
+        )
+        assert service.snapshot() == before
         owner.quit()
         other.quit()
         before = service.snapshot()
         with pytest.raises(InvalidSessionStateError) as closed:
-            other.swipe_gesture(
-                other.element("id", "target"),
+            other.element("id", "target").swipe_gesture(
                 direction="up",
                 percent=0.5,
             )
@@ -1727,7 +1654,7 @@ def test_foreign_forged_closed_and_connection_invalid_are_request_free(
         target = invalid.element("id", "target")
     before = service.snapshot()
     with pytest.raises(InvalidSessionStateError) as invalid_error:
-        invalid.scroll_gesture(target, direction="down", percent=1)
+        target.scroll_gesture(direction="down", percent=1)
     assert_clean_error(
         invalid_error.value,
         InvalidSessionStateError,
@@ -1751,7 +1678,7 @@ def test_overlapping_gesture_is_immediately_busy_and_sends_no_second_final(
 
         def run() -> None:
             try:
-                session.swipe_gesture(target, direction="up", percent=0.5)
+                target.swipe_gesture(direction="up", percent=0.5)
             except BaseException as error:
                 result.append(error)
             else:
@@ -1762,7 +1689,7 @@ def test_overlapping_gesture_is_immediately_busy_and_sends_no_second_final(
         assert started.wait(timeout=2)
         before = len(service.of_kind("scroll_gesture"))
         with pytest.raises(SessionBusyError) as caught:
-            session.scroll_gesture(target, direction="down", percent=1)
+            target.scroll_gesture(direction="down", percent=1)
         assert_clean_error(
             caught.value,
             SessionBusyError,
@@ -1791,8 +1718,7 @@ def test_cancellation_wakes_pre_action_wait_and_is_request_state_not_sent(
         timer.start()
         started = time.monotonic()
         with pytest.raises(OperationCancelledError) as caught:
-            session.swipe_gesture(
-                session.element("id", "missing"),
+            session.element("id", "missing").swipe_gesture(
                 direction="up",
                 percent=0.5,
                 wait_timeout_seconds=1,
@@ -1823,8 +1749,7 @@ def test_condition_timeout_reports_no_completed_target_steps(
     with connected(service) as connection:
         session = session_for(service, connection, "condition-timeout")
         with pytest.raises(TargetError) as caught:
-            session.scroll_gesture(
-                session.element("id", "missing"),
+            session.element("id", "missing").scroll_gesture(
                 direction="down",
                 percent=1,
                 wait_timeout_seconds=0.03,
@@ -1846,10 +1771,10 @@ def test_gestures_preserve_aif02_aif03_aif04_and_aif05_behavior(
     with connected(service) as connection:
         session = session_for(service, connection, "regression")
         target = session.element("id", "target")
-        session.swipe_gesture(target, direction="up", percent=0.5)
-        session.click(target)
-        session.send_keys(target, "value")
-        inspection = session.inspect_element(target, attributes=("text",))
+        target.swipe_gesture(direction="up", percent=0.5)
+        target.click()
+        target.send_keys("value")
+        inspection = target.inspect(attributes=("text",))
         assert inspection.attributes[0].state == "missing"
         assert service.operation_kinds() == [
             "find",

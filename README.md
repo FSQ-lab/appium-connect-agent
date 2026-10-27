@@ -31,6 +31,55 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 不提供临时清除，显式 `None` 或空字符串报错；参数不写回文件。
 通过 `loaded.sources` 查询 `file`、`override` 或 `default` 来源。
 
+## Automation Element 接口
+
+Automation 的单控件观测、点击、文本及手势方法绑定在由明确 Session 创建的
+`Element` 上。工厂创建不访问设备，每次操作重新定位，不缓存跨调用句柄。
+在已创建的 `session` 上，例如：
+
+```python
+field = session.element("id", "query", package="com.example")
+field.click()
+field.replace_element_value("hello")
+details = field.inspect(attributes=("text", "focused"))
+```
+
+局部结构使用 `field.inspect_structure()`，拖动使用
+`source.drag_and_drop(destination, destination_x_ratio=0.5, destination_y_ratio=0.5)`，
+受限滚动查找使用 `container.scroll(target, max_swipes=5)`。
+`Session` 保留 `element`、`observe_tree`（含可选 parent）、`session_info` 与 `quit`；
+旧 `session.click(element)`、`session.inspect_element(element, ...)` 等入口已移除，
+不提供兼容别名。全部操作共用所属 Session 的准入、预算及恢复规则。
+
+### Device 与 Element IME
+
+`session.device` 是同一 Session 绑定的只读、零 I/O 入口，提供返回、普通/长按按键、
+隐藏键盘、设备端纯文本剪贴板及官方弹窗处理；不能独立构造或改绑。
+按键使用 Android 整数码，不增加 Home 字符串别名、source 或自定义长按时长。
+
+以下操作均需要调用方明确授权；IME 可能触发业务提交，不是输入文本后的自动步骤：
+
+```python
+device = session.device
+hidden_now = device.hide_keyboard()
+field.perform_editor_action("done")
+```
+
+IME 要求明确 Element：已聚焦不点击，否则至多点击一次并核对同一目标的焦点，
+失败不重找、不再点击、不发送 IME。焦点核对与执行不是原子操作；
+成功不保证搜索、发送或页面业务结果。普通文本输入仍不会隐式调用 IME。
+
+剪贴板仅支持纯文本，允许空串，strict UTF-8 上限 65,536 bytes，标签上限
+1,024 bytes；读取严格校验 Base64/UTF-8，错误不伪装为空串，写入不自动粘贴或恢复。
+官方剪贴板/IME 内部可能切换辅助应用、前台或输入法；
+隐藏键盘内部可能使用 ESC/BACK，返回布尔值是官方报告而非独立视觉证明。
+弹窗只沿官方识别与标签匹配，不自动处理、自建识别或失败后换成 Element 点击。
+
+Element、Device、Session 观测及退出共用一个准入、总预算与未知执行保护；
+不公开官方 driver、elementId、任意 script 或 shell。新能力的代码/受控验证与真机验收
+状态分别见 [Automation 台账](docs/tasks/automation-delivery-ledger.md)，
+既有安全文本/手势授权不会自动扩大到剪贴板、IME 提交或弹窗等副作用。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。

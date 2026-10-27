@@ -166,3 +166,26 @@
 - official scroll只接受受限、可无损映射的项目Element：canonical-ID根container、以同一container为parent的canonical-ID或accessibility-id target，以及必填 `max_swipes=1..30`；不解析XPath、不接收raw/unresolved/class/任意UiAutomator、不自建滚动循环。final no-such保持CommandError；只有合法成功后的项目唯一/displayed后验可产生TargetError。
 - drag由source/destination Element及目标内 `[0,1]` ratio确定；Automation内部将ratio换算为目标内部像素并只发送一次获证原生drag命令。四个意图final动作开始后不自动重放或回滚；成功只表示命令及必要收尾完成，不保证内容、页面或业务结果。
 - 契约确认不表示AIF-06已实现、真机拖放已验收、Automation模块或当前平台完整链路已完成；详细Interface、值域、受限Adapter、错误、completed steps和验证义务由Automation模块SPEC定义。
+
+## Automation Element-Bound Public Interface（AIF-ED）
+
+本节定义 AIF-ED 公共归属：替代 AIF-03～06 的旧 Session 单控件观测/动作入口；未列出的已确认行为与约束不变。
+
+- 当前平台仍为 macOS 宿主 / Android Native / UiAutomator2 8.7.0，模块仍为 Automation；十二项现有单目标/多目标行为改由绑定的 Element 提供：inspect、inspect_structure、click、double_click、long_click、send_keys、clear、replace_element_value、swipe_gesture、scroll_gesture、scroll、drag_and_drop。
+- 移除对应 Session 公共入口，不保留兼容别名、deprecated forwarding、动态转发或重复入口。Session 保留 element 工厂、支持可选 parent 的 observe_tree、session_info 与 quit；顶层 create_session/list_devices 及公开结果/异常类型不变。
+- Element 继续保存不可变、零 I/O 创建的定位与 Session 绑定描述，每次操作重定位；方法通过所属 Session 执行，不缓存跨调用 WebElement/elementId。Session 继续独占客户端、operation gateway、gate、生命周期与资源保留；一次调用只产生一份 operation_id 和总预算，不复制控制状态机。
+- Appium-Python-Client 6.0.8、Selenium 4.51.0、Python 3.11 标准库及既有 defusedxml 观测用途不变，不新增依赖或模块方向。现有唯一性、前置条件、等待/stale/no-replay、raw-ID Settings、资源界限、错误与恢复语义保持。
+- 本 delta 不交付 Device 空壳、session.device、系统动作或 Element IME；这些属于独立 AIF-07 契约。契约确认不表示实现/真机/模块验收完成，不补签 AIF-06 既有拖放验证缺口。
+- 详细公共签名、可信绑定、执行与验证不变量见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-ED 条款；设计依据为 [Element/Device API 迁移设计](docs/superpowers/specs/2026-10-26-automation-element-device-api-design.md)。
+
+## Automation Device System Actions And Element IME（AIF-07）
+
+本节在 AIF-ED 的已确认 Element 归属上新增 Device 系统动作及 Element IME；不修改既有动作/观测语义，不表示 AIF-07 已实现或验收。
+
+- 当前交付组合仍为 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 Driver 8.7.0；继续固定 Client 6.0.8、Selenium 4.51.0、Python 3.11，实际 Android driver/server/Settings 资格分别为14.2.0/10.6.6/8.0.9。Runtime、Contracts、Configuration、Integrations 和依赖/lock 不变。
+- Automation 公开 Session 绑定的 Device 类型及零 I/O 只读 `session.device`；提供 back、press_keycode、long_press_keycode、hide_keyboard、get_clipboard_text、set_clipboard_text、accept_alert、dismiss_alert。Device 不是发现结果 DeviceInfo，不独立连接、改绑或拥有 gate/资源；不引入全局当前设备。
+- `Element.perform_editor_action` 接收明确 Element 与九个精确官方 action 名称，由 Automation 在必要时点击一次、核对同一目标获得焦点后执行一次 IME；不提供当前焦点任意执行、整数 action 或别名入口。
+- 三类公共操作共用所属 Session 原客户端、非阻塞准入、一次 operation 起点与总预算、取消、request_state、no-replay、raw Settings 和 uncertain/资源保留机制；不复制状态机或公开任意 script/shell/WebDriver/elementId。
+- 系统按键只接受规定范围的整数及可选 metastate/flags；不公开长按时长、source 或 Home 字符串别名。剪贴板只支持设备端纯文本，保留空串、严格 Base64/UTF-8、限制65,536字节；标签限制1,024字节，不自动粘贴或提交。
+- 项目不追加隐藏键盘/返回/弹窗点击等兜底或重放。官方隐藏键盘内部可能使用 ESC/BACK；剪贴板/IME 内部可能切换辅助应用或输入法；空/false 结果、弹窗启发式及焦点非原子性只按官方能力解释，不承诺业务结果或无副作用回滚。
+- 本节不新增面板、应用管理、系统设置家族、其他平台或 Integrations 能力。详细签名、值域、完成事实及安全边界见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-07 条款；设计依据为 [AIF-07 详细设计](docs/superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。

@@ -1,8 +1,55 @@
 # Automation 需求交接台账
 
-更新日期：2026-10-22。TaskID `AUTO-DESIGN-HANDOFF-01`。需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+当前进度更新：2026-10-27。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
 
-## 当前状态
+## 当前 AIF-ED / AIF-07 进度
+
+- 当前TaskID `AUTO-AIF07-IMPL-20261027`，前序为`AUTO-ED-IMPL-20261027`；平台macOS宿主 / Android Native / UiAutomator2 8.7.0，模块Automation。用户显式spec-driven授权AIF-ED后AIF-07，前序限定验收完成后再次对AIF-07设计/值域/资源上限与独立SPEC delta回复“确认”；现进入本feature限定实现，不自动扩大平台、模块或副作用范围。
+- 起点`master` / `fd8cd0f18d4e1c00e225e43e14c0f834870e8d6a`；起始已有两篇未跟踪设计文件，本批保留。设计依据：[Element API迁移](../superpowers/specs/2026-10-26-automation-element-device-api-design.md)及[后续AIF-07](../superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。历史设计中的“尚未授权”描述属于设计交付时点，当前以本段授权与已确认SPEC为准。
+- AIF-ED：**Done（本feature限定范围）**。十二项Element公开入口及消费者完成clean cutover，无兼容别名；Session保留原执行网关/生命周期。Tech Lead依据已确认SPEC、full/repair实现审查、1,466项回归、隔离发行物验证、十二项安全真机链及独立补证审查完成验收；不等于Automation模块/平台完成，不声称全仓历史文档format已通过。
+- AIF-07：**Done（本feature限定范围）**。八个Device方法、Element聚焦/IME及共享gateway接缝已完整实现；Tech Lead依据已确认SPEC、1,891项回归、受控消费者/隔离发行物、独立full代码审查及限定真机补证pass完成验收。用户授权内的九项公共方法及恢复/清理已闭合，不等于Automation模块/平台或全OEM/业务提交完整链；不自动推进后续feature。
+- 库复用保持Appium-Python-Client6.0.8、Selenium4.51.0、Python3.11及原defusedxml用途；已用`uv sync --locked`建立CPython3.11.16环境，没有依赖/lock变更。具体批准来源为公共Interface设计§8和现行根/Automation SPEC。
+- AIF-ED直接消费者smoke已使用真实已安装Appium/Selenium客户端→临时HTTP协议服务，完成click/send_keys/inspect，观察定位句柄由before变after、跨owner目标零请求拒绝、十二项旧Session入口移除、Session保持active并正常quit；这不是设备验证。
+- AIF-ED修复后`uv run pytest`：1,466 passed，425.49秒；`uv run ruff check .`、`uv run ruff format --check src tests tools`（50文件）、strict mypy（49文件）、import-linter（5项）及wheel/sdist构建均通过。产品churn266行、测试799行，按feature起点累计新增+删除，无纯移动排除。
+- AIF-ED的wheel与sdist已分别在新建隔离venv中按分发元数据安装，使用`uv export --locked --no-dev --no-hashes --no-emit-project`导出的锁定运行依赖约束、项目已批准镜像；两环境`uv pip check`、仓库外`python -I`导入、py.typed及Element/Session公开面检查均通过。初次offline安装因缺缓存失败，随后使用现有批准镜像重试成功；没有依赖/lock改动，临时环境已清理。全仓format仍有未变更AIF-05历史设计代码块的预存失败，不改写历史证据，不声称全仓format通过。
+- 独立full审查`AUTO-ED-IMPL-AUDIT-01 / EDAudit`发现F01：缺失parent/package的可信外观Element泄漏AttributeError，后者先发两次请求；已通过直接消费者复现。修复为逐层检查全部Element slots，缺字段零请求invalid_argument；新增receiver/ancestor四例回归，已观察修复前失败、修复后4项通过，直接消费者亦确认零请求受控拒绝且正常操作可用。原独立上下文第一轮repair-only（`AUTO-ED-IMPL-AUDIT-01-REPAIR-01`）结论pass、F01 closed，发行物验证缺口关闭；未新增finding。核对完整修复增量5,636bytes/3diff，SHA-256 `783493b84e06b741fce430eb9104f638a1f30b0f7ffa58e1c96aea20175803aa`；审查时累计完整差异152,840bytes/10路径，SHA-256 `f7b53500c0f29d03bb84041556cd268e46673f3f6a3f3ee25a605795380e7799`。此处状态与审查元数据随后更新，不能将审查版差异hash冒充后续最终差异身份。
+- 用户回复“授权授权好的”批准现有测试设备/安全页面基础验收（先确认服务/设备/页面，安全观测/点击/文本/适用手势；不安装/卸载、不改变权限/系统配置、不发送或提交）。初步发现现有4723服务/CLI为Appium3.8.0，按固定3.7.0资格停止；用户随后回复“同意”，另行批准临时目录准备/启动3.7.0并清理、不动现有服务、不自动安装其他工具链。
+- 已在独立临时目录通过`npm install --prefix <temp> --no-save --package-lock=false --ignore-scripts --no-audit --no-fund --prefer-offline appium@3.7.0`准备并实际启动4731服务，HTTP状态ready/version3.7.0。读取实际manifest确认UiAutomator2 8.7.0、Android driver14.2.0、device-server10.6.6；没有更改已有driver安装或全局配置。此证据只证明主机服务/manifest，不是设备链验收。
+- 首次尝试从已有ADB进程定位真实二进制`/Users/qunmi/.maat/tools/android/platform-tools-37.0.1_aapt2-8.9.0-12782657/platform-tools/adb`，实测ADB37.0.1-15733141。当时`adb devices -l`只有表头、项目`list_devices`为空，未创建Session/执行动作。临时4731服务已停止、临时安装目录已删除；原PID31900/4723仍为ready的3.8.0、相同git-sha，未停止或替换。本次历史尝试记录为`AUTO-ED-DEVICE-20261027-01`。
+- 用户随后回复“已连接”。只读发现`1C171FDF6002TU`为device状态Pixel6 / Android17 / API37；实际截图确认已解锁Launcher。设备预装Settings8.0.9、UiAutomator2 server10.6.6及test包，版本/安装时间已记录，未安装或重装helper。
+- 创建Session前曾实际核对driver源码的hidden API临时策略写入；当时三项原值均为null、Settings的MOCK_LOCATION为allow，因原“不改系统配置”限制而停止，尚未产生设备副作用。用户随后明确回复“确认”，授权仅本次必要的临时hidden API策略调整与结束后恢复核对，其余安全边界保持。
+- 已完成`AUTO-ED-DEVICE-20261027-02`真机短链：Pixel6 / Android17 API37、CPython3.11.16、Client6.0.8/Selenium4.51.0、隔离Appium3.7.0+UiAutomator2 8.7.0/Android driver14.2.0/server10.6.6/Settings8.0.9。发现全局driver会解析3.8.0 peer后，临时环境完整固定3.7.0+8.7.0并验证peer为3.7.0，未混用全局3.8.0。主机临时准备仍仅复用已批准组件版本，未新增SDK/JDK或改项目依赖。
+- 隔离服务通过公开default-capabilities复用已核对的预装helper：skipServerInstallation、skipSettingsAppReinstall、skipUnlock、skipLogcatCapture为true；项目capability白名单、核心默认值与源代码未改。真实SDK请求/响应日志164条完整终态均HTTP200，十二项新Element入口均有真机成功记录；手势各一次final命令，scrollGesture返回true，官方scroll对已存在的明确子目标成功，不冒充动态离屏目标覆盖。
+- 安全drag场景使用原生Settings搜索框的`android:id/selection_end_handle`与独立EditText目标。先核对唯一性/显示/几何，再由`native_handle.drag_and_drop(field, destination_x_ratio=0.6, destination_y_ratio=0.5)`发一次dragGesture；截图及官方属性证明手柄移动、文本未改。该场景补齐当前基础拖动实证，不声称通用业务拖放或专用动态App完整验收。临时搜索文本最终恢复为原查询`by`，没有点击Cut/Copy/Share或提交动作。
+- 已如实保留两次键盘/选择场景整体观测的observation_too_large，以及一个无匹配a11y手柄标签查询；均为已知响应、Settings已恢复、Session保持active，不放宽资源上限、不在库内fallback或重放。随后使用实际可核对的原生resource-id执行独立显式操作。
+- 最终Session closed/busy=false；三项hidden API策略均恢复null、MOCK_LOCATION仍allow；三个helper版本/安装与更新时间逐项一致，未重装。无ADB forward/UiAutomator2 server进程；消费者正常exit0，临时4731服务和完整临时安装目录已清理；原3.8.0服务/PID/git-sha保持，Launcher截图已核对恢复。所测两份产品模块与已构建wheel逐字节一致。原始客户端日志、35份事实/截图/源码与manifest身份为独立验收核对依据，非模拟证据。
+- 独立原上下文`EDAudit`完成`AUTO-ED-NATIVE-EVIDENCE-AUDIT-01`（repair-only / 验收补证），结论pass、无新增finding、建议本feature验收。其独立核对真机manifest18,429bytes/SHA-256 `545225e8f7fa90cbb34c1a15593bfe34a7f63af01e0b6671ac4013474d923730`、35份证据与5份组件manifest、原始/解析日志全量164对记录、截图/属性位移、授权和清理；台账补充差异9,087bytes/1diff、SHA-256 `a27eb2f91ad63c555af630416dd693c21d37fe742a63eca5c75f3c8f4ac7108f`。本轮源码、测试、SPEC/依赖与上次实现复审身份不变。基础drag安全资源缺口仅在本次实际原生场景内关闭，专用动态App、跨feature/故障/多设备和真实Agent链仍属模块最终验收。
+- AIF-07统计/审查起点固定为AIF-ED已验收工作区快照，而非共同HEAD：前序完整差异158,238bytes/10diff，SHA-256 `47993f676cc7654a5412665678c5d2ba7468b320387d6df33fe32897b6b2214f`；前序归档154,476bytes，SHA-256 `cd89e457aeeab9781e6dc5836196f7d31a1462acbf1f8ae0814baea0f7beed97`。两篇起始已有设计与依赖文件在归档/manifest中单列；后续只统计本feature累计新增+删除，预算产品760–1,150、测试/文档另计、移动排除0，明显超约1,200先重拆。根/Automation外模块和依赖预计no-delta；Appium/Selenium/标准库复用及固定官方依据沿AIF-07设计§7/§10，不新增库或自研通用能力。
+- AIF-06 SPEC中“当前没有安全drag应用”的过时资源事实已更正为条件性资格义务：缺少获准安全目标仍须blocked，基础真机链不能由模拟替代；不改变已确认行为、不追溯改写历史记录。依据是本轮已独立审核的原生选择手柄场景，不把此文档事实修订混作AIF-07新增产品能力。
+
+### AIF-07 本轮受控验证
+
+- 真实已安装Client6.0.8/Selenium4.51.0及Python3.11.16公开签名已核对；实现仅用固定官方命令、原gateway/ready/raw guard与标准库strict Base64/UTF-8。Device getter无I/O、同一对象、同一Session准入；没有新增依赖、伪造结果、独立驱动/注册表或第二套状态机。
+- 初次完整回归24 failed / 1,867 passed（648.83秒），失败均为后续旧文本测试创建Session时端口池耗尽。新unknown用例按契约保留占用，暴露跨测试共享协调器缺陷；复用已有生命周期测试的autouse fixture，移至`tests/automation/conftest.py`做整个Automation逐用例隔离，并删除旧模块重复定义。只隔离测试边界，未改变生产端8200..8299容量、unknown保留或同用例占用语义；原100端口饱和测试保留，没有删失败用例或提高端口上限。
+- 修复后未过滤的`uv run pytest`：**1,891 passed，653.66秒**。Ruff lint通过、代码范围format57文件、strict mypy56文件、import-linter5项及最终wheel/sdist构建通过。全仓历史Markdown格式遗留仍单列，不声称全仓format通过。
+- 直接消费者通过真实SDK→临时HTTP服务执行全部八个Device方法及Element IME：false焦点→一次点击→同handle true→一次IME；Unicode/空标签保留，非法Base64报command_failed而非空串，合法空串正常返回，已知错误后Session仍active并正常quit。原始SDK wire日志、消费者源码及实际stdout已固定；此项是受控服务验证，不能代替下节另行授权的真实设备证据。
+- wheel与sdist分别在全新CPython3.11.16环境、锁定运行依赖约束与现有批准镜像下按元数据安装；两环境`uv pip check`、仓库外`python -I`导入、py.typed、Device八方法/Element IME/只读Session.device及原Session旧入口移除检查通过。七项直接依赖不变，临时环境已清理。
+- 产品累计churn551行、测试1,653行（含共享fixture移动的新增+删除，不排除移动）；审查版文档142行，此后验收元数据另计。基线为AIF-ED验收快照，不混入ED产品266行。受控/发行物与代码独审通过不自动升级为feature或模块Done；真实短链需单独授权与独立补证。
+- 独立新上下文`AIF07Audit`完成`AUTO-AIF07-IMPL-AUDIT-01`的full审查，结论pass（代码/测试/受控证据符合性）、无finding，明确当时feature仍device-validation-blocked。其逐字节复核17路径增量121,173bytes/SHA-256 `724592d9ce35884deccd00daa69a1841196b4c5fd01f2ce6b931c1232b02543b`、14路径累计tracked差异、9份untracked补充及ED全快照；读取原始1891测试/质量记录、完整消费者wire与8条分发安装验证，独立确认产物32份源码/类型标记与当前源码一致、七项依赖不变。此处状态/审查元数据为审查后记录，不将审核版差异hash冒充后续文稿身份。
+
+### AIF-07 限定真机证据（独立验收补证通过）
+
+- 用户在问题`aif07_native`明确选择“授权：覆盖后清空”：不读取/备份旧剪贴板，先写固定样本再读回，结束文本置空；允许同Pixel6的隔离3.7.0/预装helper方案、Settings临时输入框的A29/长B30各一次、返回一次/隐藏键盘至多两次、IME仅none、仅已核对的只读提示对话框接受/取消，以及必要的临时hidden API/输入法变化与恢复核对。没有send/search/go、安装/卸载、权限/删除/重置弹窗授权，也未执行这些动作。
+- `AUTO-AIF07-NATIVE-20261027-01`实际组合为Pixel6 / Android17 API37、CPython3.11.16、Client6.0.8/Selenium4.51.0、完整隔离Appium3.7.0+UiA8.7.0（peer亦3.7.0）、Android driver14.2.0/server10.6.6/Settings8.0.9。helper复用配置与ED相同、未改变项目capability白名单，未新增SDK/JDK或重装设备helper。
+- 75对实际SDK请求/响应均HTTP200，其中3次getClipboard返回体为隐私主动脱敏，未伪造其原始内容。请求顺序证明第一次剪贴板调用为写固定Unicode样本、空label原样传递；随后实际公开返回值与已知样本/空串比较均一致。原剪贴板未读/备份、按授权丢弃；所有UI动作后又执行最终显式置空和空串回读。文本空串不提升为Android确实无primary ClipData的保证。
+- IME真机首次目标focused=false；原始日志证明同一handle经过一次clickGesture、focused=true后，仅一次performEditorAction(action=none)，响应null。后续focused=false亦如实记录，不将命令完成当作业务处理或焦点原子保证。普通A实际回读`bya`、长B实际回读`byabb`，原查询恢复为`by`；两次hide均为官方true报告，一次back有效完成。
+- 弹窗使用已解析的`com.android.settings/.RegulatoryInfoDisplayActivity`，截图与Element事实确认只读“Regulatory labels”与唯一OK；实际title ID为com.android.settings:id/alertTitle。官方acceptAlert/dismissAlert各一次、buttonLabel=OK、null终态，前后截图均证明对话框关闭；单按钮dismiss点击OK不被误称为业务拒绝。没有库内自建识别或失败换Element点击。
+- 共3个明确owned Session，均正常closed/busy=false：首个剪贴板组完成后整体树超限，验收脚本按合同保留observation_too_large/Settings已恢复并安全退出；第二个新Session用明确搜索框属性完成其余动作；第三个仅在所有UI动作后做最终空文本清理与回读。没有放宽上限、复用uncertain Session或重放未知动作；另一个准备性android:id/alertTitle查询未找到也如实保留，尚未发送弹窗命令即改用实际可核对的vendor ID。
+- 上游恢复了默认IME但留下已启用的AppiumIME；测试方按授权仅禁用新增helper，发现启用集合相同但顺序变化的严格核对失败后，再恢复记录的原始启用/子类型顺序。最终三项hidden API、默认IME、完整启用/子类型列表顺序、helper版本/安装更新时间逐项与初始记录相同；原查询、Launcher已恢复；无ADB转发/UIA server进程。消费者exit0、临时4731服务与完整临时安装目录/可执行harness已清理，原4723服务仍ready3.8.0/相同git-sha及PID。
+- 产品/测试与full代码审查版身份一致，未为真机修改产品或测试。原始/脱敏说明、75条解析记录、39份事实/截图/消费者源码/组件manifest与恢复动作已由原独立上下文完成补证核对，未重开无关full审查。其他IME名称、边界/故障矩阵由受控验证与固定源码覆盖，不伪称全部真机/OEM、动态App、跨feature/多设备或真实Agent链已验收。
+- `AIF07Audit`完成`AUTO-AIF07-NATIVE-EVIDENCE-AUDIT-01`（repair-only / 真机补证），结论pass、无新增finding、建议本feature验收；原device-validation-blocked关闭。其独立复核主manifest21,586bytes/SHA-256 `c8cabe5e72bda26912f20fbe3172428ab31b2f0246b715e5ebe278e88360a572`、台账增量10,551bytes/1diff/SHA-256 `db0d0953ed73be18c534a8338e78d1dddd4be7824e63eef9a1a37c4176fb573a`、39份全部文件身份、全部75对wire与3次明确脱敏、实际问答记录b2078965/6b4fdeb6，以及作用/恢复/清理。最终原lsof输出从活kernel保留值导出而非重跑，SHA-256 `2478aacdd4df9a99e7d9a85179820424b6abbe2197f8b448e55f209307ccf60c`确认原PID31900/4723保留且无4731。此处Done/审查元数据为其后更新，不将审核版hash当作最终文稿身份。
+
+## 2026-10-22 需求交接状态（历史）
 
 - 本批仅整理 evidence 前需求与跨平台复用原则。技术设计尚有阻塞，所有产品 feature 均未 Ready；未获 spec-driven 实现授权。
 - 主会话承担 Tech Lead；本批两文档唯一写入负责人为主会话。独立 quality-engineer 只读审查，不参与编写；本批无需工程写读探针，因为没有工程实施任务。

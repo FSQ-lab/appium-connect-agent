@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Any, Literal, cast
 
 import pytest
@@ -57,7 +56,6 @@ def session_for(
 
 
 def invoke(
-    session: Session,
     element: Element,
     action: TextAction,
     *,
@@ -66,21 +64,18 @@ def invoke(
     control: OperationControl | None = None,
 ) -> None:
     if action == "send_keys":
-        session.send_keys(
-            element,
+        element.send_keys(
             text,
             wait_timeout_seconds=wait_timeout_seconds,
             control=control,
         )
     elif action == "clear":
-        session.clear(
-            element,
+        element.clear(
             wait_timeout_seconds=wait_timeout_seconds,
             control=control,
         )
     else:
-        session.replace_element_value(
-            element,
+        element.replace_element_value(
             text,
             wait_timeout_seconds=wait_timeout_seconds,
             control=control,
@@ -117,31 +112,6 @@ def assert_final_payload(
         }
 
 
-@pytest.mark.parametrize(
-    ("method", "names"),
-    [
-        (
-            Session.send_keys,
-            ("self", "element", "text", "wait_timeout_seconds", "control"),
-        ),
-        (Session.clear, ("self", "element", "wait_timeout_seconds", "control")),
-        (
-            Session.replace_element_value,
-            ("self", "element", "text", "wait_timeout_seconds", "control"),
-        ),
-    ],
-)
-def test_public_signatures_are_exact(
-    method: Callable[..., object], names: tuple[str, ...]
-) -> None:
-    parameters = inspect.signature(method).parameters
-    assert tuple(parameters) == names
-    assert parameters["wait_timeout_seconds"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["wait_timeout_seconds"].default == 15.0
-    assert parameters["control"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameters["control"].default is None
-
-
 @pytest.mark.parametrize("action", ["send_keys", "clear", "replace"])
 def test_exact_routes_payloads_order_none_and_one_final_request(
     service: ActionProtocolService,
@@ -155,14 +125,12 @@ def test_exact_routes_payloads_order_none_and_one_final_request(
         target = session.element("id", "target", parent=parent)
 
         if action == "send_keys":
-            result = session.send_keys(  # type: ignore[func-returns-value]
-                target, "A中🙂"
-            )
+            result = target.send_keys("A中🙂")  # type: ignore[func-returns-value]
         elif action == "clear":
-            result = session.clear(target)  # type: ignore[func-returns-value]
+            result = target.clear()  # type: ignore[func-returns-value]
         else:
-            result = session.replace_element_value(  # type: ignore[func-returns-value]
-                target, "A中🙂"
+            result = target.replace_element_value(  # type: ignore[func-returns-value]
+                "A中🙂"
             )
         assert result is None
 
@@ -212,7 +180,7 @@ def test_valid_text_is_transparent_in_client_payload(
 ) -> None:
     with connected(service) as connection:
         session = session_for(service, connection, f"transparent-{action}")
-        invoke(session, session.element("id", "target"), action, text=text)
+        invoke(session.element("id", "target"), action, text=text)
         assert_final_payload(service, action, text)
         session.quit()
 
@@ -239,11 +207,11 @@ def test_text_limit_counts_strict_utf8_bytes_inclusively(
         target = session.element("id", "target")
         before = service.snapshot()
         if allowed:
-            invoke(session, target, action, text=text)
+            invoke(target, action, text=text)
             assert_final_payload(service, action, text)
         else:
             with pytest.raises(InvalidRequestError) as caught:
-                invoke(session, target, action, text=text)
+                invoke(target, action, text=text)
             assert_error(
                 caught.value,
                 InvalidRequestError,
@@ -283,11 +251,9 @@ def test_invalid_text_is_zero_io(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             if action == "send_keys":
-                session.send_keys(session.element("id", "target"), cast(Any, text))
+                session.element("id", "target").send_keys(cast(Any, text))
             else:
-                session.replace_element_value(
-                    session.element("id", "target"), cast(Any, text)
-                )
+                session.element("id", "target").replace_element_value(cast(Any, text))
         assert_error(
             caught.value,
             InvalidRequestError,
@@ -304,7 +270,7 @@ def test_replace_empty_is_one_replace_and_never_clear(
 ) -> None:
     with connected(service) as connection:
         session = session_for(service, connection, "replace-empty")
-        session.replace_element_value(session.element("id", "target"), "")
+        session.element("id", "target").replace_element_value("")
         assert_final_payload(service, "replace", "")
         assert len(service.of_kind("replace")) == 1
         assert service.of_kind("send") == []
@@ -324,7 +290,6 @@ def test_invalid_wait_is_rejected_before_protocol_io(
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
             invoke(
-                session,
                 session.element("id", "target"),
                 action,
                 wait_timeout_seconds=value,  # type: ignore[arg-type]
@@ -372,7 +337,7 @@ def test_waits_for_missing_hidden_or_disabled_with_shared_half_second_pacing(
     service.queue(kind, *plans)
     with connected(service) as connection:
         session = session_for(service, connection, f"wait-state-{action}-{kind}")
-        invoke(session, session.element("id", "target"), action)
+        invoke(session.element("id", "target"), action)
         assert service.operation_kinds() == [*expected, final_kind(action)]
         repeated = service.of_kind(kind)
         assert repeated[1].received_at - repeated[0].received_at >= 0.45
@@ -398,7 +363,7 @@ def test_ambiguity_at_every_chain_level_is_immediate_and_action_free(
         middle = session.element("id", "middle", parent=root)
         target = session.element("id", "target", parent=middle)
         with pytest.raises(TargetError) as caught:
-            session.send_keys(target, "value")
+            target.send_keys("value")
         assert_error(
             caught.value,
             TargetError,
@@ -428,7 +393,7 @@ def test_each_pre_action_stale_restarts_the_complete_chain(
         session = session_for(service, connection, f"stale-{action}-{stage}")
         parent = session.element("id", "form")
         target = session.element("id", "target", parent=parent)
-        invoke(session, target, action)
+        invoke(target, action)
         assert len(service.of_kind("find")) >= 3
         assert len(service.of_kind(final_kind(action))) == 1
         assert service.operation_kinds()[-1] == final_kind(action)
@@ -452,7 +417,7 @@ def test_non_stale_wait_errors_fail_immediately_without_final_action(
     with connected(service) as connection:
         session = session_for(service, connection, f"known-wait-{stage}")
         with pytest.raises(CommandError) as caught:
-            session.replace_element_value(session.element("id", "target"), "value")
+            session.element("id", "target").replace_element_value("value")
         assert_error(
             caught.value,
             CommandError,
@@ -485,7 +450,7 @@ def test_final_stale_and_valid_errors_are_never_replayed(
     with connected(service) as connection:
         session = session_for(service, connection, f"final-known-{action}-{status}")
         with pytest.raises(CommandError) as caught:
-            invoke(session, session.element("id", "target"), action)
+            invoke(session.element("id", "target"), action)
         assert_error(
             caught.value,
             CommandError,
@@ -506,7 +471,7 @@ def test_replace_non_null_response_is_invalid_and_never_replayed(
     with connected(service) as connection:
         session = session_for(service, connection, "replace-invalid-return")
         with pytest.raises(CommandError) as caught:
-            session.replace_element_value(session.element("id", "target"), "value")
+            session.element("id", "target").replace_element_value("value")
         assert_error(
             caught.value,
             CommandError,
@@ -515,6 +480,33 @@ def test_replace_non_null_response_is_invalid_and_never_replayed(
             steps=("target_resolved", "target_displayed", "target_enabled"),
         )
         assert len(service.of_kind("replace")) == 1
+        session.quit()
+
+
+def test_text_preflight_time_counts_against_the_total_operation_budget(
+    service: ActionProtocolService,
+) -> None:
+    class SlowText(str):
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+            time.sleep(0.06)
+            return super().encode(encoding, errors)
+
+    with connected(service) as connection:
+        session = session_for(service, connection, "preflight-budget")
+        target = session.element("id", "target")
+        before = service.snapshot()
+        with pytest.raises(OperationTimeoutError) as caught:
+            target.send_keys(
+                SlowText("value"), control=OperationControl(timeout_seconds=0.03)
+            )
+        assert_error(
+            caught.value, OperationTimeoutError, "operation_timeout", "not_sent"
+        )
+        assert caught.value.completed_steps == ()
+        assert service.snapshot() == before
+        assert session.session_info().state == "active"
+        target.send_keys("next value")
+        assert len(service.of_kind("send")) == 1
         session.quit()
 
 
@@ -541,8 +533,7 @@ def test_condition_and_operation_deadline_precedence_between_requests(
     with connected(service) as connection:
         session = session_for(service, connection, f"deadline-{code}")
         with pytest.raises(error_type) as caught:
-            session.send_keys(
-                session.element("id", "missing"),
+            session.element("id", "missing").send_keys(
                 "value",
                 wait_timeout_seconds=wait,
                 control=control,
@@ -568,8 +559,7 @@ def test_condition_deadline_after_complete_response_is_response_received(
     with connected(service) as connection:
         session = session_for(service, connection, "condition-post-response")
         with pytest.raises(TargetError) as caught:
-            session.clear(
-                session.element("id", "target"),
+            session.element("id", "target").clear(
                 wait_timeout_seconds=0.04,
             )
         assert_error(
@@ -598,8 +588,7 @@ def test_condition_deadline_in_flight_is_unknown_and_closes_local_client(
     with connected(service) as connection:
         session = session_for(service, connection, f"condition-unknown-{phase}")
         with pytest.raises(TargetError) as caught:
-            session.replace_element_value(
-                session.element("id", "target"),
+            session.element("id", "target").replace_element_value(
                 "value",
                 wait_timeout_seconds=0.05,
             )
@@ -614,7 +603,7 @@ def test_condition_deadline_in_flight_is_unknown_and_closes_local_client(
         assert service.of_kind("replace") == []
         before = service.snapshot()
         with pytest.raises(InvalidSessionStateError):
-            session.clear(session.element("id", "target"))
+            session.element("id", "target").clear()
         assert service.snapshot() == before
 
 
@@ -629,8 +618,7 @@ def test_cancellation_wakes_poll_and_wins_at_shared_deadline(
         timer.start()
         started = time.monotonic()
         with pytest.raises(OperationCancelledError) as caught:
-            session.clear(
-                session.element("id", "missing"),
+            session.element("id", "missing").clear(
                 control=OperationControl(
                     timeout_seconds=2,
                     cancellation=cancellation,
@@ -655,8 +643,7 @@ def test_cancellation_wakes_poll_and_wins_at_shared_deadline(
         precedence = session_for(service, connection, "cancel-precedence")
         before = service.snapshot()
         with pytest.raises(OperationCancelledError) as simultaneous:
-            precedence.send_keys(
-                precedence.element("id", "target"),
+            precedence.element("id", "target").send_keys(
                 "value",
                 control=OperationControl(
                     timeout_seconds=5e-324,
@@ -680,8 +667,7 @@ def test_condition_deadline_no_longer_limits_started_final_action(
     service.queue("send", ResponsePlan(header_delay_seconds=0.35))
     with connected(service) as connection:
         session = session_for(service, connection, "condition-final-separation")
-        session.send_keys(
-            session.element("id", "target"),
+        session.element("id", "target").send_keys(
             "value",
             wait_timeout_seconds=0.3,
         )
@@ -714,7 +700,6 @@ def test_final_unknown_is_never_replayed_and_retains_session_ownership(
         session = session_for(service, connection, f"final-unknown-{action}-{phase}")
         with pytest.raises(error_type) as caught:
             invoke(
-                session,
                 session.element("id", "target"),
                 action,
                 control=control,
@@ -751,8 +736,7 @@ def test_final_in_flight_cancellation_is_unknown_and_not_replayed(
 
         def run() -> None:
             try:
-                session.replace_element_value(
-                    session.element("id", "target"),
+                session.element("id", "target").replace_element_value(
                     "value",
                     control=OperationControl(
                         timeout_seconds=2,
@@ -803,7 +787,6 @@ def test_raw_guard_wraps_all_waits_and_restores_exact_initial_value(
     with connected(service) as connection:
         session = session_for(service, connection, f"raw-{action}-{initial}")
         invoke(
-            session,
             session.element("id", raw_value, raw_id=True),
             action,
         )
@@ -831,7 +814,7 @@ def test_raw_mixed_unresolved_chain_is_rejected_before_any_request(
         unresolved = session.element("id", "short", parent=raw)
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.send_keys(unresolved, "value")
+            unresolved.send_keys("value")
         assert_error(
             caught.value,
             InvalidRequestError,
@@ -850,8 +833,7 @@ def test_raw_timeout_restores_setting_and_reports_only_actual_steps(
     with connected(service) as connection:
         session = session_for(service, connection, "raw-timeout")
         with pytest.raises(TargetError) as caught:
-            session.clear(
-                session.element("id", raw_value, raw_id=True),
+            session.element("id", raw_value, raw_id=True).clear(
                 wait_timeout_seconds=0.03,
             )
         assert_error(
@@ -880,7 +862,7 @@ def test_raw_primary_final_error_survives_restore_error_without_replay(
         session = session_for(service, connection, "raw-double-error")
         target = session.element("id", "vendor/odd@id", raw_id=True)
         with pytest.raises(CommandError) as caught:
-            session.send_keys(target, "value")
+            target.send_keys("value")
         assert_error(
             caught.value,
             CommandError,
@@ -922,8 +904,7 @@ def test_raw_success_restore_failure_preserves_action_completed(
     with connected(service) as connection:
         session = session_for(service, connection, f"raw-restore-{unknown}")
         with pytest.raises(expected_type) as caught:
-            session.replace_element_value(
-                session.element("id", "vendor/odd@id", raw_id=True),
+            session.element("id", "vendor/odd@id", raw_id=True).replace_element_value(
                 "value",
             )
         assert_error(
@@ -952,7 +933,7 @@ def test_raw_final_unknown_never_attempts_overlapping_restore(
     with connected(service) as connection:
         session = session_for(service, connection, "raw-final-unknown")
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.clear(session.element("id", "vendor/odd@id", raw_id=True))
+            session.element("id", "vendor/odd@id", raw_id=True).clear()
         assert_error(
             caught.value,
             ExecutionUnknownError,
@@ -978,8 +959,7 @@ def test_raw_setting_unknown_never_finds_or_restores(
     with connected(service) as connection:
         session = session_for(service, connection, "raw-setting-unknown")
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.send_keys(
-                session.element("id", "vendor/odd@id", raw_id=True),
+            session.element("id", "vendor/odd@id", raw_id=True).send_keys(
                 "value",
             )
         assert_error(
@@ -995,27 +975,29 @@ def test_raw_setting_unknown_never_finds_or_restores(
         assert session.session_info().state == "uncertain"
 
 
-def test_foreign_forged_closed_and_connection_invalid_are_request_free(
+def test_forged_closed_and_connection_invalid_are_request_free(
     service: ActionProtocolService,
 ) -> None:
     with connected(service) as connection:
         owner = session_for(service, connection, "owner")
         other = session_for(service, connection, "other")
-        foreign = owner.element("id", "target")
-        for element, code in (
-            (foreign, "element_session_mismatch"),
-            (object.__new__(Element), "invalid_argument"),
-        ):
-            before = service.snapshot()
-            with pytest.raises(InvalidRequestError) as caught:
-                other.replace_element_value(element, "value")
-            assert_error(caught.value, InvalidRequestError, code, "not_sent")
-            assert service.snapshot() == before
+        target = owner.element("id", "target")
+        target.replace_element_value("value")
+        request = service.of_kind("replace")[0]
+        assert request.path == (
+            f"/wd/hub/session/{owner.session_info().appium_session_id}/execute/sync"
+        )
+        forged = object.__new__(Element)
+        before = service.snapshot()
+        with pytest.raises(InvalidRequestError) as caught:
+            forged.replace_element_value("value")
+        assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+        assert service.snapshot() == before
         owner.quit()
         other.quit()
         before = service.snapshot()
         with pytest.raises(InvalidSessionStateError) as closed:
-            other.clear(other.element("id", "target"))
+            other.element("id", "target").clear()
         assert_error(
             closed.value,
             InvalidSessionStateError,
@@ -1030,7 +1012,7 @@ def test_foreign_forged_closed_and_connection_invalid_are_request_free(
         target = invalid.element("id", "target")
     before = service.snapshot()
     with pytest.raises(InvalidSessionStateError) as invalid_error:
-        invalid.send_keys(target, "value")
+        target.send_keys("value")
     assert_error(
         invalid_error.value,
         InvalidSessionStateError,
@@ -1054,7 +1036,7 @@ def test_overlapping_text_action_is_immediately_busy_and_sends_no_second_final(
 
         def run() -> None:
             try:
-                session.replace_element_value(target, "value")
+                target.replace_element_value("value")
             except BaseException as error:
                 result.append(error)
             else:
@@ -1065,7 +1047,7 @@ def test_overlapping_text_action_is_immediately_busy_and_sends_no_second_final(
         assert started.wait(timeout=2)
         before = len(service.of_kind("replace"))
         with pytest.raises(SessionBusyError) as caught:
-            session.clear(target)
+            target.clear()
         assert_error(caught.value, SessionBusyError, "session_busy", "not_sent")
         assert len(service.of_kind("replace")) == before
         assert service.of_kind("clear") == []
@@ -1084,9 +1066,9 @@ def test_text_actions_preserve_aif02_aif03_and_aif04_behavior(
     with connected(service) as connection:
         session = session_for(service, connection, "regression")
         target = session.element("id", "target")
-        session.click(target)
-        session.send_keys(target, "value")
-        inspection = session.inspect_element(target, attributes=("text",))
+        target.click()
+        target.send_keys("value")
+        inspection = target.inspect(attributes=("text",))
         assert inspection.attributes[0].state == "missing"
         assert service.operation_kinds() == [
             "find",

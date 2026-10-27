@@ -258,6 +258,8 @@ def _wait_for_ready_element(
     element: Element,
     gateway: _SessionOperationGateway,
     condition_deadline: float,
+    *,
+    prepare: Callable[[WebElement], None] | None = None,
 ) -> WebElement:
     def resolve() -> WebElement | None:
         return _resolve_unique_once(
@@ -267,12 +269,18 @@ def _wait_for_ready_element(
             condition_deadline=condition_deadline,
         )
 
+    def prepare_target(resolved: tuple[WebElement, ...]) -> WebElement:
+        target = resolved[0]
+        if prepare is not None:
+            prepare(target)
+        return target
+
     return _wait_for_targets(
         ((resolve, "target"),),
         gateway,
         condition_deadline,
         require_enabled=True,
-        prepare=lambda resolved: resolved[0],
+        prepare=prepare_target,
     )
 
 

@@ -489,7 +489,7 @@ def test_element_parent_owner_depth_xpath_and_invalid_target_default(
             second.element("id", "child", parent=foreign)
         assert mismatch.value.code == "element_session_mismatch"
         with pytest.raises(InvalidRequestError) as operation_mismatch:
-            second.inspect_element(foreign, attributes=("text",))
+            second.observe_tree(parent=foreign)
         assert operation_mismatch.value.code == "element_session_mismatch"
         assert operation_mismatch.value.request_state == "not_sent"
         first.element("xpath", "//root")
@@ -520,7 +520,7 @@ def test_element_constructor_and_forged_chains_are_rejected_before_io(
         def rejected(element: Element, code: str | None = None) -> None:
             before = service.snapshot()
             with pytest.raises(InvalidRequestError) as caught:
-                second.inspect_element(element, attributes=("text",))
+                element.inspect(attributes=("text",))
             if code is not None:
                 assert caught.value.code == code
             assert caught.value.request_state == "not_sent"
@@ -563,6 +563,81 @@ def test_element_constructor_and_forged_chains_are_rejected_before_io(
 
 
 @pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("inspect", {"attributes": ("text",)}),
+        ("inspect_structure", {}),
+        ("click", {}),
+        ("double_click", {}),
+        ("long_click", {}),
+        ("send_keys", {"text": "value"}),
+        ("clear", {}),
+        ("replace_element_value", {"text": "value"}),
+        ("swipe_gesture", {"direction": "up", "percent": 0.5}),
+        ("scroll_gesture", {"direction": "down", "percent": 1}),
+        ("scroll", {"max_swipes": 1}),
+        (
+            "drag_and_drop",
+            {"destination_x_ratio": 0.5, "destination_y_ratio": 0.5},
+        ),
+    ],
+)
+def test_invalid_receivers_and_owners_are_controlled_before_any_request(
+    service: ElementProtocolService, method: str, kwargs: dict[str, Any]
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, f"invalid-binding-{method}")
+        target = session.element("id", "target")
+        arguments = dict(kwargs)
+        if method == "scroll":
+            arguments["target"] = target
+        elif method == "drag_and_drop":
+            arguments["destination"] = target
+        invalid_owners = (None, object(), object.__new__(Session))
+        receivers: list[object] = [object(), object.__new__(Element)]
+        for owner in invalid_owners:
+            forged = session.element("id", "forged")
+            object.__setattr__(forged, "_owner", owner)
+            receivers.append(forged)
+        before = service.snapshot()
+        for receiver in receivers:
+            with pytest.raises(InvalidRequestError) as caught:
+                getattr(Element, method)(receiver, **arguments)
+            assert_error(
+                caught.value, InvalidRequestError, "invalid_argument", "not_sent"
+            )
+            assert caught.value.completed_steps == ()
+            assert caught.value.cleanup_errors == ()
+            assert service.snapshot() == before
+        session.quit()
+
+
+@pytest.mark.parametrize("missing", ["parent", "package"])
+@pytest.mark.parametrize("ancestor", [False, True])
+def test_missing_optional_locator_fields_are_rejected_before_io(
+    service: ElementProtocolService, missing: str, ancestor: bool
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, f"missing-{missing}-{ancestor}")
+        parent = session.element("accessibility id", "Parent") if ancestor else None
+        target = session.element("accessibility id", "Target", parent=parent)
+        object.__delattr__(parent if ancestor else target, missing)
+        before = service.snapshot()
+        with pytest.raises(InvalidRequestError) as caught:
+            target.inspect(attributes=("text",))
+        assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+        assert caught.value.completed_steps == ()
+        assert service.snapshot() == before
+        assert session.session_info().state == "active"
+        service.attributes[("target", "text")] = "still usable"
+        observed = session.element("accessibility id", "Usable").inspect(
+            attributes=("text",)
+        )
+        assert observed.attributes[0].value == "still usable"
+        session.quit()
+
+
+@pytest.mark.parametrize(
     "attributes",
     [(), ("text", "text"), ("invalid",), ("text",) * 19],
 )
@@ -573,9 +648,7 @@ def test_attribute_request_validation_precedes_io(
         session = session_for(service, connection, f"attributes-{len(attributes)}")
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.inspect_element(
-                session.element("id", "target"), attributes=cast(Any, attributes)
-            )
+            session.element("id", "target").inspect(attributes=cast(Any, attributes))
         assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
         assert service.snapshot() == before
         session.quit()
@@ -593,9 +666,7 @@ def test_unique_resolver_rejects_zero_and_multiple_root_matches(
     with connected(service) as connection:
         session = session_for(service, connection, f"unique-root-{count}")
         with pytest.raises(TargetError) as caught:
-            session.inspect_element(
-                session.element("id", "target"), attributes=("text",)
-            )
+            session.element("id", "target").inspect(attributes=("text",))
         assert_error(caught.value, TargetError, code, "response_received")
         assert len(service.of_kind("find")) == 1
         session.quit()
@@ -629,7 +700,7 @@ def test_unique_resolver_checks_every_parent_and_target_layer(
         parent = session.element("id", "form")
         target = session.element("id", "label", parent=parent)
         with pytest.raises(TargetError) as caught:
-            session.inspect_element(target, attributes=("text",))
+            target.inspect(attributes=("text",))
         assert_error(caught.value, TargetError, code, "response_received")
         expected_requests = 1 if stage == "parent" else 2
         assert len(service.of_kind("find")) == expected_requests
@@ -648,7 +719,7 @@ def test_unique_resolver_uses_root_then_child_find_elements_only(
         form = session.element("accessibility id", "Form")
         row = session.element("id", "row", parent=form)
         label = session.element("id", "label", parent=row)
-        result = session.inspect_element(label, attributes=("text",))
+        result = label.inspect(attributes=("text",))
         assert result.attributes[0].value == "current"
         assert [request.path for request in service.of_kind("find")] == [
             f"{_BASE}/session/appium-1/elements",
@@ -658,7 +729,7 @@ def test_unique_resolver_uses_root_then_child_find_elements_only(
         session.quit()
 
 
-def test_inspect_element_preserves_attribute_order_states_and_bounds(
+def test_inspect_preserves_attribute_order_states_and_bounds(
     service: ElementProtocolService,
 ) -> None:
     service.attributes.update(
@@ -691,9 +762,7 @@ def test_inspect_element_preserves_attribute_order_states_and_bounds(
     )
     with connected(service) as connection:
         session = session_for(service, connection, "attribute-states")
-        result = session.inspect_element(
-            session.element("id", "target"), attributes=requested
-        )
+        result = session.element("id", "target").inspect(attributes=requested)
         assert tuple(item.name for item in result.attributes) == requested
         assert [(item.state, item.value) for item in result.attributes[:-1]] == [
             ("value", ""),
@@ -719,10 +788,10 @@ def test_inspect_element_preserves_attribute_order_states_and_bounds(
         target = session.element("id", "target")
         service.attributes[("target", "enabled")] = "yes"
         with pytest.raises(CommandError) as invalid_bool:
-            session.inspect_element(target, attributes=("enabled",))
+            target.inspect(attributes=("enabled",))
         service.rects["target"] = {"x": 0, "y": 0, "width": -1, "height": 1}
         with pytest.raises(CommandError) as invalid_bounds:
-            session.inspect_element(target, attributes=("bounds",))
+            target.inspect(attributes=("bounds",))
         assert invalid_bool.value.code == invalid_bounds.value.code == "source_invalid"
         assert session.session_info().state == "active"
         session.quit()
@@ -735,7 +804,7 @@ def test_element_inspection_schema_is_canonical_immutable_and_reference_free(
     with connected(service) as connection:
         session = session_for(service, connection, "schema")
         element = session.element("id", "save", package="com.example")
-        result = session.inspect_element(element, attributes=("text",))
+        result = element.inspect(attributes=("text",))
         data = document(result)
         assert data == {
             "complete_for_requested_scope": True,
@@ -787,7 +856,7 @@ def test_element_inspection_complete_document_65536_and_65537(
 
         def inspect(text: str) -> ElementInspection:
             service.attributes[("target", "text")] = text
-            return session.inspect_element(element, attributes=("text",))
+            return element.inspect(attributes=("text",))
 
         baseline = inspect("")
         padding = 65_536 - len(baseline.to_json())
@@ -812,7 +881,7 @@ def test_raw_id_settings_transaction_and_locator_are_exact(
     with connected(service) as connection:
         session = session_for(service, connection, f"settings-raw-{initial}")
         raw = session.element("id", raw_value, raw_id=True)
-        result = session.inspect_element(raw, attributes=("text",))
+        result = raw.inspect(attributes=("text",))
         assert result.attributes[0].value == "raw value"
         assert service.of_kind("find")[0].body == {
             "using": "id",
@@ -839,7 +908,7 @@ def test_raw_id_mixed_with_unresolved_short_id_is_rejected_before_io(
         raw = session.element("id", "odd/raw@id", parent=unresolved, raw_id=True)
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.inspect_element(raw, attributes=("text",))
+            raw.inspect(attributes=("text",))
         assert_error(
             caught.value,
             InvalidRequestError,
@@ -858,7 +927,7 @@ def test_invalid_raw_id_setting_fails_before_find(
         session = session_for(service, connection, "raw-setting-invalid")
         raw = session.element("id", "odd/raw@id", raw_id=True)
         with pytest.raises(CommandError) as caught:
-            session.inspect_element(raw, attributes=("text",))
+            raw.inspect(attributes=("text",))
         assert caught.value.code == "source_settings_invalid"
         assert service.of_kind("find") == []
         assert service.of_kind("settings:post") == []
@@ -876,12 +945,12 @@ def test_known_attribute_failure_restores_raw_setting_and_remains_active(
         session = session_for(service, connection, "raw-known-failure")
         raw = session.element("id", "odd/raw@id", raw_id=True)
         with pytest.raises(CommandError) as caught:
-            session.inspect_element(raw, attributes=("enabled",))
+            raw.inspect(attributes=("enabled",))
         assert_error(caught.value, CommandError, "command_failed", "response_received")
         assert service.settings["disableIdLocatorAutocompletion"] is False
         assert len(service.of_kind("settings:post")) == 2
         assert session.session_info().state == "active"
-        assert session.inspect_element(raw, attributes=("text",)).attributes
+        assert raw.inspect(attributes=("text",)).attributes
         session.quit()
 
 
@@ -900,7 +969,7 @@ def test_response_unknown_closes_local_path_retains_ownership_and_never_deletes(
         )
         attribute: ElementAttribute = "enabled" if kind == "attribute" else "text"
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.inspect_element(element, attributes=(attribute,))
+            element.inspect(attributes=(attribute,))
         assert_error(
             caught.value,
             ExecutionUnknownError,
@@ -911,7 +980,7 @@ def test_response_unknown_closes_local_path_retains_ownership_and_never_deletes(
         requests_after_failure = service.snapshot()
         assert service.of_kind("quit") == []
         with pytest.raises(InvalidSessionStateError):
-            session.inspect_element(element, attributes=(attribute,))
+            element.inspect(attributes=(attribute,))
         assert service.snapshot() == requests_after_failure
         with pytest.raises(ResourceStateError) as busy:
             create_session(connection, device)
@@ -926,7 +995,7 @@ def test_raw_restore_unknown_preserves_work_and_makes_session_uncertain(
         session = session_for(service, connection, "raw-restore-unknown")
         raw = session.element("id", "odd/raw@id", raw_id=True)
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.inspect_element(raw, attributes=("text",))
+            raw.inspect(attributes=("text",))
         assert caught.value.request_state == "response_unknown"
         assert "attributes_read" in caught.value.completed_steps
         assert session.session_info().state == "uncertain"
@@ -947,7 +1016,7 @@ def test_restore_failure_does_not_replace_primary_attribute_error(
         session = session_for(service, connection, "raw-primary-cleanup")
         raw = session.element("id", "odd/raw@id", raw_id=True)
         with pytest.raises(CommandError) as caught:
-            session.inspect_element(raw, attributes=("enabled",))
+            raw.inspect(attributes=("enabled",))
         assert caught.value.code == "command_failed"
         assert caught.value.cleanup_errors
         assert session.session_info().state == "uncertain"
@@ -969,7 +1038,7 @@ def test_validation_busy_state_cancel_and_deadline_precedence(
 
         def inspect() -> None:
             try:
-                session.inspect_element(element, attributes=("text",))
+                element.inspect(attributes=("text",))
             except BaseException as error:
                 failures.append(error)
 
@@ -977,11 +1046,10 @@ def test_validation_busy_state_cancel_and_deadline_precedence(
         worker.start()
         assert started.wait(timeout=1)
         with pytest.raises(InvalidRequestError) as pure:
-            session.inspect_element(element, attributes=())
+            element.inspect(attributes=())
         assert pure.value.code == "invalid_argument"
         with pytest.raises(SessionBusyError) as busy:
-            session.inspect_element(
-                element,
+            element.inspect(
                 attributes=("text",),
                 control=OperationControl(
                     timeout_seconds=1e-12, cancellation=cancellation
@@ -993,8 +1061,7 @@ def test_validation_busy_state_cancel_and_deadline_precedence(
         assert not worker.is_alive() and failures == []
         before = service.snapshot()
         with pytest.raises(OperationCancelledError) as cancelled:
-            session.inspect_element(
-                element,
+            element.inspect(
                 attributes=("text",),
                 control=OperationControl(
                     timeout_seconds=1e-12, cancellation=cancellation
@@ -1009,8 +1076,7 @@ def test_validation_busy_state_cancel_and_deadline_precedence(
         assert service.snapshot() == before
         session.quit()
         with pytest.raises(InvalidSessionStateError) as closed:
-            session.inspect_element(
-                element,
+            element.inspect(
                 attributes=("text",),
                 control=OperationControl(
                     timeout_seconds=1e-12, cancellation=cancellation
@@ -1026,8 +1092,7 @@ def test_timeout_during_find_is_unknown_and_holds_resources(
     with connected(service) as connection:
         session = session_for(service, connection, "find-timeout")
         with pytest.raises(OperationTimeoutError) as caught:
-            session.inspect_element(
-                session.element("id", "target"),
+            session.element("id", "target").inspect(
                 attributes=("text",),
                 control=OperationControl(timeout_seconds=0.05),
             )
@@ -1057,8 +1122,7 @@ def test_cancellation_after_attribute_success_restores_raw_setting(
 
         def inspect() -> None:
             try:
-                session.inspect_element(
-                    raw,
+                raw.inspect(
                     attributes=("text",),
                     control=OperationControl(
                         timeout_seconds=2, cancellation=cancellation
@@ -1102,8 +1166,7 @@ def test_cancellation_visible_during_restore_finishes_restore_then_fails(
 
         def inspect() -> None:
             try:
-                session.inspect_element(
-                    raw,
+                raw.inspect(
                     attributes=("text",),
                     control=OperationControl(
                         timeout_seconds=2, cancellation=cancellation
@@ -1147,8 +1210,7 @@ def test_deadline_expires_during_restore_finishes_restore_then_fails(
 
         def inspect() -> None:
             try:
-                session.inspect_element(
-                    raw,
+                raw.inspect(
                     attributes=("text",),
                     control=OperationControl(timeout_seconds=0.5),
                 )
@@ -1190,8 +1252,7 @@ def test_cancellation_becomes_visible_during_canonical_measurement(
         session = session_for(service, connection, "cancel-during-canonical")
         raw = session.element("id", "odd/raw@id", raw_id=True)
         with pytest.raises(OperationCancelledError) as caught:
-            session.inspect_element(
-                raw,
+            raw.inspect(
                 attributes=("text",),
                 control=OperationControl(timeout_seconds=2, cancellation=cancellation),
             )
@@ -1221,7 +1282,7 @@ def test_raw_observed_at_is_last_attribute_time_not_restore_time(
 
         def inspect() -> None:
             try:
-                results.append(session.inspect_element(raw, attributes=("text",)))
+                results.append(raw.inspect(attributes=("text",)))
             except BaseException as error:
                 failures.append(error)
 
@@ -1263,18 +1324,14 @@ def test_different_session_inspection_gates_are_independent(
 
         def inspect_first() -> None:
             try:
-                first.inspect_element(
-                    first.element("id", "target"), attributes=("text",)
-                )
+                first.element("id", "target").inspect(attributes=("text",))
             except BaseException as error:
                 first_failures.append(error)
 
         worker = threading.Thread(target=inspect_first)
         worker.start()
         assert started.wait(timeout=1)
-        assert second.inspect_element(
-            second.element("id", "target"), attributes=("text",)
-        ).attributes
+        assert second.element("id", "target").inspect(attributes=("text",)).attributes
         release.set()
         worker.join(timeout=2)
         assert not worker.is_alive() and first_failures == []
@@ -1289,9 +1346,9 @@ def test_elements_and_results_are_not_cached_across_calls(
     with connected(service) as connection:
         session = session_for(service, connection, "no-cache")
         element = session.element("id", "target")
-        first = session.inspect_element(element, attributes=("text",))
+        first = element.inspect(attributes=("text",))
         service.attributes[("target", "text")] = "second"
-        second = session.inspect_element(element, attributes=("text",))
+        second = element.inspect(attributes=("text",))
         assert (first.attributes[0].value, second.attributes[0].value) == (
             "first",
             "second",
@@ -1312,14 +1369,11 @@ def test_known_error_keeps_client_active_and_releases_resources_after_quit(
         session = session_for(service, connection, device)
         original_port = create_port(service.of_kind("create")[-1])
         with pytest.raises(CommandError):
-            session.inspect_element(
-                session.element("id", "target"), attributes=("enabled",)
-            )
+            session.element("id", "target").inspect(attributes=("enabled",))
         service.attributes[("target", "text")] = "usable"
         assert (
-            session.inspect_element(
-                session.element("id", "target"), attributes=("text",)
-            )
+            session.element("id", "target")
+            .inspect(attributes=("text",))
             .attributes[0]
             .value
             == "usable"
@@ -2070,7 +2124,7 @@ def test_structure_target_and_declared_parent_exact_raw_schema(
         parent = session.element("id", "form")
         target = session.element("accessibility id", "Target", parent=parent)
 
-        target_result = session.inspect_structure(target, scope="target")
+        target_result = target.inspect_structure(scope="target")
         target_data = document(target_result)
         assert target_data["schema"] == 1 and target_data["kind"] == "structure"
         assert target_data["coverage"] == "requested_scope"
@@ -2090,7 +2144,7 @@ def test_structure_target_and_declared_parent_exact_raw_schema(
         ]
         assert ["custom", ""] in raw_target["attributes"]
 
-        parent_result = session.inspect_structure(target)
+        parent_result = target.inspect_structure()
         parent_data = document(parent_result)
         assert parent_data["scope"]["kind"] == "declared_parent"
         assert parent_data["scope"]["locator"]["value"] == "Target"
@@ -2114,7 +2168,7 @@ def test_structure_declared_parent_without_parent_equals_target(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-no-parent")
         target = session.element("id", "target")
-        result = session.inspect_structure(target)
+        result = target.inspect_structure()
         data = document(result)
         assert result.target_path == (0,)
         assert data["scope"]["kind"] == "element"
@@ -2147,7 +2201,7 @@ def test_structure_raw_id_and_second_window_are_exact_result_local_scope(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-raw-window")
         raw = session.element("id", raw_value, raw_id=True)
-        result = session.inspect_structure(raw, scope="target")
+        result = raw.inspect_structure(scope="target")
         data = document(result)
         assert result.target_path == (0,)
         assert len(result.roots) == 1
@@ -2167,9 +2221,7 @@ def test_structure_invalid_scope_value_is_rejected_before_protocol_io(
         session = session_for(service, connection, "structure-invalid-scope")
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            session.inspect_structure(
-                session.element("id", "target"), scope=cast(Any, "root")
-            )
+            session.element("id", "target").inspect_structure(scope=cast(Any, "root"))
         assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
         assert service.snapshot() == before
         session.quit()
@@ -2192,14 +2244,16 @@ def test_structure_invalid_scope_rejected_before_settings_and_source(
             element = second.element("xpath", "//*[@text='x']")
             expected = "structure_scope_unavailable"
         elif locator == "foreign":
-            element = first.element("id", "target")
+            foreign_parent = first.element("id", "parent")
+            element = second.element("id", "target")
+            object.__setattr__(element, "parent", foreign_parent)
             expected = "element_session_mismatch"
         else:
             element = object.__new__(Element)
             expected = "invalid_argument"
         before = service.snapshot()
         with pytest.raises(InvalidRequestError) as caught:
-            second.inspect_structure(element)
+            element.inspect_structure()
         assert_error(caught.value, InvalidRequestError, expected, "not_sent")
         assert service.snapshot() == before
         first.quit()
@@ -2236,7 +2290,7 @@ def test_structure_requires_unique_match_at_every_local_layer(
         parent = session.element("id", "form")
         target = session.element("id", "target", parent=parent)
         with pytest.raises(TargetError) as caught:
-            session.inspect_structure(target)
+            target.inspect_structure()
         assert_error(caught.value, TargetError, code, "response_received")
         assert service.settings["allowInvisibleElements"] is False
         session.quit()
@@ -2253,7 +2307,7 @@ def test_structure_complete_document_65536_and_65537_boundaries(
             service.source = basic_xml(
                 node_xml(resource_id="com.example:id/target", text=text)
             )
-            return session.inspect_structure(target, scope="target")
+            return target.inspect_structure(scope="target")
 
         baseline = inspect("")
         padding = 65_536 - len(baseline.to_json())
@@ -2291,7 +2345,7 @@ def test_structure_fallback_keeps_invisible_target_path_and_recomputes_index(
         session = session_for(service, connection, "structure-target-fallback")
         parent = session.element("id", "form")
         target = session.element("id", "target", parent=parent)
-        result = session.inspect_structure(target)
+        result = target.inspect_structure()
         data = document(result)
         assert data["coverage"] == "visible_with_ancestors_and_target"
         assert data["complete_for_requested_scope"] is False
@@ -2318,7 +2372,7 @@ def test_structure_forced_invisible_target_still_over_limit_fails(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-target-too-large")
         with pytest.raises(CommandError) as caught:
-            session.inspect_structure(session.element("id", "target"), scope="target")
+            session.element("id", "target").inspect_structure(scope="target")
         assert caught.value.code == "observation_too_large"
         assert session.session_info().state == "active"
         session.quit()
@@ -2332,7 +2386,7 @@ def test_structure_known_target_failure_restores_and_allows_reuse(
         session = session_for(service, connection, "structure-known-error")
         target = session.element("id", "target")
         with pytest.raises(TargetError) as caught:
-            session.inspect_structure(target)
+            target.inspect_structure()
         assert_error(
             caught.value,
             TargetError,
@@ -2342,7 +2396,7 @@ def test_structure_known_target_failure_restores_and_allows_reuse(
         assert service.settings["allowInvisibleElements"] is False
         assert session.session_info().state == "active"
         service.source = basic_xml(node_xml(resource_id="com.example:id/target"))
-        assert session.inspect_structure(target).target_path == (0,)
+        assert target.inspect_structure().target_path == (0,)
         session.quit()
 
 
@@ -2355,7 +2409,7 @@ def test_structure_source_unknown_closes_without_restore_or_delete(
         session = session_for(service, connection, device)
         target = session.element("id", "target")
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.inspect_structure(target)
+            target.inspect_structure()
         assert_error(
             caught.value,
             ExecutionUnknownError,
@@ -2382,17 +2436,14 @@ def test_structure_unknown_defect_restores_and_rethrows_same_object(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-unknown-defect")
         with pytest.raises(RuntimeError) as caught:
-            session.inspect_structure(
-                session.element("id", "target"),
+            session.element("id", "target").inspect_structure(
                 control=OperationControl(timeout_seconds=2, cancellation=cancellation),
             )
         assert caught.value is failure
         assert service.settings["allowInvisibleElements"] is False
         assert session.session_info().state == "active"
         service.source = basic_xml(node_xml(resource_id="com.example:id/target"))
-        assert session.inspect_structure(
-            session.element("id", "target")
-        ).target_path == (0,)
+        assert session.element("id", "target").inspect_structure().target_path == (0,)
         session.quit()
 
 
@@ -2411,8 +2462,7 @@ def test_structure_cancel_after_source_restores_before_error(
 
         def inspect() -> None:
             try:
-                session.inspect_structure(
-                    target,
+                target.inspect_structure(
                     control=OperationControl(
                         timeout_seconds=2, cancellation=cancellation
                     ),
@@ -2445,7 +2495,7 @@ def test_structure_restore_unknown_preserves_source_and_target_ownership(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-restore-unknown")
         with pytest.raises(ExecutionUnknownError) as caught:
-            session.inspect_structure(session.element("id", "target"))
+            session.element("id", "target").inspect_structure()
         assert caught.value.request_state == "response_unknown"
         assert "source_captured" in caught.value.completed_steps
         assert session.session_info().state == "uncertain"
@@ -2461,8 +2511,7 @@ def test_structure_source_deadline_is_unknown_and_retains_resources(
         device = "structure-timeout"
         session = session_for(service, connection, device)
         with pytest.raises(OperationTimeoutError) as caught:
-            session.inspect_structure(
-                session.element("id", "target"),
+            session.element("id", "target").inspect_structure(
                 control=OperationControl(timeout_seconds=0.05),
             )
         assert_error(
@@ -2485,9 +2534,9 @@ def test_structure_results_are_fresh_but_to_json_is_network_free(
     with connected(service) as connection:
         session = session_for(service, connection, "structure-no-cache")
         element = session.element("id", "target")
-        first = session.inspect_structure(element, scope="target")
+        first = element.inspect_structure(scope="target")
         service.source = basic_xml(node_xml(resource_id=target, text="second"))
-        second = session.inspect_structure(element, scope="target")
+        second = element.inspect_structure(scope="target")
         assert first.roots[0].attributes[2] == ("text", "first")
         assert second.roots[0].attributes[2] == ("text", "second")
         before = len(service.snapshot())
@@ -2561,7 +2610,7 @@ def test_reversed_edge_bounds_reports_outside_fact_without_fabricating_bounds(
         assert "bounds" not in data
 
         target = session.element("id", "offscreen")
-        raw = session.inspect_structure(target, scope="target")
+        raw = target.inspect_structure(scope="target")
         assert ("bounds", reversed_bounds) in raw.roots[0].attributes
         assert ["bounds", reversed_bounds] in document(raw)["payload"]["roots"][0][
             "attributes"
@@ -2677,16 +2726,14 @@ def test_malformed_or_noninteger_source_bounds_still_source_invalid(
         session.quit()
 
 
-def test_inspect_element_invalid_rect_remains_source_invalid(
+def test_inspect_invalid_rect_remains_source_invalid(
     service: ElementProtocolService,
 ) -> None:
     service.rects["target"] = {"x": 0, "y": 0, "width": -1, "height": 10}
     with connected(service) as connection:
         session = session_for(service, connection, "spatial-element-rect")
         with pytest.raises(CommandError) as caught:
-            session.inspect_element(
-                session.element("id", "target"), attributes=("bounds",)
-            )
+            session.element("id", "target").inspect(attributes=("bounds",))
         assert_error(
             caught.value,
             CommandError,
@@ -2842,8 +2889,8 @@ def test_multi_root_reversed_edge_uses_shared_viewport_and_raw_stays_exact(
         data = document(result)["payload"]["roots"][0]
         assert data["viewport_relation"] == "outside_right"
         assert "bounds" in data["unknown"]
-        raw = session.inspect_structure(
-            session.element("id", "com.first:id/reversed"), scope="target"
+        raw = session.element("id", "com.first:id/reversed").inspect_structure(
+            scope="target"
         )
         assert ("bounds", reversed_bounds) in raw.roots[0].attributes
         assert service.settings["allowInvisibleElements"] is False

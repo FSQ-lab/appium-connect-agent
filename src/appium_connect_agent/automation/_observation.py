@@ -19,6 +19,7 @@ from defusedxml.common import (
 from defusedxml.ElementTree import fromstring
 from selenium.webdriver.remote.webelement import WebElement
 
+from ._boolean_value import _parse_boolean_value
 from ._element import Element, _locator_chain, _standard_resource_id
 from ._element_target import (
     _resolve_required_once,
@@ -242,11 +243,10 @@ def _canonical(value: object, gateway: _SessionOperationGateway) -> bytes | None
 
 
 def _parse_boolean(value: object, gateway: _SessionOperationGateway) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.lower() in {"true", "false"}:
-        return value.lower() == "true"
-    raise _error(CommandError, "source_invalid", gateway)
+    try:
+        return _parse_boolean_value(value)
+    except ValueError:
+        raise _error(CommandError, "source_invalid", gateway) from None
 
 
 def _parse_bounds(value: object, gateway: _SessionOperationGateway) -> Bounds:

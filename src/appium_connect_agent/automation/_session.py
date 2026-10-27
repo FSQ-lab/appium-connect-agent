@@ -24,7 +24,9 @@ from selenium.common.exceptions import (
 from appium_connect_agent.runtime import OperationControl, RuntimeConnection
 
 from ._actions import _perform_action, _validate_duration
-from ._element import Element, _make_element
+from ._device import Device, _create_device
+from ._editor_action import _perform_editor_action, _validate_editor_action
+from ._element import Element, _make_element, _PreparedOperation
 from ._element_target import (
     _PreActionStale,
     _validate_owner,
@@ -496,7 +498,11 @@ class _SessionOperationGateway:
         )
 
     def wait_request(
-        self, action: Callable[[], _Result], condition_deadline: float
+        self,
+        action: Callable[[], _Result],
+        condition_deadline: float,
+        *,
+        pre_action: bool = True,
     ) -> _Result:
         self.wait_checkpoint(condition_deadline)
         request_deadline = condition_deadline
@@ -508,7 +514,7 @@ class _SessionOperationGateway:
             request_deadline=request_deadline,
             condition_deadline=condition_deadline,
             cleanup=False,
-            pre_action=True,
+            pre_action=pre_action,
             post_check="condition",
         )
 
@@ -539,10 +545,11 @@ class _SessionOperationGateway:
 
 
 class Session:
-    """An explicit Appium Session with observation and Element actions."""
+    """An explicit Appium Session with bound Element and Device operations."""
 
     _appium_session_id: str | None
     _client: _LifecycleConnection
+    _device: Device
     _device_id: str
     _driver: webdriver.Remote | None
     _id: str
@@ -556,6 +563,7 @@ class Session:
     __slots__ = (
         "_appium_session_id",
         "_client",
+        "_device",
         "_device_id",
         "_driver",
         "_id",
@@ -591,7 +599,13 @@ class Session:
         instance._driver = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
+        instance._device = _create_device(instance)
         return instance
+
+    @property
+    def device(self) -> Device:
+        """Return this Session's bound Device without performing I/O."""
+        return self._device
 
     def session_info(self) -> SessionInfo:
         """Return a local immutable snapshot without touching Appium."""
@@ -671,14 +685,14 @@ class Session:
             lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
         )
 
-    def inspect_structure(
+    def _inspect_structure(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         scope: Literal["target", "declared_parent"] = "declared_parent",
-        control: OperationControl | None = None,
     ) -> RawStructureObservation:
-        operation_id, control, _, deadline = _new_operation(control)
+        operation_id, control, _, deadline = operation
         if scope not in ("target", "declared_parent"):
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         valid_element = _validate_tree_parent(element, self, operation_id)
@@ -691,14 +705,14 @@ class Session:
             ),
         )
 
-    def inspect_element(
+    def _inspect_element(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         attributes: tuple[ElementAttribute, ...],
-        control: OperationControl | None = None,
     ) -> ElementInspection:
-        operation_id, control, _, deadline = _new_operation(control)
+        operation_id, control, _, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         valid_attributes = _validate_attributes(attributes, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
@@ -711,15 +725,41 @@ class Session:
             ),
         )
 
-    def click(
+    def _perform_editor_action(
         self,
         element: Element,
+        action: str,
+        operation: _PreparedOperation,
         *,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_action = _validate_editor_action(action, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_editor_action(
+                driver,
+                valid_element,
+                gateway,
+                action=valid_action,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def _click(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        wait_timeout_seconds: float = 15.0,
     ) -> None:
         """Wait for one Element and issue one native single-click command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
@@ -737,15 +777,15 @@ class Session:
             ),
         )
 
-    def double_click(
+    def _double_click(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for one Element and issue one native double-click command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
@@ -763,16 +803,16 @@ class Session:
             ),
         )
 
-    def long_click(
+    def _long_click(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         duration_ms: int = 500,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for one Element and issue one native long-click command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         duration = _validate_duration(duration_ms, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
@@ -791,16 +831,16 @@ class Session:
             ),
         )
 
-    def send_keys(
+    def _send_keys(
         self,
         element: Element,
         text: str,
+        operation: _PreparedOperation,
         *,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for one Element and issue one native text-send command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
@@ -819,15 +859,15 @@ class Session:
             ),
         )
 
-    def clear(
+    def _clear(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for one Element and issue one native clear command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
@@ -845,16 +885,16 @@ class Session:
             ),
         )
 
-    def replace_element_value(
+    def _replace_element_value(
         self,
         element: Element,
         text: str,
+        operation: _PreparedOperation,
         *,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for one Element and issue one native text-replace command."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         valid_text = _validate_text(text, operation_id, allow_empty=True)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
@@ -873,17 +913,17 @@ class Session:
             ),
         )
 
-    def swipe_gesture(
+    def _swipe_gesture(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         direction: Literal["up", "down", "left", "right"],
         percent: float,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Wait for a displayed Element and issue one native swipe."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         valid_direction = _validate_direction(direction, operation_id)
         valid_percent = _validate_percent(percent, operation_id, maximum=1.0)
@@ -903,17 +943,17 @@ class Session:
             ),
         )
 
-    def scroll_gesture(
+    def _scroll_gesture(
         self,
         element: Element,
+        operation: _PreparedOperation,
         *,
         direction: Literal["up", "down", "left", "right"],
         percent: float,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> bool:
         """Wait for a displayed Element and issue one native scroll gesture."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         valid_direction = _validate_direction(direction, operation_id)
         valid_percent = _validate_percent(percent, operation_id, maximum=3.0)
@@ -933,17 +973,17 @@ class Session:
             ),
         )
 
-    def scroll(
+    def _scroll(
         self,
         container: Element,
         target: Element,
+        operation: _PreparedOperation,
         *,
         max_swipes: int,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Use one restricted official UiScrollable target search."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_container = _validate_owner(container, self, operation_id)
         valid_target = _validate_owner(target, self, operation_id)
         valid_max_swipes = _validate_max_swipes(max_swipes, operation_id)
@@ -963,18 +1003,18 @@ class Session:
             ),
         )
 
-    def drag_and_drop(
+    def _drag_and_drop(
         self,
         source: Element,
         destination: Element,
+        operation: _PreparedOperation,
         *,
         destination_x_ratio: float,
         destination_y_ratio: float,
         wait_timeout_seconds: float = 15.0,
-        control: OperationControl | None = None,
     ) -> None:
         """Drag one displayed Element to a point inside another."""
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, started, deadline = operation
         valid_source = _validate_owner(source, self, operation_id)
         valid_destination = _validate_owner(destination, self, operation_id)
         x_ratio = _validate_ratio(destination_x_ratio, operation_id)

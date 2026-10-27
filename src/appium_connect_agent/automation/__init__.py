@@ -1,5 +1,6 @@
-"""Synchronous Android discovery, Sessions, Element inspection, and actions."""
+"""Synchronous Android discovery, Sessions, bound Element and Device operations."""
 
+from ._device import Device as Device
 from ._discovery import list_devices as list_devices
 from ._element import Element as Element
 from ._element import ElementValidationError as ElementValidationError

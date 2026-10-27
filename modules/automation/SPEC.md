@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击、文本动作及手势/受限滚动查找契约已确认；实际实现与验证以交付证据为准，系统/应用动作尚未实现。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME 契约已确认；实际实现与验收状态以交付证据为准，应用管理尚未交付。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -122,13 +122,13 @@
 - `by` 只允许 ID、accessibility id 和 XPath 的 Appium/Selenium 实际字符串；value 为 1–4,096 个 Unicode code points 且不含 NUL。parent 必须属于同一 Session，链深最多 16；parent+XPath 在创建时拒绝。package 只适用于 ID，必须匹配 ASCII grammar `[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*` 且最多 255 字符。
 - 非 raw ID 只接受标准 local name `[A-Za-z_][A-Za-z0-9_]*` 或完整 `<package>:id/<local>`；短 ID 按显式 package、合法 Session target_app_id 的顺序规范化，均无来源时保留为 unresolved。其他形状须显式 `raw_id=True`；raw ID 禁止 package 和 Unicode control，不做自动补全。unresolved 短 ID 可用于官方属性查询，但不能作为本地结构范围。
 - `ElementValidationError(ValueError)` 是纯值工厂唯一受控失败，不带 operation_id/request_state；code 只取 `invalid_argument`、`unsupported_operation`、`element_session_mismatch`。Element 在观测调用中发生 owner 不匹配时改用带 operation_id 的 `InvalidRequestError/element_session_mismatch/not_sent`。
-- 同步观测入口为 `Session.observe_tree(*, parent: Element | None = None, control: OperationControl | None = None) -> TreeObservation`、`Session.inspect_element(element: Element, *, attributes: tuple[ElementAttribute, ...], control: OperationControl | None = None) -> ElementInspection` 和 `Session.inspect_structure(element: Element, *, scope: Literal["target", "declared_parent"] = "declared_parent", control: OperationControl | None = None) -> RawStructureObservation`。
+- 同步观测入口为 `Session.observe_tree(*, parent: Element | None = None, control: OperationControl | None = None) -> TreeObservation`、`Element.inspect(*, attributes: tuple[ElementAttribute, ...], control: OperationControl | None = None) -> ElementInspection` 和 `Element.inspect_structure(*, scope: Literal["target", "declared_parent"] = "declared_parent", control: OperationControl | None = None) -> RawStructureObservation`。
 - 三种结果及其嵌套值均为 `frozen=True, slots=True` 不可变值，公开 `to_json() -> bytes`；返回的是成功前已生成和计量的同一份规范 JSON bytes，重复调用不发 I/O。共同字段含 operation_id、六位微秒 UTC `observed_at`、`ObservationScope(locator, range_locator)`、coverage、complete_for_requested_scope 和固定 `upstream_completeness="unknown"`；结构结果另含 SourceMetadata，属性结果固定 `consistency="sequential_non_atomic"`。
 
 ### Observation Values And Scope
 
-- `inspect_element` 的 attributes 必须是 tuple、1–18 项、无重复且属于 `id/text/desc/type/package/enabled/focused/checkable/checked/selected/clickable/focusable/long_clickable/password/scrollable/displayed/bounds/window_id`。结果保持请求顺序；checked 依赖 checkable，已知 false 时为 not_applicable。属性多命令不是原子快照，不返回部分成功值。
-- 属性和结构字段区分 `value`、`missing`、`unknown`、`not_applicable`；合法 `""`、0 和 false 均保持 value。布尔值只接受上游 true/false 语义。`inspect_element` 的 bounds 必须是四个有限整数且宽高非负，非法 rect 明确失败。page-source TreeNode 的 bounds 若语法不是四整数、超出资源限制或无法解析仍为 `source_invalid`；若语法合法但 right<left 或 bottom<top，则不交换、裁剪或推测坐标，记为 `bounds.state="unknown"`，RawStructure 继续保留上游原字符串。
+- `Element.inspect` 的 attributes 必须是 tuple、1–18 项、无重复且属于 `id/text/desc/type/package/enabled/focused/checkable/checked/selected/clickable/focusable/long_clickable/password/scrollable/displayed/bounds/window_id`。结果保持请求顺序；checked 依赖 checkable，已知 false 时为 not_applicable。属性多命令不是原子快照，不返回部分成功值。
+- 属性和结构字段区分 `value`、`missing`、`unknown`、`not_applicable`；合法 `""`、0 和 false 均保持 value。布尔值只接受上游 true/false 语义。`Element.inspect` 的 bounds 必须是四个有限整数且宽高非负，非法 rect 明确失败。page-source TreeNode 的 bounds 若语法不是四整数、超出资源限制或无法解析仍为 `source_invalid`；若语法合法但 right<left 或 bottom<top，则不交换、裁剪或推测坐标，记为 `bounds.state="unknown"`，RawStructure 继续保留上游原字符串。
 - `TreeObservation` 保留 Appium hierarchy 的窗口/父子/sibling 顺序、全文、定位属性、必要状态和几何；不合并文本或节点。`visibility` 只取 `visible`、`partially_visible`、`not_visible`、`unknown`，`viewport_relation` 独立只取 `inside`、`intersects`、`outside_left`、`outside_right`、`outside_above`、`outside_below`、`unknown`。displayed=false 仍为 not_visible；只有坐标和 Viewport 证据充分时陈述相对方向，冲突时 unknown。固定 device-server 10.6.6 在 hierarchy 根写入 current display 尺寸，并在 Android API 30+ 将 enableMultiWindows 的窗口根过滤到 currentDisplayId，因此同一 source 的多 window roots 共用该 Viewport；Viewport 缺失、非法或非正时 relation 才保持 unknown。window-id 可缺失，多窗口不得只保留活动或首个窗口。Automation 只返回事实，不输出 `requires_navigation`、`suggested_gesture`、`direct_action_allowed` 或自动动作。
 - `RawStructureObservation` 保留 tag、parser 属性顺序、空字符串和父子层级；`target_path` 仅在本返回文档内按 children index 指向目标。原始指 XML tag/attribute/hierarchy 语义，不承诺 declaration、缩进、引号、转义词法或属性词法顺序逐字还原。
 - 公开 page source 无 elementId 接缝。局部范围链只支持完整/已规范化 ID、raw ID 或 accessibility id 的精确 XML 匹配；任一 XPath 或 unresolved 短 ID 在 source/Settings 请求前以 `structure_scope_unavailable/not_sent` 拒绝。每层在上一唯一范围的全部后代中查找，0/多匹配分别为 target_not_found/target_ambiguous。
@@ -139,7 +139,7 @@
 - 结构观测在同一 Session gate 内读取 Settings，要求 `enableMultiWindows` 为实际 true，并读取 `allowInvisibleElements` 与可用的 `snapshotMaxDepth`；必要时临时设置 `allowInvisibleElements=true`，取得一次 page source 后在安全路径恢复原值。raw ID 官方查询同样在 gate 内必要时临时设置 `disableIdLocatorAutocompletion=true` 并恢复；guard 合并设置、错误和清理规则，不永久改变 Session 定位语义。
 - XML 只用 `defusedxml.ElementTree.fromstring` 等价公开入口并显式禁止 DTD、entity 和 external resource；取得完整 Python str 后先严格 UTF-8 计量。上限为原始 XML 4,194,304 bytes、20,000 节点、深度 128、每节点 64 属性、tag/属性名 256 code points、单属性值 1,048,576 UTF-8 bytes；恰好上限允许，超限不返回部分树。解析后使用显式 stack 遍历，解析前后检查取消，不宣称同步 parser 可被即时抢占。
 - schema=1 使用 `json.dumps(..., ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True).encode("utf-8", errors="strict")` 的等价规范编码；计量对象是包含 envelope、scope、状态和 payload 的完整项目文档，最大 65,536 bytes，`to_json()` 必须与计量 bytes 相同。
-- 完整请求范围超限后，tree 只保留 visible、partially_visible、unknown 以及 `viewport_relation` 为 outside_* 的节点和必要祖先；包含视口外节点时 coverage 为 `visible_with_ancestors_and_offscreen`，否则为 `visible_with_ancestors`。structure 还无条件保留目标及其完整路径，过滤后重算 target_path。保留 sibling/父子和全部节点原值，并对所有实际窗口取并集；仍超限或单节点、祖先链、可见/视口外兄弟、多窗口整体超限时 `observation_too_large`。禁止截断字段、前 N、丢窗口、提升孙节点、分页、游标或跨页遍历。inspect_element 不做可见回退。
+- 完整请求范围超限后，tree 只保留 visible、partially_visible、unknown 以及 `viewport_relation` 为 outside_* 的节点和必要祖先；包含视口外节点时 coverage 为 `visible_with_ancestors_and_offscreen`，否则为 `visible_with_ancestors`。structure 还无条件保留目标及其完整路径，过滤后重算 target_path。保留 sibling/父子和全部节点原值，并对所有实际窗口取并集；仍超限或单节点、祖先链、可见/视口外兄弟、多窗口整体超限时 `observation_too_large`。禁止截断字段、前 N、丢窗口、提升孙节点、分页、游标或跨页遍历。Element.inspect 不做可见回退。
 
 ### Resolution, Errors And Lifecycle
 
@@ -152,7 +152,7 @@
 ### Verification Scope
 
 - 受控验证必须使用锁定真实 Appium/Selenium/defusedxml 客户端与临时 HTTP 协议服务，覆盖 Settings/source、根/子 find_elements、属性/text/rect、有效错误、慢响应、断连、响应未知和连接池关闭；不得只 mock WebDriver 成功。
-- 必须覆盖 Element grammar/owner/depth/raw ID、逐层唯一性、属性状态、三种完整 schema、XML 安全与全部资源 ±1 边界、每种结果 65,536/65,537、full→visible、不可见 structure 目标、多窗口、Settings 恢复、gate 优先级、取消/预算、uncertain 本地收尾、无缓存资源及 AIF-01/AIF-02 回归。空间事实须覆盖 inside/intersects/outside 四方向/unknown、page-source 反向 bounds→unknown、inspect_element 非法 rect 仍失败、offscreen fallback/coverage 与仍超限；并通过 strict mypy、Ruff、import-linter、pytest、build 和发行物检查。
+- 必须覆盖 Element grammar/owner/depth/raw ID、逐层唯一性、属性状态、三种完整 schema、XML 安全与全部资源 ±1 边界、每种结果 65,536/65,537、full→visible、不可见 structure 目标、多窗口、Settings 恢复、gate 优先级、取消/预算、uncertain 本地收尾、无缓存资源及 AIF-01/AIF-02 回归。空间事实须覆盖 inside/intersects/outside 四方向/unknown、page-source 反向 bounds→unknown、Element.inspect 非法 rect 仍失败、offscreen fallback/coverage 与仍超限；并通过 strict mypy、Ruff、import-linter、pytest、build 和发行物检查。
 - 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 与专用 Android 设备或已启动模拟器，覆盖普通 View、适用 Compose/自定义控件、多窗口/overlay、不可见节点、深层/长文本、局部范围、真实 4 MiB/64 KiB 边界和 Session 隔离；不执行 AIF-04 动作。没有相应资源时必须报告 `device-validation-blocked`，受控测试通过不等于 AIF-03 Done、Automation 模块完成或真实链路验收。
 
 ## AIF-04 Element Click Actions
@@ -165,7 +165,7 @@
 
 ### Public Interface
 
-- 同步入口为 `Session.click(element: Element, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`、`Session.double_click(...) -> None` 和 `Session.long_click(element: Element, *, duration_ms: int = 500, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Element.click(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`、`Element.double_click(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None` 和 `Element.long_click(*, duration_ms: int = 500, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
 - element 只接受本 Session 创建的可信项目 Element，完整 parent chain 同 owner、无循环且深度有效；拒绝裸 WebElement、elementId、bounds、坐标、伪造或跨 Session Element。每次调用重新解析，不缓存跨调用句柄。
 - `wait_timeout_seconds` 接受实际 int/float、拒绝 bool，必须 finite 且 >0。`duration_ms` 只属于 long_click，必须 `type(value) is int` 且 `1..60_000`，默认500；不截断、转换或沿平台缺省。
 - 成功只返回 None，表示获证原生动作命令取得合法成功响应；不保证事件命中、页面变化、菜单出现、双击业务效果或任务完成。
@@ -213,7 +213,7 @@
 
 ### Public Interface And Text Values
 
-- 同步入口为 `Session.send_keys(element: Element, text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`、`Session.clear(element: Element, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None` 和 `Session.replace_element_value(element: Element, text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Element.send_keys(text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`、`Element.clear(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None` 和 `Element.replace_element_value(text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
 - element只接受本Session创建的可信项目Element；完整parent chain须同owner、无循环且深度有效。拒绝裸WebElement、elementId、坐标、snapshot ref、伪造或跨Session Element；每次调用重新解析，不缓存跨调用句柄。
 - send/replace的text必须是str，不做强转、Unicode normalization、strip、换行转换、escape、截断或替换；以strict UTF-8编码后的原始text计量，恰好65,536 bytes允许，65,537拒绝。NUL、不可编码的孤立surrogate及末尾U+005C/U+006E字面反斜线+n拒绝；内部相同序列及实际LF/CR/TAB、其他Unicode control和普通Unicode原样传递，但不保证控件接受、保留或不规范化。
 - `send_keys("")` 在任何设备请求前 `invalid_argument/not_sent`；`replace_element_value("")` 允许并仍发送一次replace=true，不映射为clear。clear没有text参数。
@@ -264,10 +264,10 @@
 
 ### Public Interface And Values
 
-- 同步入口为 `Session.swipe_gesture(element: Element, *, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
-- 同步入口为 `Session.scroll_gesture(element: Element, *, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> bool`。
-- 同步入口为 `Session.scroll(container: Element, target: Element, *, max_swipes: int, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
-- 同步入口为 `Session.drag_and_drop(source: Element, destination: Element, *, destination_x_ratio: float, destination_y_ratio: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Element.swipe_gesture(*, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`。
+- 同步入口为 `Element.scroll_gesture(*, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> bool`。
+- 同步入口为 `Element.scroll(target: Element, *, max_swipes: int, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`，接收者为 container。
+- 同步入口为 `Element.drag_and_drop(destination: Element, *, destination_x_ratio: float, destination_y_ratio: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None) -> None`，接收者为 source。
 - 所有Element必须由本Session创建且完整链可信；拒绝裸WebElement、elementId、bounds、坐标、snapshot ref、伪造或跨Session对象。每次调用重新定位，不缓存跨调用句柄。
 - direction只接受精确lowercase四值。swipe方向是触点移动方向；scrollGesture方向是内容滚动方向，Adapter不二次反转。
 - percent接受实际int/float、拒绝bool，必须finite；swipe固定 `0 < percent <= 1.0`，scrollGesture固定 `0 < percent <= 3.0`。发送前用Python3.11标准库验证转换为固定后端binary32后仍finite且 `>0`；下溢到0在任何设备请求前拒绝，发送值不归一化。
@@ -313,4 +313,124 @@
 - official scroll须覆盖canonical-ID模板、target ID/accessibility、全部拒绝形状、mapTestTagToResourceId状态、target初始缺失、恰好一个final、no-such统一CommandError，以及成功后验0/多/hidden/stale/非法bool/unknown的分类和completed steps。
 - drag须覆盖rect形状、负坐标、0/1/正常尺寸、Java int边界、ratio 0/0.5/1、内部floor坐标、双目标整轮stale与一次final payload。
 - 临时协议服务只证明项目到Python client/Appium HTTP边界；固定源码/manifest证明driver/device-server调用链；获准真机页面证明实际触点、内容和drag。三层证据不得互相冒充。
-- 当前没有获准的安全drag目标应用；仍缺资源时报告 `device-validation-blocked`。专用动态App、跨feature场景和评分后置到Automation模块最终验收；AIF-06通过不表示系统/应用能力、Automation模块或平台完整链路完成。
+- 缺少获准的安全drag目标时报告 `device-validation-blocked`，不能以受控协议或源码资格代替适用基础真机链。专用动态App、跨feature场景和评分后置到Automation模块最终验收；AIF-06通过不表示系统/应用能力、Automation模块或平台完整链路完成。
+
+## AIF-ED Element-Bound Public Interface
+
+以下替代 AIF-03～06 的单控件观测与动作公开签名及接收者归属；其余既有行为契约继续适用。本节不包含 AIF-07。
+
+### Dependencies And Scope
+
+- 当前组合仍为 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 Driver 8.7.0 / Appium-Python-Client 6.0.8 / Selenium 4.51.0 / Python 3.11；实际资格与版本检查义务不变。
+- 复用既有 Session 私有执行入口、operation gateway、resolver、wait、raw-ID guard、Android Adapter 与已批准的标准库/defusedxml用途；不新增依赖、跨模块类型、公共 manager、dispatcher 或 Registry。
+- AIF-ED 本身不新增 Device/session.device 或系统按键/剪贴板/弹窗/IME；这些由独立 AIF-07 条款定义，不创建空占位。相关设计依据为 [AIF-ED 设计](../../docs/superpowers/specs/2026-10-26-automation-element-device-api-design.md)。
+
+### Public Interface
+
+以下均为同步方法；接收者为本项目 Element。表内完整签名取代旧 Session 同名方法，inspect 取代 Session.inspect_element；不保留旧公开名、兼容别名、deprecated forwarding、动态 __getattr__ 转发或重复 re-export。
+
+| 公开签名 | 返回 |
+| --- | --- |
+| `Element.inspect(*, attributes: tuple[ElementAttribute, ...], control: OperationControl | None = None)` | `ElementInspection` |
+| `Element.inspect_structure(*, scope: Literal["target", "declared_parent"] = "declared_parent", control: OperationControl | None = None)` | `RawStructureObservation` |
+| `Element.click(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.double_click(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.long_click(*, duration_ms: int = 500, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.send_keys(text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.clear(*, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.replace_element_value(text: str, *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.swipe_gesture(*, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.scroll_gesture(*, direction: Literal["up", "down", "left", "right"], percent: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `bool` |
+| `Element.scroll(target: Element, *, max_swipes: int, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+| `Element.drag_and_drop(destination: Element, *, destination_x_ratio: float, destination_y_ratio: float, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+
+- scroll 的接收者是 container；target.parent 必须仍为同一个 container 对象。drag 的接收者是 source，destination 必须属于同一 Session。原双目标准入、相对几何、raw/unresolved 联合限制和所有参数值域不变。
+- AIF-ED 保留的 Session 方法为 `element(by, value, *, parent=None, package=None, raw_id=False) -> Element`、`observe_tree(*, parent=None, control=None) -> TreeObservation`、`session_info() -> SessionInfo` 与 `quit(*, control=None) -> None`；原参数类型/默认及 observe_tree 可选父范围不变，不增加 Element.observe_tree 别名。AIF-07另加只读device属性，不恢复旧动作方法。
+- 顶层 list_devices/create_session 的参数、默认与结果不变；ElementInspection、RawStructureObservation 及其他公开结果/异常类型不改名。
+
+### Ownership, Execution And Errors
+
+- Element 仍为不可变定位与 Session 绑定描述，工厂创建零 I/O、不取 gate、不产生 operation_id；方法执行每次沿完整父链重新定位，不保存跨调用官方句柄/几何/状态。
+- 调用开始只生成一次 operation_id/started/deadline；可信 receiver/完整链与纯值校验后，通过所属 Session 的私有执行入口进入原非阻塞 gate，不另造 client、gate、预算或状态机。
+- 缺失/非法 owner 的伪造 receiver 以 InvalidRequestError/invalid_argument/not_sent 拒绝；原 marker/链/owner 校验继续适用，跨目标 owner 不匹配仍为 element_session_mismatch/not_sent。owner 与 scroll parent 用对象身份判断，不能用 Element 值相等代替。
+- bound Element 方法只作用于其绑定 Session；不存在从另一个 Session 调用该单目标动作的入口。factory parent、observe_tree parent、drag destination、scroll target 的跨 Session 参数仍在任何请求前拒绝。
+- 纯值检查先于 busy；合法重叠立即 session_busy；Session/connection 状态检查与取消/deadline优先级保持。Element操作、Session观测及quit共用唯一准入，实际请求/解析/必要恢复/收尾完成前不释放。
+- 单控件观测仍不隐式等待或改变设备；点击/文本的唯一、displayed/enabled准入及手势displayed-only准入保持。原pre-action stale与final no-replay、raw Settings安全恢复、strict返回、文本/观测资源限额、步骤/错误/cleanup顺序不变。
+- response_unknown或必要恢复终态不明仍转uncertain，关闭本地client、保留device/port占用；不补发restore/DELETE或重放。control=None、同步不可即时抢占及合法成功/必要收尾的既有规则保持。
+
+### Verification Scope
+
+- 十二项新入口须兑现原协议、状态/数据、参数边界和错误语义，迁移所有源码/测试/当前可运行说明中的旧消费者；历史已确认设计及审查原文不改写。
+- 必须保留可信 receiver/父链拒绝、跨 Session 路由与多目标参数拒绝、每调用一次起点、连续操作重解析、跨操作共享gate、原等待/Settings/unknown/恢复回归；不得将旧单目标 mismatch 用例机械改为 bound Element 自身调用后仍期待 mismatch。
+- 使用锁定真实客户端与既有临时协议服务验证，不只mock成功；直接Python消费者smoke证明新入口可运行、重定位与绑定行为。原质量/发行物及适用基础真机验证义务保持，模拟不冒充真机，不补签历史拖放资源缺口或宣称Automation模块完成。
+
+## AIF-07 Device System Actions And Element IME
+
+本节扩展 AIF-ED：增加有真实能力的 Device 与 Element IME，未列出的 Session/Element 契约不变。此处签名、界限和限制不构成设备操作授权。
+
+### Dependencies And Ownership
+
+- 资格固定为 macOS 宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0，Client6.0.8、Selenium4.51.0、Python3.11；实际安装须核对 Android driver14.2.0、server10.6.6、Settings8.0.9、appium-adb16.0.5及公开签名。差异即停止，不把兼容版本范围当实际身份。
+- 仅复用公开官方 helper、固定 execute_script、现有 Session gateway/resolver/ready wait/raw guard 及 Python3.11 base64/time/typing 等标准能力；不新增依赖、私有 client API、传输/解析器/输入法或第二套状态机。Runtime、Contracts、Configuration、Integrations 与依赖/lock 保持不变。
+- `Device` 由 automation 公开导出以供类型标注，只能由所属 Session 创建；`session.device -> Device` 是零 I/O 只读属性，同一 Session 返回同一绑定对象，不独立构造/改绑或自动析构 quit。Device 不等于 DeviceInfo，不持有另一 client、gate、生命周期、device/systemPort 占用或全局当前设备。
+- closed/uncertain Session 的本地 Device 引用仍可读取，其命令必须按原状态拒绝。Device、Element、Session 观测和 quit 共用唯一准入；可信绑定/纯值校验先于 busy，状态/connection 及取消/deadline 顺序保持。一次公共调用仅生成一份 operation_id/started/deadline。
+
+### Public Interface
+
+以下均为同步方法；`control` 为可选 OperationControl。无旧 Session 同名入口、兼容别名、任意 payload 或 Device 当前焦点 IME 入口。
+
+| 公开签名 | 返回 |
+| --- | --- |
+| `Device.back(*, control: OperationControl | None = None)` | `None` |
+| `Device.press_keycode(keycode: int, *, metastate: int | None = None, flags: int | None = None, control: OperationControl | None = None)` | `None` |
+| `Device.long_press_keycode(keycode: int, *, metastate: int | None = None, flags: int | None = None, control: OperationControl | None = None)` | `None` |
+| `Device.hide_keyboard(*, control: OperationControl | None = None)` | `bool` |
+| `Device.get_clipboard_text(*, control: OperationControl | None = None)` | `str` |
+| `Device.set_clipboard_text(text: str, *, label: str | None = None, control: OperationControl | None = None)` | `None` |
+| `Device.accept_alert(*, button_label: str | None = None, control: OperationControl | None = None)` | `None` |
+| `Device.dismiss_alert(*, button_label: str | None = None, control: OperationControl | None = None)` | `None` |
+| `Element.perform_editor_action(action: Literal["normal", "unspecified", "none", "go", "search", "send", "next", "done", "previous"], *, wait_timeout_seconds: float = 15.0, control: OperationControl | None = None)` | `None` |
+
+### Input And Resource Boundaries
+
+- keycode 必须实际 int、非 bool，范围 `0..2_147_483_647`；metastate/flags 为 None 或实际 int、非 bool，范围 `-2_147_483_648..2_147_483_647`。None 省略、0保留，不转换、截断或增加按键字符串别名；值域表示 Java int 可表示性，不保证 Android/OEM 支持每个数值。长按无 source、自定义时长或多次普通按键模拟。
+- IME action 只接受签名中的九个精确名称，不接受整数、大小写归一化、strip、别名或自动推断。normal/unspecified 同码来自官方，不自行重映射。wait_timeout_seconds 沿既有规则：实际 int/float、非 bool、finite且>0，默认15秒。
+- 剪贴板 text 为 str，以 strict UTF-8 计量，最多65,536 bytes，恰好允许；空串、NUL、LF/CR、control及末尾字面反斜线+n均可原样传递，不沿用输入框末尾序列禁令。不可编码的 surrogate 拒绝，不做 normalization/strip/截断或自动粘贴、聚焦、提交、剪贴板备份恢复。
+- label/button_label 若提供须为 str、strict UTF-8最多1,024 bytes；None省略、空串原样保留，不当None或改成缺省，不trim/normalize。标签不是selector语法。
+- 剪贴板原始返回须为最多87,384 ASCII字符的 Base64 str；使用标准库 `base64.b64decode(validate=True)`，解码后再限65,536 bytes，再strict UTF-8。必须同时检查编码长度与实际字节数；合法空串不报错，非法形状/Base64/UTF-8/超限不能转空或部分返回。
+- 返回计量发生在官方 client 完整接收/解析后，不构成网络层硬内存限制；不为本 feature 改写 HTTP parser/transport。Device 方法不额外等待或轮询业务状态。
+
+### Fixed Official Mapping And Success
+
+- back 只调用一次公开 `driver.back()`；固定 helper 返回None，不预先隐藏键盘、不补第二次返回，不推断页面到达。
+- 普通/长按分别调用公开 press_keycode/long_press_keycode；固定 helper 必须返回同一 driver self，再归一None；不读取私有 wire 值，未知终态不重放。
+- hide_keyboard 使用固定 `mobile: hideKeyboard`，结果必须 strict bool。true是官方报告本次隐藏、false是官方报告原已隐藏；失败或响应未知不能转false，不调用会丢弃bool的便利helper或新增back/空白点击兜底。
+- 纯文本剪贴板使用固定 `mobile: getClipboard` / `mobile: setClipboard`、contentType=plaintext。读取保留原始Base64以供严格解码；写入由标准库编码，label非None则包含（含空串），合法写入结果strict None。不用宽松解码/强转text/省略空label的便利helper。
+- 弹窗使用固定 `mobile: acceptAlert` / `mobile: dismissAlert`，可选字段准确为buttonLabel，合法结果strict None。不额外识别/等待弹窗、模糊匹配、重试或Element fallback；官方错误沿原异常链，不从message解析新错误类别。
+- IME使用固定 `mobile: performEditorAction`，只发送action；合法结果strict None，不把null当作控件已处理或业务已成功的bool。必要聚焦复用普通click Adapter，不公开elementId或坐标。
+
+### Element Focus And IME Execution
+
+- 整个复合操作只有一次Session gate/总预算/raw-ID guard；不内部调用公开Element.click/inspect形成二次准入。可信完整链/action/wait/raw混用等纯值校验在任何Settings/find/点击/IME请求前完成。
+- 条件预算从公共调用起点计时，默认15秒并由总预算截断。目标必须唯一、displayed=true、enabled=true；0匹配/隐藏/禁用按原ready wait，歧义立即失败，不自动滚动、切页或处理弹窗。
+- 在成功准备轮中读取同一临时WebElement的focused；接受实际bool或大小写true/false字符串。None为TargetError/precondition_not_met，其余非法形状为CommandError/command_failed，不把未知当false。点击尚未开始时有效stale可丢弃整轮重定位，失败轮不提交target完成事实。
+- 已focused则不点击；否则仅发送一次普通点击，合法成功后记录focus_click_completed，再在同一条件预算内只读轮询同一handle的focused，复用0.5秒间隔。点击后不换节点、不重定位、不再次点击；false可等，None/非法形状/stale/错误或超时均不发IME，保留已完成点击事实。
+- 明确focused后记录target_focused，final IME发送前再检查总预算/取消；条件预算不再限制final响应。一次官方IME成功记录action_completed；不恢复原焦点或隐藏键盘，不在失败后回滚/补发。
+- 焦点核对与最终执行不是原子操作；官方IME执行时仍作用于当前焦点，本项目不能保证应用或输入法不在两者间切换目标。不得把成功响应提升为搜索/发送/下一控件业务成功。
+
+### Errors, Completion Facts And Limitations
+
+- 沿用既有 AutomationError、operation_id、request_state、completed_steps、cleanup_errors 和异常链。纯值/绑定错误为invalid_argument或适用的element_session_mismatch/unsupported_operation、not_sent；不引入ActionResult、retryable或独立错误状态机。
+- 返回形状、严格codec与返回大小校验在gateway action callable内完成；完整响应的非法结果/编码/超限统一CommandError/command_failed/response_received。非法输入在请求前拒绝；合法空/false不是错误。
+- 在途无完整终态沿execution_unknown或可证明cancel/timeout分类，response_unknown使Session uncertain、关闭本地client并保留device/port占用；不补发可能重叠的restore/DELETE或动作。known-terminal raw恢复、cleanup顺序、合法动作成功优先和同步不可即时抢占等原保证不变。
+- Device合法None/bool命令记action_completed；getClipboard仅严格解码/计量成功后记clipboard_read。hide false不伪造keyboard_hidden事实。IME按实际路径有序取原Settings/target步骤，新增focus_click_completed（确有合法点击）、target_focused（明确true），最终action_completed和必要settings_restored；聚焦点击不能提前冒充IME完成。
+- 官方hideKeyboard内部可能先ESC后BACK，false也受dumpsys/OEM观测限制；项目不追加fallback不等于上游绝不使用BACK或已独立证实真实键盘状态。
+- Android10+剪贴板访问受限制，官方可能临时启动helper、切换前台/IME并尝试恢复，部分恢复失败仅warning。项目不额外点击/聚焦/粘贴/恢复剪贴板，不保证上游无这些变化或完整回滚；空串只表示合法官方空响应，不独立证明设备确实无内容。
+- 官方弹窗识别范围受resource-id模式限制；精确label重复时上游可能取首个，未指定时采用官方启发式，单按钮dismiss仍可能点击唯一按钮。它不具备Element唯一性保证，不保证accept=授权或dismiss=拒绝；自定义对话框须调用方显式Element操作，不是自动兜底。
+
+### Verification And Authorization Boundary
+
+- 使用锁定真实Client/Selenium和既有临时HTTP协议服务，验证实际路由/payload、输入与资源边界、strict结果、错误/unknown/预算/取消、跨Element/Device/Session共享gate及原回归；不只mock转发、源码或便利helper回声。
+- IME必须验证已聚焦零点击、必要一次点击、同handle复核、点击后stale/失败/取消/超时无第二次点击或IME、原raw guard恢复及完成事实；严格剪贴板解码须区分合法空与错误，不放宽合同求通过。
+- 必须通过直接消费者smoke、适用真实设备链和完整独立差异审查。此前AIF-ED安全设备授权不自动扩展至Home/其他按键、剪贴板读写、IME提交或接受弹窗权限；实施前仍需明确设备、安全页面/数据、命令及副作用授权，模拟不冒充真机。
+- AIF-07不等于面板/应用管理、Automation模块或平台完整链。专用动态App、跨feature/故障/清理/多设备与真实Agent链仍属模块最终验收；详细依据见 [AIF-07设计](../../docs/superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。

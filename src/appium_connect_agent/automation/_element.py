@@ -5,9 +5,22 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
-from ._models import ElementBy
+from appium_connect_agent.runtime import OperationControl
+
+from ._models import (
+    ElementAttribute,
+    ElementBy,
+    ElementInspection,
+    InvalidRequestError,
+    RawStructureObservation,
+)
+
+if TYPE_CHECKING:
+    from ._session import Session
+
+_PreparedOperation: TypeAlias = tuple[str, OperationControl | None, float, float | None]
 
 _PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 _LOCAL_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -40,6 +53,198 @@ class Element:
 
     def __init__(self) -> None:
         raise TypeError("Element objects are created by Session.element")
+
+    def inspect(
+        self,
+        *,
+        attributes: tuple[ElementAttribute, ...],
+        control: OperationControl | None = None,
+    ) -> ElementInspection:
+        owner, operation = _bind_operation(self, control)
+        return owner._inspect_element(self, operation, attributes=attributes)
+
+    def inspect_structure(
+        self,
+        *,
+        scope: Literal["target", "declared_parent"] = "declared_parent",
+        control: OperationControl | None = None,
+    ) -> RawStructureObservation:
+        owner, operation = _bind_operation(self, control)
+        return owner._inspect_structure(self, operation, scope=scope)
+
+    def click(
+        self,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._click(self, operation, wait_timeout_seconds=wait_timeout_seconds)
+
+    def double_click(
+        self,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._double_click(self, operation, wait_timeout_seconds=wait_timeout_seconds)
+
+    def long_click(
+        self,
+        *,
+        duration_ms: int = 500,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._long_click(
+            self,
+            operation,
+            duration_ms=duration_ms,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def send_keys(
+        self,
+        text: str,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._send_keys(
+            self, text, operation, wait_timeout_seconds=wait_timeout_seconds
+        )
+
+    def clear(
+        self,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._clear(self, operation, wait_timeout_seconds=wait_timeout_seconds)
+
+    def replace_element_value(
+        self,
+        text: str,
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._replace_element_value(
+            self, text, operation, wait_timeout_seconds=wait_timeout_seconds
+        )
+
+    def swipe_gesture(
+        self,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        percent: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._swipe_gesture(
+            self,
+            operation,
+            direction=direction,
+            percent=percent,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def scroll_gesture(
+        self,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        percent: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> bool:
+        owner, operation = _bind_operation(self, control)
+        return owner._scroll_gesture(
+            self,
+            operation,
+            direction=direction,
+            percent=percent,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def scroll(
+        self,
+        target: Element,
+        *,
+        max_swipes: int,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._scroll(
+            self,
+            target,
+            operation,
+            max_swipes=max_swipes,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def drag_and_drop(
+        self,
+        destination: Element,
+        *,
+        destination_x_ratio: float,
+        destination_y_ratio: float,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._drag_and_drop(
+            self,
+            destination,
+            operation,
+            destination_x_ratio=destination_x_ratio,
+            destination_y_ratio=destination_y_ratio,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def perform_editor_action(
+        self,
+        action: Literal[
+            "normal",
+            "unspecified",
+            "none",
+            "go",
+            "search",
+            "send",
+            "next",
+            "done",
+            "previous",
+        ],
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._perform_editor_action(
+            self, action, operation, wait_timeout_seconds=wait_timeout_seconds
+        )
+
+
+def _bind_operation(
+    element: Element, control: OperationControl | None
+) -> tuple[Session, _PreparedOperation]:
+    from ._session import Session, _new_operation
+
+    operation = _new_operation(control)
+    owner = getattr(element, "_owner", None)
+    if (
+        not isinstance(element, Element)
+        or not isinstance(owner, Session)
+        or not all(hasattr(owner, name) for name in Session.__slots__)
+    ):
+        raise InvalidRequestError("invalid_argument", operation[0], "not_sent")
+    return owner, operation
 
 
 def _create(
@@ -163,6 +368,8 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
     while current is not None:
         if not isinstance(current, Element):
             return "invalid_argument"
+        if not all(hasattr(current, name) for name in Element.__slots__):
+            return "invalid_argument"
         identity = id(current)
         if identity in seen or len(reversed_chain) == 16:
             return "invalid_argument"
@@ -177,7 +384,8 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
         raw_id = getattr(current, "raw_id", None)
         parent = getattr(current, "parent", None)
         if (
-            by not in _ALLOWED_BY
+            not isinstance(by, str)
+            or by not in _ALLOWED_BY
             or not isinstance(value, str)
             or not 1 <= len(value) <= 4_096
             or "\0" in value

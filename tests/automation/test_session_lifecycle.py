@@ -195,17 +195,6 @@ class ProtocolService:
             return [request for request in self.requests if request.method != "GET"]
 
 
-@pytest.fixture(autouse=True)
-def fresh_process_coordinator(monkeypatch: pytest.MonkeyPatch) -> None:
-    from appium_connect_agent.automation import _session_coordination
-
-    monkeypatch.setattr(
-        _session_coordination,
-        "_COORDINATOR",
-        _session_coordination._Coordinator(),
-    )
-
-
 @pytest.fixture
 def service() -> Iterator[ProtocolService]:
     with ProtocolService() as current:
