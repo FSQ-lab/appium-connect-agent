@@ -2,7 +2,7 @@
 
 日期：2026-10-23（Asia/Shanghai）。TaskID：`AUTO-IF-DESIGN-01`。
 
-状态：**v0.1 设计草案；by/value及首版parent+XPath边界增量已独审，F02修复复审通过；系统/应用接口增量独审通过，构造全参数/版本选型/异常恢复及新增产品取舍仍未完成，不是实现 Ready。**
+状态：**v0.1 设计草案；by/value与parent+XPath、系统/应用、公共错误/预算/生命周期、AIF-01/02及IME方案A增量均已独审，F04保持关闭；当前已识别的产品 blocker 全部收敛，版本资格验证等技术门槛仍阻塞实现 Ready，尚待用户最终确认整体设计。**
 
 ## 1. 授权、依据与文档关系
 
@@ -74,6 +74,8 @@
 
 父 XPath 单项提问：“首版是否采用这条边界：parent 暂用于 ID/accessibility id 等可确认范围的子查询；不支持 parent＋XPath，根级 XPath 仍可用？这样不需要解析或改写 XPath 来猜测它是否越出父范围。”用户回答：**“首版不支持该组合（推荐）”**。本轮据此确认：子目标 by=XPATH 且 parent 非空的组合在创建 Element 的纯值校验阶段拒绝，不查询设备、不丢 parent 退回根查询；根级 XPath 保留且本库不改写。该限制不自动禁止根 XPath 创建的 Element 作为父，再以 ID/accessibility id 查询其子元素；此路径仍需官方能力与版本资格验证，不从当前决定推断全面支持。parent 的详细参数/其他策略集合和属性AND表达通道仍未全量确认。
 
+IME目标语义最后确认：在说明Appium `mobile: performEditorAction`只接受action并作用于当前active input field，以及Element核对/自动聚焦方案的竞态和隐藏副作用后，用户明确回复：**“确认方案A”**。首版公开 `perform_editor_action(action)`，不接收Element，不定位、检查或自动改变焦点，不追加换行/按键；调用方如需指定业务输入框，显式组合已有tap/send_keys等Automation操作。命令成功只表示当前焦点的editor action命令完成，不保证搜索、发送或表单提交等业务结果。
+
 ### 2.2 必须沿用的需求
 
 - 操作及单控件查询唯一匹配；多匹配报歧义，不自动选第一个。属性组合、父容器、包名参数化；文本精确匹配，不隐式清洗。XPath 交 Appium，不自研解析/改写。每次操作重定位，单次可用官方元素对象，不建立跨次自有 ref/缓存体系。
@@ -144,7 +146,7 @@
 | --- | --- | --- | --- | --- |
 | IF-20 `back` 返回 | Session、Control | 官方返回命令 | 命令完成，不保证回到特定业务页 | 沿用 B1 |
 | IF-21 `press_keycode` / `long_press_keycode` Android 系统按键 | Session、整数 keycode、可选 metastate/flags、Control | 校验实际支持，映射官方命令；不另造跨平台键名 | 命令完成；不支持、失败、未知分开 | 沿用 B2/B3；映射已研究，实际 server 类型/组合待资格核验，见 5.3 |
-| IF-22 `perform_editor_action` IME 动作 | Session、官方 action、Control | `mobile: performEditorAction` 作用于当前焦点，不用任意换行猜发送行为 | 命令完成，不证明消息已发送 | 沿用 B4；当前焦点语义及是否绑定 Element 见 5.3 |
+| IF-22 `perform_editor_action` IME 动作 | Session、官方action、Control；不接收Element | `mobile: performEditorAction`只作用于当前焦点；不定位/核对/自动聚焦，不用换行猜发送行为 | 命令完成，不证明消息已发送或业务提交成功 | 沿用B4；当前焦点方案A本轮确认，实际action类型待资格验证 |
 | IF-23 `hide_keyboard` 隐藏键盘 | Session、Control；Android 不接收 iOS 键名/strategy | 官方能力；失败不自动点击其他区域 | 官方 true＝本次隐藏，false＝原已隐藏；失败与未知不转 false | 沿用 B5；推荐保留 mobile 返回值，见 5.3 |
 | IF-24 `get_clipboard_text` 读剪贴板 | Session、Control | 官方纯文本读取及 UTF-8/Base64 薄转换 | 已读取的文本；空字符串与读取失败区别 | 沿用 B6；首版纯文本建议见 5.3 |
 | IF-25 `set_clipboard_text` 写剪贴板 | Session、text、可选 label、Control | 官方纯文本写入，不隐式粘贴 | 写命令完成，不代表输入框变化 | 沿用 B6；名称按官方 Python Client |
@@ -270,7 +272,7 @@ session.element(by, value, *, parent=None, package=None) -> Element
 | value | 与 by 对应的原始定位字符串；ID 对应 resource-id，ACCESSIBILITY_ID 对应 content-desc，XPATH 对应原始 XPath | 原始策略和值表达沿 Appium；短 ID 格式和校验待定，不默默清洗文字 |
 | 精确文本与属性组合 | 推荐通过调用方显式给出的 XPath 精确谓词/AND 表达，使用真实 XML 属性名；不要求库自动生成表达式 | 原需求保留；只用 XPath 作为组合通道是待确认方案，不因 by/value 选择默认批准或缩减范围 |
 | parent | 可选同 Session 父 Element，先解析唯一父，再执行官方子查询；首版不与子目标 XPATH 组合 | 父容器需求沿用；parent+XPath 拒绝本轮确认，其余参数细节候选，跨 Session 拒绝沿已确认规则 |
-| package | 只参与短 resource_id 的项目规范化，缺省沿 Session 目标应用；不能改变 Session 或选应用 | 默认/覆盖需求沿用；无默认包名及与完整 ID 冲突的行为待确认 |
+| package | 只参与短resource-id规范化，不能改变Session或选应用；显式package优先，否则使用Session目标包，观测派生Element将范围级package固化到此字段，均无时原值交Appium | 默认/覆盖/无来源处理已确认；与标准完整ID冲突及自定义原样ID表达仍待相关feature收敛 |
 
 建议 by/value 必填，不将仅 parent、空条件或任意附加 kwargs 当成默认整屏。属性组合的语义仍是明确精确条件；原样 XPath 可表达 and 及调用方显式其他匹配方式，但本库不解析、清洗、重写或自行取第一个。具体支持字段及普通定位/滚动搜索差异仍需版本依据，不在实现时静默丢弃条件。父链如何避免循环/过深、对象是否不可变、关闭 Session 后是否还允许纯值构造仍待设计，不从例子推断默认值。
 
@@ -357,16 +359,16 @@ other_session.tap(items)
 
 **已经确认，直接沿用，不重复提问**：resource-id 的 package ID 参数化，短 ID 默认使用 Session 目标应用包名，单次可指定其他包名。原需求稿第 40 行保留该记录；by/value 不改变此规则，不把默认包名交给前台应用猜测，也不删短 ID 能力。
 
-下表只有第三列所列异常边界和自定义 ID 表达仍待收敛，不将整组规则标成未确认。本会话曾将已确认默认/覆盖规则与“无可用包名、冲突时报错”候选混为一组再次询问，用户指出重复；本次修正状态，该反馈不作为异常边界已获批准的证据。技术/API 能回答的事项先核验，必要适配建议集中列明，只为新增产品取舍提问。
+下表把已确认规则、用户本轮澄清和仍待后续feature收敛的自定义ID/无关参数边界分开。技术/API能回答的事项先核验，不把“上游能否成功执行”反复变成产品问卷。
 
 | 输入 | 正常规则 / 适配方向 | 仅下列边界待收敛 |
 | --- | --- | --- |
 | `AppiumBy.ID` + 标准完整 `com.example:id/name` | 原值定位，不再补包名 | 同时指定不同 package 建议报冲突，不静默覆盖 |
-| `AppiumBy.ID` + 短值 `name` | 已确认：显式 package 优先，否则使用 Session 目标应用包名 | 仅没有可用包名时的行为待定；建议明确报错，不猜前台app或instrumentation包名 |
+| `AppiumBy.ID` + 短值 `name` | 已确认：显式package优先，否则使用Session目标包；从精简观测构造时使用该观测范围统一声明的package。三者均无时不增加查询或前台包猜测，原值交Appium，成功或实际错误按官方结果处理 | 不承诺无package来源时一定成功，也不把Appium可能采用的instrumentation规则冒充项目默认 |
 | 自定义原样ID（不按标准格式） | 与短ID不能仅靠“没有冒号”猜测；需要明确表达与官方设置核验 | 不先引入 raw_id 新策略或全局改设置；参数/用途待用户取舍 |
 | 其他 by 策略 | package 不参与 XPath/accessibility value，不改写定位字符串 | 带无关 package 建议纯值拒绝，避免调用方误以为生效 |
 
-对象的 package 只说明该 Element 的定位值，不切换应用，不重设整个 Session，也不默默传播给不相关 Element。正常默认/覆盖规则已确认；未决异常边界及自定义 ID 表达仍为草案，不批准生成器、范围外客户端用途或安装依赖。
+对象的package只说明该Element的定位值，不切换应用，不重设整个Session，也不默默传播给不相关Element。精简观测在结果/窗口范围级统一声明package；由该范围构造Element时将其固化为定位描述的单次package，不要求每个节点重复输出。完整ID、显式/Session默认/观测范围package及无来源时沿Appium结果的顺序已经收敛；自定义原样ID表达和其他by携带无关package仍留给实际相关feature，不阻塞AIF-01/02。
 
 本轮公开定位表达按 by/value 收敛；属性组合推荐通过调用方的原样 XPath 表达，尚待具体确认，不另建关键字AND模型。resource-id 的包名沿 Session 默认应用并允许显式覆盖的需求保持。每次操作重定位，范围内唯一，精简 JSON 短名转换由 Automation 统一维护，不当 XPath 属性名。
 
@@ -378,7 +380,7 @@ other_session.tap(items)
 
 | 调用意图 | 对外输入草案 | Appium 映射与尚待核验项 |
 | --- | --- | --- |
-| 按 resource-id | 完整 ID，或短 ID 加显式/Session 默认包名 | 官方 ID 定位；本项目包名规范化不得被 driver 当前前台应用静默改变 |
+| 按 resource-id | 完整ID；或短ID按显式package → Session目标包 → 观测范围package解析；均无则保留短值 | 官方ID定位；有项目package来源时由Automation明确规范化，不查询当前前台包；无来源时原值交Appium并保留实际成功/错误 |
 | 按 content-desc | 完整原文 | Appium ACCESSIBILITY_ID 精确匹配，不做文本清洗 |
 | 按文本/多个属性组合 | 建议 `by=AppiumBy.XPATH`，value为调用方显式精确条件及AND表达式 | 不新造TEXT策略，不自动生成或改写XPath；该组合入口建议待确认，不悄悄删除原组合需求 |
 | 原样 XPath | 原始 XPath 字符串 | Appium XPATH；不解析、重写或把短字段名当 XML 属性名 |
@@ -387,7 +389,7 @@ other_session.tap(items)
 
 普通操作接受定位纯值并在调用时重新查询；先 observe 再操作不绑定旧节点。公开 Interface 不要求调用方保存 Appium 元素 ID。原生 `-android uiautomator` 不能只因 Appium 支持就作为任意公开原始表达式入口，因为可携带滚动等行为；若仅为适配已批准官方能力内部使用，需要明确受限用途与选型批准。
 
-包名适配注意：[server v10.6.0 ElementLocationHelpers](https://github.com/appium/appium-uiautomator2-server/blob/v10.6.0/app/src/main/java/io/appium/uiautomator2/utils/ElementLocationHelpers.java)的短 ID 自动补全依据上游 appPackage，并可能回退 instrumentation 包名，不能冒充本项目明确的 Session 默认应用规则。标准完整 ID 与特殊/自定义原样 ID 应如何区分、无默认包名时短 ID 的错误、disableIdLocatorAutocompletion 的必要设置及实际影响仍须确认；不因“自动补全”省略这些合同，也不静默改写自定义 ID。
+包名适配注意：[server v10.6.0 ElementLocationHelpers](https://github.com/appium/appium-uiautomator2-server/blob/v10.6.0/app/src/main/java/io/appium/uiautomator2/utils/ElementLocationHelpers.java)的短ID自动补全可能依据上游appPackage或回退instrumentation包。项目有显式、Session目标或观测范围package时先明确规范化；三者均无时不增加前台查询或自研推断，短值原样交Appium，实际成功/错误对外保留，但不把上游回退称为项目默认。标准完整ID与冲突package、自定义原样ID、`disableIdLocatorAutocompletion`实际影响仍须技术核验；首版不为无来源短ID全局改设置。
 
 `mobile: scroll` 是独立受限接缝：v8.7.0 文档要求其 elementId 对应可滚动容器且由 `-android uiautomator` 定位；目标策略只列 accessibility id、class name、-android uiautomator。普通属性组合和任意 XPath 不可自动承诺可用于滚动查找。容器与目标不兼容时先报告能力缺口，不在 Integrations 写循环补齐。UiSelector 上游弃用提示也须纳入后续版本/适配评估，不靠本稿引用批准自研替代。
 
@@ -590,7 +592,7 @@ Automation **复用现有公开 `runtime.OperationControl` 的 `timeout_seconds`
 | --- | --- | --- | --- |
 | 返回 `back()` | 无业务目标参数 | 调用官方 WebDriver back 一次；不判断当前页面再补导航 | 有效命令响应；可能先关闭键盘或改变页面，不保证到指定业务页 |
 | 系统按键 `press_keycode` / `long_press_keycode` | `keycode: int`，可选 `metastate`、`flags` 整数 | 官方 Python 同名 helper → `mobile: pressKey` → UiAutomator2 按键端点；长按由官方 isLongPress 表达 | 按键命令完成，不证明应用响应；不虚构长按 duration。source 是官方扩展，首版是否公开另定，当前不扩大参数面 |
-| IME `perform_editor_action` | 官方 `action` 名或整数码；目标形态见下文 | `mobile: performEditorAction` → Settings helper 的 editor action；不追加换行，不复用输入文字接口暗中提交 | 仅表示 editor action 命令完成，不保证搜索/发送成功；它作用于当前焦点，可能改变焦点/触发业务动作 |
+| IME `perform_editor_action` | 官方action名或整数码候选；**不接收Element** | `mobile: performEditorAction` → Settings helper；直接作用于当前焦点，不定位、核对或自动改变焦点，不追加换行，不复用输入接口暗中提交 | 仅表示editor action命令完成，不保证搜索/发送成功；焦点错误、变化或缺失按Appium实际结果处理，不伪称指定目标 |
 | 隐藏键盘 `hide_keyboard()` | 无 Android 键名、strategy 参数 | 用 `mobile: hideKeyboard` 保留官方布尔结果；不靠另点空白处回退 | true 表示本次隐藏，false 表示原已隐藏；无法隐藏为失败。Python 同名 helper 返回 self，不能拿它伪造上述布尔 |
 | 读剪贴板 `get_clipboard_text()` | 无格式参数，首版建议只纯文本 | 官方纯文本 getter 的 UTF-8/Base64 转换；driver 按 Android API 版本选择 UiAutomator2/Settings 路径 | 返回文本，合法空串保持为空；读取/解码失败不是空串。读取的是设备剪贴板，不是当前输入框 |
 | 写剪贴板 `set_clipboard_text(text, *, label=None)` | `text: str`，可选 `label: str` | 复用官方 Python 文本 helper；线上编码由官方封装处理；执行映射的参数是 label | 命令完成，改变设备剪贴板；不粘贴、不聚焦、不承诺系统会永久保留内容 |
@@ -598,7 +600,7 @@ Automation **复用现有公开 `runtime.OperationControl` 的 `timeout_seconds`
 | 展开/收起面板 `status_bar(command)` | 已确认首版白名单 expandNotifications / expandSettings / collapse | `mobile: statusBar` → driver 的固定 statusbar 命令；本库不公开任意 shell/command 透传 | 下游命令完成，可能返回空输出；不伪造 visible=true。Android 8+ 为该官方能力条件，厂商实际表现待验证 |
 | 点击已有磁贴 `tap(element)` | 已确认：同 Session 的目标 Element | 重用 IF-10 的唯一、显示、启用检查后点击，不另造 tile 定位系统或 TileService component 入口 | 点击完成，不等于设置为某个开关状态；不存在/歧义/未知沿普通点击。面板展开由调用方显式选择 |
 
-IME 的真实断点：官方不接收 Element。建议先保留明确的“对当前焦点执行 editor action”语义，且不把它当作“对指定输入框发送”。若公共意图要绑定 Element，应由 Automation 内部定位并核对 focused，或在明确批准后负责必要聚焦；不能要求 Integrations 自己拼点击/检查。**当前焦点版本、Element 版本及是否允许自动聚焦均未确认**，不是重新询问已确认的文本输入前置条件。可用 action 名为 normal、unspecified、none、go、search、send、next、done、previous；不自造跨平台键名语法。
+IME目标采用**本轮已确认方案A**：公开意图是“对当前焦点执行editor action”，不是“对指定Element发送”。Automation不接收Element、不定位或检查focused、不自动点击/聚焦，也不要求Integrations补这些步骤；调用方可按业务流程显式组合tap/send_keys后再调用。官方可用action名为normal、unspecified、none、go、search、send、next、done、previous；字符串/整数的最终公开允许集合及错误映射随锁定版本资格验证，不自造跨平台键名。检查焦点后执行仍非原子，自动点击又会引入隐藏业务副作用，均不作为首版同义入口。命令成功不升级为消息已发送、搜索已发生或表单已提交。
 
 磁贴的两种目标不可混用：上述 Element 是界面控件；官方 `statusBar(clickTile, component)` 的 component 是 TileService 组件标识（如 `com.example/.ExampleTileService`），不是磁贴文字或 resource-id。**本轮已确认**：首版已有磁贴 UI 点击只复用 `tap(element)`，不增加 component `clickTile` 入口；面板方法只接受 expandNotifications、expandSettings、collapse 三个命令。调用方显式展开所需面板再点击目标，Automation 不根据磁贴自动猜面板、发现或添加磁贴，不用命令完成假称磁贴已切换到某状态。添加/移除磁贴及其他 statusBar 命令不因上游支持而纳入。
 
@@ -625,7 +627,7 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 
 版本化依据：UiAutomator2 v8.7.0 [应用 API 文档](https://github.com/appium/appium-uiautomator2-driver/blob/v8.7.0/README.md#mobile-queryappstate)、Android driver v14.0.8 [app-management.ts](https://github.com/appium/appium-android-driver/blob/v14.0.8/lib/commands/app-management.ts) 与 [执行映射](https://github.com/appium/appium-android-driver/blob/v14.0.8/lib/execute-method-map.ts)、Python Client 固定提交 [applications.py](https://github.com/appium/python-client/blob/d261253b89786fb4686b374721f0fbd0b8c02854/appium/webdriver/extensions/applications.py)。这些分别核对的版本不是已锁定或已测兼容组合，Appium-adb 默认值、权限副作用与测试 APK 的最终状态仍须后续资格验证。
 
-本增量验收轮廓（未执行）：隐藏键盘 true/false/失败不混同；剪贴板中文/空串往返及读取失败；IME 焦点变化不伪称指定目标；官方弹窗识别失败不自动点击；面板命令白名单与 Element 磁贴点击；应用状态0/1/3/4；终止未运行及被重新拉起；本地APK升级失败、卸载未安装、清除前置失败/部分完成/响应丢失。应用变更后不自动重建 Session/重放命令，原占用和清理按真实状态处理。仅文档与官方资料核验，无设备/服务调用。
+本增量验收轮廓（未执行）：IME只向当前焦点发送一次官方action，不接受Element、不自动聚焦/点击/追加换行，焦点错误或变化不伪称指定目标；隐藏键盘true/false/失败不混同；剪贴板中文/空串往返及读取失败；官方弹窗识别失败不自动点击；面板命令白名单与Element磁贴点击；应用状态0/1/3/4；终止未运行及被重新拉起；本地APK升级失败、卸载未安装、清除前置失败/部分完成/响应丢失。应用变更后不自动重建Session/重放命令，原占用和清理按真实状态处理。仅文档与官方资料核验，无设备/服务调用。
 
 ## 6. 场景推演及尚待解决的断点
 
@@ -644,7 +646,7 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 | S03a 特殊 Enter 尾缀 | send_keys/replace_element_value 输入以字面反斜线+n结尾 | 纯值阶段拒绝，不定位/聚焦/清空，不改写文字，不发送 Enter | 单项已确认；真实LF/CR和其他字符支持仍待资格验证 |
 | S04 容器中查找并操作 | IF-05/06 明确容器 → IF-18 → IF-10 重定位目标 | 不支持的查找策略、预算耗尽、容器消失、目标重复 | U05；官方搜索限制，返回不能宣称列表业务完整 |
 | S04a 相对点/区域手势 | 本次操作采样显示区域，按宽高转换 [0,1] 点、起终点或区域，再调用官方能力；容器另由定位给出 | 绝对像素参数/模式不接受；不将同一坐标改按容器局部解释；旋转/窗口变化导致采样失效时不盲用旧几何 | 相对坐标与统一基准已确认，变化检测、边界与舍入待设计 |
-| S05 键盘、弹窗和面板 | 调用方判断后 IF-22/23/26/27/28/29 | 键盘原隐藏/隐藏失败、IME焦点变化、官方弹窗识别失败、磁贴缺失、厂商差异 | 5.3；IME目标待收敛，磁贴Element点击复用tap，不自动接收弹窗或回退点击 |
+| S05 键盘、弹窗和面板 | 调用方显式建立所需焦点后IF-22，或调用IF-23/26/27/28/29 | IME焦点错误/变化、键盘原隐藏/隐藏失败、官方弹窗识别失败、磁贴缺失、厂商差异 | 5.3；IME当前焦点方案A已确认，不自动聚焦/接收Element；磁贴Element点击复用tap，不自动接收弹窗或回退点击 |
 | S06 应用与 Session 分离 | IF-30 → IF-32 → IF-31 → IF-04；IF-33/34/35 单独显式场景 | 应用状态未知、终止后被重新拉起、安装/清数据后会话变化、关闭默认值交互 | U06及5.4；应用关闭不等于Session关闭，清数据前置组合不能外包给Integrations |
 | S06a 清数据的必要组合 | 单次 IF-35 内部检查安装/运行 → 必要 terminate → 核对未运行 → clear；同一次Session准入与总预算 | 未安装、停止失败、被重新拉起、停止已完成但清除失败、清除响应丢失 | 5.4组合已确认；不要求接入层拼步骤，不递归取锁、不回滚或自动重试；阶段预算待公共模型收敛 |
 | S07 多设备隔离 | 在同一 active Runtime connection 中两个明确设备各建 Session，操作只作用于各自归属 | A 的正常 quit 不关闭 B；相同设备拒绝；客户端/端口资源独立；创建/退出及跨线程冲突分别验证 | 正常生命周期已确认，U03/并发资格仍未解决；不是跨进程多连接或并行通过声明 |
@@ -692,14 +694,14 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 
 | 顺序 | 决策 / 工作 | 已确认边界 | 当前建议或需产出的契约 | 状态 |
 | --- | --- | --- | --- | --- |
-| P1 | IME 目标语义 | B4 已纳入；命令完成不代表业务发送；Integrations 不补聚焦步骤 | 首版只提供“对当前焦点执行 editor action”；不接收 Element、不自动点击或聚焦。若调用方需要指定目标，先显式执行已有 Element 操作并自行确认焦点 | **建议待确认**；官方入口只作用于 active input field，见 5.3 |
+| P1 | IME目标语义 | B4已纳入；官方只接收action并作用于当前焦点；命令完成不代表业务发送 | 首版 `perform_editor_action(action)` 不接收Element、不定位/核对/自动聚焦，调用方显式组合已有操作 | **方案A本轮确认**；实际action类型和错误映射待锁定版本资格验证 |
 | P2 | 面板与已有磁贴入口 | 展开通知、展开快捷设置、收起、点击已有磁贴已纳入；不添加/移除磁贴 | `status_bar` 只接受三个命令白名单；视觉磁贴只复用 `tap(element)`，不首发 TileService component `clickTile` | **本轮确认**；组件不是界面标签或 resource-id |
 | P3 | `clear_app` 必要组合 | 清数据是显式应用操作；Automation 封装其承诺所需设备步骤 | 同一 Session 准入与总预算内：查询安装/运行状态 → 必要时终止 → 核对未运行 → clear；无法证明停止即不清除，不重试、不回滚，保留部分完成 | **本轮确认**；查询与清除非原子，阶段预算待 P6 |
 | P4 | 应用选项白名单和默认 | 六项应用能力已纳入；默认保留数据；不开放任意 `**options` | 终止无上游 timeout；安装 `replace=True`、`allow_test_packages=False`；卸载 `keep_data=False`。`checkVersion`、权限、SD 卡、增量安装、跳过检查等不首发 | **本轮确认**；内部等待适配待 P6 与锁定版本资格验证 |
 | P5 | 公共错误模型 | 响应丢失不能断言未执行；不自动重放；同 Session 重叠立即报忙 | 异常式接口；稳定错误族、`request_state`、`completed_steps`、原始异常链及 `cleanup_errors` 分别表达；无通用 retryable | **本轮确认**；具体上游映射待锁定版本资格验证 |
 | P6 | 预算与取消 | 目标等待默认15秒；Session空闲默认500秒；检查点取消已确认；各层与响应预算分开 | 复用 `runtime.OperationControl`；`control=None` 沿 Appium 默认并接受可能无有限上限；显式 Control 提供总预算；阻塞命令结束及收尾前保持忙 | **本轮确认**；显式 timeout 能力与清理仍须锁定版本资格验证 |
 | P7 | 生命周期异常恢复 | 正常为单active connection、多Session、显式quit；不自动心跳/重建/重放 | creating/active/uncertain/closing/closed；未知时禁普通命令并保留本进程占用；崩溃后保证终止，不写持久账本；direct_connection关闭 | **本轮确认**；Runtime并发退出竞态和实际客户端清理待资格验证 |
-| P8 | 近期 feature 设计 | 一次一个 feature，约 1200 产品行目标；AIF-01/02 优先 | 补齐 AIF-01/02 的完整接口、错误/预算/恢复验收、选型门槛和模块整体验收接缝，再确认顺序与预算 | **待 P1–P7 收敛；未 Ready** |
+| P8 | 近期feature设计 | 一次一个feature，约1200产品行目标；AIF-01/02优先 | AIF-01/02接口、错误/预算/恢复、选型和验收接缝已详细设计，产品blocker已收敛 | **设计增量已完成**；技术资格验证、SPEC gate和真实资源授权仍阻塞Ready |
 
 并行但不由上述产品问答替代的技术门槛：Appium Python Client/UiAutomator2/Appium Server 精确版本与用途选型，ADB 设备发现方式，XML/JSON 处理，跨线程客户端与多 Session 资源参数，取消/传输清理能力。任何候选仍须按第 8 节完成资格研究和具体用户批准；本清单不批准依赖、设备操作或 SPEC delta。
 
@@ -715,7 +717,7 @@ IME 的真实断点：官方不接收 Element。建议先保留明确的“对�
 | AIF-04 | 定位后点击/双击/长按及必要条件等待；不判断业务成功 | AIF-03，前置条件与预算核验 | 唯一/缺失/歧义、按动作检查、一次执行、等待不重放；pytest＋测试应用 | 450–750 / 500–850 / 100–160 |
 | AIF-05 | 输入/清空/替换三个意图，必要动作组合；不当前焦点输入/提交 | AIF-04，文本官方能力资格 | 不隐式清空、目标身份、部分执行、响应丢失；pytest＋授权输入页面 | 350–650 / 450–800 / 100–180 |
 | AIF-06 | 已选滑动/滚动/查找/拖动；不自建通用搜索 | AIF-04，U05；坐标/官方策略 | 相对坐标、明确容器、策略限制、停止/未知；pytest＋授权滚动页面 | 450–800 / 500–900 / 100–180 |
-| AIF-07 | 已选键盘/纯文本剪贴板/弹窗；不自建识别 | AIF-04，5.3候选/焦点边界及版本资格 | 无隐式提交、键盘true/false、剪贴板空串/失败、官方识别失败不降级；pytest＋授权设备 | 350–650 / 400–750 / 80–140 |
+| AIF-07 | 已选当前焦点IME、键盘、纯文本剪贴板、弹窗；不自建识别 | AIF-04，5.3已确认目标语义及版本资格 | IME不接收Element/不自动聚焦/不隐式提交，键盘true/false，剪贴板空串/失败，官方识别失败不降级；pytest＋授权设备 | 350–650 / 400–750 / 80–140 |
 | AIF-08 | 通知栏/快捷设置展开收起及已有磁贴；不新增磁贴 | AIF-07，5.3面板白名单与Element tap复用建议 | 面板种类/厂商差异、无目标、不伪称开关状态；pytest＋授权设备 | 200–450 / 300–500 / 60–120 |
 | AIF-09 | 应用激活/终止/状态；不推断业务页面 | AIF-02，U06及5.4 | Android0/1/3/4、未运行终止/被重新拉起、Session与应用分开；pytest＋授权应用 | 200–400 / 250–450 / 60–120 |
 | AIF-10 | 显式安装/卸载/清数据及必要前置；不改变默认保留数据 | AIF-09，U06/U08及5.4组合/选项确认 | 本地APK与升级失败、卸载未安装、清除前停止/核对及部分完成、Session后续状态；pytest＋专用APK/设备授权 | 250–450 / 350–550 / 80–140；组合超额须先重拆 |
@@ -769,7 +771,7 @@ create_session(
     connection: RuntimeConnection,
     device_id: str,
     *,
-    app_id: str,
+    app_id: str | None = None,
     app_path: Path | None = None,
     auto_launch: bool = False,
     force_app_launch: bool = False,
@@ -782,9 +784,9 @@ create_session(
 ) -> Session
 ```
 
-首批要求明确 `app_id`，即使同时给APK也用它作为Session目标包和短resource-id默认包；`app_path=None`表示使用已安装应用，非None须为本地绝对单APK路径且由当前本地Appium服务可读。该收敛避免从APK或前台应用猜目标包，仍保留原需求的已安装包/APK两种输入。`auto_launch`等一等映射Appium能力，不创造keep/activate/restart模式；组合冲突在任何Session请求前拒绝，具体矩阵须按最终UiAutomator2版本资格验证。
+应用输入沿Appium v8.7.0官方能力允许四种组合，本轮已确认不另行收窄：两者都不提供时创建device-only Session且没有项目目标包；仅 `app_id` 时面向已安装应用；仅 `app_path` 时由Appium从APK检测package/activity；两者都提供时 `app_id` 是显式目标包，本库不自研APK解析或一致性检查。`app_path`仍只接受本地绝对单APK且由当前本地Appium服务可读，不扩大到URL/APK集。Session目标包按显式 `app_id` 或Appium有效响应中可靠的appPackage记录；仍无目标包时，短ID按第4.3.5节不增加隐式查询，直接交Appium并保留实际成功/错误。`auto_launch`等一等映射Appium能力，不创造keep/activate/restart模式。
 
-Automation固定并验证 `platformName=Android`、`appium:automationName=UiAutomator2`、`appium:udid=device_id`、目标app/appPackage、500秒空闲默认及首批已确认范围。原始capabilities只允许批准白名单内、JSON可表达且有界的附加项；与一等参数、设备、平台、driver、连接端点、`direct_connection`、系统端口或首批范围冲突时明确拒绝，不静默覆盖。`enableMultiWindows=true`按原需求加入所选版本正确入口，但不据此宣称已取得窗口来源。Automation为不同active/uncertain Session分配并保留唯一UiAutomator2 `systemPort`；这是内部资源，不要求调用方调度，外部客户端冲突不在保证内。WebView/Chromedriver、MJPEG和录屏端口不因并行章节存在而配置。
+Automation固定并验证 `platformName=Android`、`appium:automationName=UiAutomator2`、`appium:udid=device_id`、所选应用输入、500秒空闲默认及首批已确认范围。原始capabilities只允许批准白名单内、JSON可表达且有界的附加项；与一等参数、设备、平台、driver、连接端点、`direct_connection`、系统端口或首批范围冲突时明确拒绝，不静默覆盖。`enableMultiWindows=true`按原需求加入所选版本正确入口，但不据此宣称已取得窗口来源。Automation为不同active/uncertain Session分配并保留唯一UiAutomator2 `systemPort`；这是内部资源，不要求调用方调度，外部客户端冲突不在保证内。WebView/Chromedriver、MJPEG和录屏端口不因并行章节存在而配置。
 
 每个Session持有一个独立Appium客户端、设备/目标身份和生命周期状态；不同Session不共享WebDriver实例、sessionId或命令连接。同进程内部协调器只保存设备与systemPort保留信息，不能按ID查回Session或作为公共Registry。创建请求发出前同时保留device和port；按第5.0.2节处理成功、可证明未创建、响应未知。`direct_connection=False`，禁止新Session响应把客户端切到未经Runtime验证的端点。普通操作与quit在开始前验证Runtime connection仍active；首批要求调用方将Runtime退出与所有Session生命周期串行化，正常顺序仍为全部quit后退出。现有Runtime没有可供Automation持有的lease，因此跨线程并发退出的check-then-exit竞态不承诺被完全拦截；若最终要求强制阻止退出，必须单列Runtime SPEC delta，不能读私有锁实现。
 
@@ -803,7 +805,7 @@ AIF-02受控验证不要求真实设备的部分：临时HTTP Appium协议服务
 
 AIF-02预算维持700–1100产品 / 700–1200测试 / 140–240文档行；若process coordinator、能力矩阵和客户端适配累计明显超过约1200产品改动，先按“Session创建关闭”与“多Session资源隔离”两个可验收行为重新拆分，不删减错误/清理验证。未来SPEC delta主要在根依赖/Automation公开映射与Session契约；按当前进程内范围和串行Runtime退出前提，暂不需要Runtime或Contracts delta。
 
-**Ready阻塞**：Appium-Python-Client 6.0.8 / Selenium 4.51.0版本与限定用途已获用户批准；全部传递依赖锁定核验、实际wheel API、默认/显式timeout、清理、并行systemPort和目标server/driver组合尚未资格验证；真实Appium/设备/APK操作未授权。`app_id`必填及Runtime并发退出仅设为首批串行前提仍需最终设计确认。AIF-01先验收后才能实施AIF-02。
+**Ready阻塞**：Appium-Python-Client 6.0.8 / Selenium 4.51.0版本与限定用途已获用户批准，四种app_id/app_path组合及无项目包名时的短ID处理已确认；全部传递依赖锁定核验、实际wheel API、APK自动检测/effective capabilities、默认/显式timeout、清理、并行systemPort和目标server/driver组合仍待技术资格验证；真实Appium/设备/APK操作未授权。Runtime并发退出首批只支持调用方按已确认正常顺序串行化；若需强制防竞态须另提Runtime delta。AIF-01先验收后才能实施AIF-02。
 
 ## 10. 拟议 SPEC 影响、设计验证与后续
 
@@ -831,8 +833,14 @@ Element 增量独立 full 审查结论 **pass**，审核稿 `f91ff04a4e585af35dc
 
 by/value-parent增量独立full审查发现F02：兼容矩阵一处仍写父XPath组合待确认，与新确认冲突。已修正并通过第1轮repair-only复审，**F02 closed / pass**；修复审核稿 SHA-256 `aa6fa1e5d07576962b6a44053a91f056bed0017bc4859cc45bf399af8bc24275`（112,978 bytes），完整差异 `ca02ebbb2a3535340d10dba30dd39a2d823f892934390752429457c50eb4108b`，修复增量 `c1f635986ea791cfcef1620d3f2b0eebaebd1e7f49fcc23adfa4e8786fca1641`。实际核验11份固定依据、两条用户原始问答及25条专家真实记录，三份差异重建一致；无产品/设备运行。此次页首和审查记录追加不在审核稿哈希内，审查不是参数全量确认或Ready。
 
-本轮补齐 by/value Element 构造示例、parent解析流程及package边界后，已继续完成第5.3/5.4节系统与应用公开接口表，并更新总表、场景和feature验收轮廓。保留的新增产品取舍为IME目标语义、面板/已有磁贴入口收敛、清数据必要组合和应用选项默认；均为建议，集中评审，不重问已确认能力及正常package规则。Element 创建归属和重定位、by/value方向、parent+XPath首版拒绝、短ID默认Session包名及单次覆盖均沿用确认。
+在系统/应用增量审查前，本稿补齐by/value Element构造示例、parent解析流程及package边界，并完成第5.3/5.4节接口表、场景和feature轮廓。该快照当时将IME目标、面板/磁贴、clear_app组合和应用选项均列为建议；后续本轮已逐项确认，IME最终采用当前焦点方案A。Element创建归属和重定位、by/value方向、parent+XPath首版拒绝、短ID默认Session包名及单次覆盖继续沿用确认。
 
-系统/应用研究由Tech Lead实际读取固定官方源码完成，未运行设备/服务/安装/测试。新专家任务 `AUTO-SYSTEM-APP-EXPERT-03` 首读预检失败已停止，无有效研究交付，不把其角色身份或消息当作来源，也未重复启动。实际官方原文和哈希另存本地 `/tmp/aca-auto-interface-design-20261023/system-app/research/manifest.json`，设计中已保留持久官方版本链接与差异说明。当前新增设计增量独审通过，产品取舍仍待确认；跨进程未知占用、预算/取消、具体依赖版本及API资格仍阻塞Ready。最终设计确认前保持草案，只有另行显式 `$spec-driven <已确认设计路径>` 才能进入SPEC gate与实现。
+系统/应用研究由Tech Lead实际读取固定官方源码完成，未运行设备/服务/安装/测试。新专家任务 `AUTO-SYSTEM-APP-EXPERT-03` 首读预检失败已停止，无有效研究交付，不把其角色身份或消息当作来源，也未重复启动。实际官方原文和哈希另存本地 `/tmp/aca-auto-interface-design-20261023/system-app/research/manifest.json`，设计中已保留持久官方版本链接与差异说明。该审核快照之后的产品决定、依赖批准、公共模型和近期feature设计由下述最新独审另行覆盖；最终设计确认前仍保持草案，只有另行显式 `$spec-driven <已确认设计路径>` 才能进入SPEC gate与实现。
 
 系统/应用实质增量由原独立上下文 `/root/automation_interface_draft_review` 完成 full 审查，结论 **pass，无确定缺陷**；F01/F02保持关闭。审核稿 SHA-256 `2294e6df0891fb77c3709d2ae008fb31c4510e5d56ad7b7b6e2a4684596769d5`（128,407 bytes/669行），完整差异 `765147e6237d72a46a9a8cd4063b1c60c18539beb72192deb041d55c341f193d`，累计差异 `08e77cfd2e28119b0334b138d0bd6dd07fd7dfcaff4842433896134aa5c2f2a7`。实际核对13份固定依据、三份完整差异重建及13份有效官方原文，2处404未用作依据；10个本地链接、表格与空白检查通过。累计文档新增78/删除26行，产品/测试均0，无设备/服务操作。此处及页首为结果追加，审核哈希不冒充追加后全文身份；通过不代表最终批准、Ready或设备验收。
+
+本轮公共错误、预算/取消、生命周期恢复、应用决定、AIF-01/02及选型增量由独立上下文 `AutomationDesignAudit` 完成 full 审查。初审固定当前HEAD `584554817cafce1e9c3441d8892f2954aa8cfafb`、审核稿 SHA-256 `978751df8790c33bbe7065f0b2b7af964f316e17a7a64aecf08a9258768cc338`（158,808 bytes/838行）和完整差异 SHA-256 `34ca5664db0796c182dc577d3a25a46c16ec99c1db2d8ab852a6500634815d27`（4增/4删），结论 fail：本轮记为F03，指出第9.2节在无新确认时把app_id/app_path互斥及APK无默认包名行为写成既定契约。已恢复为技术核验与用户确认项，并经同一独立上下文第1轮repair-only复审，**F03 closed / pass，无新增缺陷**；修复审核稿 SHA-256 `d887831c49d968019b3801aac38f522b036b110401f7635a6b3ffda924d0b417`（159,054 bytes/838行），完整差异 SHA-256 `58fea7bc06ba9ed9203f4df55384b5d871647160494f0c36ecf66978e61cc3b7`（4增/4删）。审查实际核对根/技能/角色、根及四个模块SPEC、需求基线、完整文稿/差异和相关官方/PyPI来源。此次页首、历史状态澄清和本段为审查结果元数据，不在修复审核稿哈希内；pass不代表IME决定、资格验证、最终用户确认、实现Ready或设备验收。
+
+本轮blocker确认增量由独立上下文 `AutomationDesignAudit` 完成新的full审查。审核稿 SHA-256 `3e4e7fc4ac67b19faf605306d755b59a7bf6dcdd0495e95c2411f91f4d3d43e6`（160,208 bytes/840行），完整差异 SHA-256 `0930534e997dfa2114448f5c5333834a034f04cc1bea9818748ecb88f8fbd6b0`（14增/12删）；初审发现F04：第4.3.1和定位映射仍保留旧的“无默认包名待确认”，与新增短ID规则冲突。已统一为显式package → Session目标包 → 观测范围package → 无来源原值交Appium，并经第1轮repair-only复审，**F04 closed / pass，无新增缺陷**。修复审核稿 SHA-256 `3f810a337d091d0dd7641804f18296ea1ee8a229520190e91b79a81400ad9670`（160,524 bytes/840行），完整差异 SHA-256 `b27563887b0923de74b8c4d527b79dcdf8617361bedef376e158a0caf5f050e7`（17增/15删）。本段和页首仅追加审查结果元数据，不在修复审核稿哈希内；pass不代表IME已决定、技术资格验证完成、实现Ready或设备验收。
+
+IME方案A实质增量由独立上下文 `AutomationDesignAudit` 完成full审查，结论 **pass，无确定缺陷**。审核稿 SHA-256 `f2e913195ebb48df1705a235e8d60445cc3c1ae9def08882473b35027fca5db7`（162,689 bytes/844行），完整差异 SHA-256 `c21c101a37bb1ab07f916409e84a8f8e93b37a457dd3a02d32af360caa06f0ba`（27增/21删）。审查核对用户“确认方案A”在确认记录、IF-22、5.3、验收轮廓、S05、P1和AIF-07中一致：只作用当前焦点，不接收Element，不定位/核对/自动聚焦/追加换行或按键，调用方显式组合，Integrations不补隐式设备步骤，命令成功不升级为业务提交。字符串/整数action集合和错误映射继续作为锁定版本资格验证，不是产品未决。本段与页首仅追加审查结果元数据，不在审核稿哈希内；pass不代表实现Ready、设备验收或整体设计已获最终用户确认。
