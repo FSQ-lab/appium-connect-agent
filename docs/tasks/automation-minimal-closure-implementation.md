@@ -2,7 +2,7 @@
 
 日期：2026-10-28。TaskID / FeatureID：`AUTO-MA-01-MINIMAL-CLOSURE`。
 
-状态：**SPEC gate、实现/文档和非设备门槛经最终full＋两轮repair-only审查通过，无开放finding；最终真实smoke known-clean blocked，故模块device-validation-blocked且非Done。** 不自动提交、推送或第四次设备尝试。
+状态：**原实现/文档/非设备门槛及AUTO-MA-02证据经独立full＋repair-only审查通过，无开放finding。唯一Settings terminate→activate修订smoke仍known-clean blocked、资源安全闭合且不自动再试；模块device-validation-blocked且非Done。** 不自动重复、提交或推送。
 
 ## 1. 显式授权与范围
 
@@ -225,3 +225,45 @@ Tech Lead唯一允许修改：
 - Repair-01新增F003：任务/台账误把README语义同步归为纯机械格式。Repair-02只修正文档churn分类；F003 closed、无新finding。Repair-02 manifest SHA-256 `b0e7da71cf4311807b024c54b709aa2bcd8b187d0d54c1f647b996daa057e506`；最终结果SHA-256 `5b3b666097e8ffa4b25bbeed4cf59c0388ee85ff03e841ca728a9aa132f0b840`。
 - 最终审查结论：`implementation-and-non-device-pass; device-validation-blocked-known-clean; module not Done`。Pass只关闭实现/文档/非设备finding，不提升Attempt-03、不授权第四次，也不能宣告最小收口Done。
 - 本节与状态行只记录审查元数据，位于repair-only核对身份之后，不改变已审查行为、文件范围或设备结论。
+
+## 13. AUTO-MA-02 Settings Restart Smoke Repair
+
+### 13.1 授权、基线与门槛
+
+- 用户于2026-10-28显式调用`$spec-driven`，授权在当前明确Android设备及隔离Appium3.7.0 / UiAutomator2 8.7.0环境中修复Settings启动编排并执行**至多一次**全新模块smoke及必要安全恢复；任何pass、known failure、known blocked或unknown后均不自动再次尝试。
+- 原始范围固定：保持`da294d8d42cda5331368b02275fcb2eb15689816`代码、发行物和AIF-01～10证据；不改产品代码、永久测试、依赖或公开Interface；继续device-only Session；Settings准备改为一次`terminate_app("com.android.settings")`后一次`activate_app("com.android.settings")`，terminate合法`True`/`False`均继续；known失败停止并在终态已知、Session active时正常清理；response unknown立即停止且不使用uncertain Session继续；不以back归一化、不换locator、不重试、不使用raw ADB/shell。
+- 启动时仓库`master`与`origin/master`同步、工作区clean。根SPEC SHA-256 `fd599c39b23905821a99878b407edc7d4db5675819bdb924cd93e85f3ccf7fa8`，Automation SPEC确认基线 `558f821cab329512679d2a949d95a581c484ca7476a2e82de0fb6e91cb1f8c46`，本设计 `c923dbf036b0ead2b2eb08a055790f73efb778cb8aa24f1d90755aa1aff17536`，本任务原文件 `ab64b82df7aae9bd136ff18606adc1e043b9a36192f87abc010075bd9255c6f6`，台账 `9644a5d81c6ccc2f6e08c95a15633ef531ff17f95391b425acee479ce57d007c`。
+- SPEC判定：根SPEC no-delta；Automation SPEC第579条改变受限真实smoke允许的Settings状态动作，须窄delta。初轮独立full审查F001/F002经修复后repair-only pass、无新finding；用户已确认，pending结构已clean cutover。当前Automation SPEC SHA-256 `20258d7dbcebcca7e78ea024f6d8921e5ea9da8f2fed3adfeb8dcd708abe8b30`；该确认不扩大本节已经固定的一次性授权。
+
+### 13.2 复用、范围与文件所有权
+
+- 不涉及Python实现或新选型。只复用现行已批准Automation公开Interface、Runtime公开连接、Client6.0.8、Selenium4.51.0、Appium3.7.0及UiAutomator2 8.7.0；不新增/替换/升级依赖，不调用已移除的`launch_app`，不自研协议或通用能力。
+- Tech Lead唯一允许修改：`modules/automation/SPEC.md`、本设计、本任务、交付台账；根SPEC、README、`.github/scripts`、`src/`、`tests/`、`tools/`、`pyproject.toml`、`uv.lock`和发行内容禁止修改。一次性consumer、manifest和原始记录仅存会话临时证据目录，不进入仓库。
+- 产品代码预算0、永久测试0、仓库工具0、依赖/lock0；文档只计上述四文件实际增删，一次性证据consumer单列。当前平台、模块及前序依赖继续沿第4节；FeatureID为`AUTO-MA-02-SETTINGS-RESTART-SMOKE`，依赖已审查的`AUTO-MA-01-MINIMAL-CLOSURE`非设备结论和AIF-01～10限定Done。
+
+### 13.3 实施、验收与停止条件
+
+- SPEC已确认并clean cutover；先同步本设计/任务/台账，再固定当前提交、wheel/sdist、ADB公开发现路径、设备、package、locator、文本基线及上游patch身份。身份不符即停止，不换版、不重建发行物；因产品/测试/依赖不变，不重复全库/质量/构建/隔离发行验证，只引用第8节及其最终独审身份。
+- 唯一新smoke使用公开`list_devices`的固定`adb devices -l`路径，不执行其他raw ADB或shell。业务顺序保持第9节，但在Settings observe前增加一次terminate和一次activate；启动准备至首次固定locator资格完成前零back。原文本精确恢复并hide后保留既有一次back进入已核对列表；除此之外不新增back、locator、参数、请求、fallback或retry。
+- terminate合法`True`/`False`均记录并继续；完整known失败停止业务链并在Session仍active、终态已知时完成原正常quit/服务清理；response unknown或Session uncertain沿现行合同立即停止该Session后续操作，不发送restore/query/remove/quit/DELETE，固定证据并执行用户已授权的必要安全恢复。任何恢复无法证明时设备/端点保持隔离并报告阻塞。
+- 验收仍要求固定Settings文本精确恢复、固定手势事实成立、Calculator最终query1、primary及replacement均closed/busy=false、Runtime退出、owned隔离服务停止/端口关闭、无未决unknown/敏感泄漏/副作用。新设备证据及本批文档差异须由未参与consumer编写/执行的独立上下文审查通过，才可把模块状态从`device-validation-blocked-known-clean`改为限定Done。
+- 立即停止条件：SPEC未确认；需要禁止文件/新Interface/代码/测试/依赖/APK/其他平台；版本/设备/package/locator/安全文本不符；需要未授权UI/ADB动作；发生unknown、Session资源无法闭合或恢复证据不足；独立审查不可用。决策负责人仍为用户；Tech Lead不得降低门槛或自动第二次尝试。
+
+### 13.4 SPEC gate证据
+
+- 初轮full manifest：`7dcba3c481947c5f315745a382393350baf311903860e7edb1e9112ef42a921a`；初轮完整pending diff：`b683b352146bb4be60a9c6f6a8d28290e0c4199b6da06ad27ef4a429012dc322`。F001/F002只涉及back精确阶段与单次授权分层。
+- Repair-01 manifest：`6b03b045456c56c9a53ef8d0f0fe2930fc7df06064ed4b78729ab73c996067a5`；repair diff：`bfb6cd9d50a588409d482a1cecaf4a3b5760e4337395ac89983eb6b730f4b24d`。原独立上下文结论pass，F001/F002 closed，无修复直接引入finding，确认根SPEC no-delta且Automation窄delta可提交用户确认。
+- 用户选择“确认窄delta”后完成clean cutover；当前SPEC无pending/amendment残留。确认前未启动设备/服务、未生成consumer或执行smoke。
+
+### 13.5 唯一smoke执行结果
+
+- 冻结wheel/sdist、ADB路径、Appium/UiA及仓库禁止路径身份一致；全新CPython3.11.16临时环境从wheel安装，Client6.0.8/Selenium4.51.0导入和pip check通过，离线consumer语法检查通过，临时环境最终删除。公开资格化只调用一次`list_devices`和一次Runtime connect，确认一个connected Pixel6及Appium3.7.0；无Session/UI副作用。
+- 完整consumer恰好运行一次、returncode20。device-only primary active；Settings初始state3、Calculator初始state1；Settings terminate strict true、activate known-success、初始observe成功（规范JSON 29,858 bytes，SHA-256 `0a5dd30d22649802366aa8b8bf74e93b96c903cd8d3b7b60ebe6e679dffe90e1`，不保存完整树）。固定`search_action_bar`点击一次成功；固定`//android.widget.EditText[@package="com.android.settings"]`首次inspect由公开结果得到`TargetError/target_not_found/response_received`。脱敏服务证据只保留对应出站请求计数，不证明精确HTTP状态或响应body为空。
+- known-clean停止且零重试：未写Settings文本、未执行hide/back/swipe、Calculator生命周期、Home或replacement。primary经公开quit后closed/busy=false，Runtime退出，owned 4735服务停止且端口拒绝；4723未触碰，无response unknown/uncertain、敏感原文、文本或其他已知未恢复副作用。replacement按known blocked记为not-required，但因此不满足模块Done门槛。
+- 证据根`/var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/aca-auto-ma02-smoke-7enjxfss`。首版manifest 17,114 bytes/26 payloads、SHA-256 `f11f8133d25b8bd39b4626a77bbf67ec1d5ec3f6ac0db3530d61f3ce766e7885`；独立full审查F001指出脱敏器只核对请求计数/宽泛日志子串，不能支持`HTTP200`或空响应body命名。未执行任何设备/服务动作，保留首版manifest和service summary，新增correction并降格当前service字段；修复后manifest 18,499 bytes/29 payloads、SHA-256 `f11549df96b45bde6f1f799b06d8595410a034db2e295b7ac697fc5c28d8d73d`。单次授权已消耗，repair-only前后均不自动第二次尝试。
+
+### 13.6 独立设备证据审查
+
+- 新独立`AutoMa02EvidenceAudit` full实读4文件完整差异、首版manifest及26 payload、consumer差异/完整源、命令记录、公开结果和安全终态。确认授权、SPEC、文件范围、唯一执行、known blocker、primary/Runtime/服务闭合、隐私和模块非Done结论一致；full manifest SHA-256 `63f90b6dd614da4b2c2f2a721f6ca3db533599583afda829d8255d33d76a4cce`。
+- Full唯一F001指出原脱敏器只统计出站请求/宽泛日志子串，不能支持`*_http_200`、EditText空响应body及文档精确服务响应断言。原日志已按隐私策略删除，不补造；Repair-01保留原manifest/service summary，新增correction和schema2降格summary，当前manifest为`f11549df96b45bde6f1f799b06d8595410a034db2e295b7ac697fc5c28d8d73d`（18,499 bytes/29 payloads），文档只引用公开结果。
+- 原审查上下文repair-only实算29/29 payload及修复差异，结论pass、F001 closed、无新finding；repair manifest SHA-256 `7ce9114c7871cd92ea05fe35b1e37f017894f9bfc67365f9606e3398f9ff2443`。证据审查pass不提升smoke；最终仍为`device-validation-blocked-known-clean; module not Done; no retry authorized`。

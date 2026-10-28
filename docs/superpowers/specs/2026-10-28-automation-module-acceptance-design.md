@@ -2,7 +2,7 @@
 
 日期：2026-10-28。TaskID：`AUTO-AUTOMATION-MODULE-ACCEPTANCE-DESIGN-20261028`。
 
-状态：**最小模块收口设计与SPEC已确认；实现/文档/非设备验证经最终full＋两轮repair-only审查通过，无开放finding；最终真实smoke known-clean blocked，故模块device-validation-blocked且非Done。** 不自动第四次、提交或推送。
+状态：**最小模块收口设计与SPEC已确认；实现/文档/非设备验证及AUTO-MA-02证据经独立full＋repair-only审查通过，无开放finding。唯一获准修订smoke仍known-clean blocked且资源安全闭合，不自动再试；模块device-validation-blocked且非Done。** 不自动重复、提交或推送。
 
 ## 1. 授权、基线与文档关系
 
@@ -133,7 +133,7 @@ AIF-01～10已经分别完成限定验收；当前源码又在AIF-10最终全量
 - 显式ADB绝对路径及其实际版本。
 - 一台已连接、解锁、无测试相关个人数据的Android设备。
 - 已安装且已盘点的`com.android.settings`与`com.google.android.calculator`；任务材料固定Settings搜索框、可滚动容器和观察锚点的实际唯一locator，以及搜索框获准的非敏感基线文本。实际locator不写入产品契约。
-- 明确允许激活两应用、点击搜索框、以固定`aca-smoke`文本替换后恢复基线、一次固定手势、隐藏键盘/返回、固定Home keycode `3`、force-stop Calculator及最终恢复；不授权安装、卸载、清数据、通知/剪贴板/磁贴、其他keycode或权限/系统配置改变。
+- 明确允许在device-only Session中对Settings依次执行一次force-stop和一次activate；terminate合法`True`/`False`均继续。随后允许观察、点击固定搜索框、以固定`aca-smoke`文本替换后恢复基线、一次固定手势、隐藏键盘及紧随其后的既有一次返回、固定Home keycode `3`、Calculator force-stop/activate/query及最终恢复；Settings启动至首次固定locator资格完成前零back。不授权安装、卸载、清数据、通知/剪贴板/磁贴、其他keycode、替代locator、重试或权限/系统配置改变。
 
 身份不符或安全页面不可用时，状态为`device-validation-blocked`，不能换用业务App或放宽范围。
 
@@ -144,7 +144,7 @@ AIF-01～10已经分别完成限定验收；当前源码又在AIF-10最终全量
 1. `list_devices(explicit_adb)`，确认调用方指定serial以`connected`出现；不自动取第一台。
 2. `Runtime(LocalSettings(server_url=...)).connect()`进入一次已有外部Appium范围。
 3. 为明确设备创建device-only Session；记录active `SessionInfo`。
-4. 显式`activate_app("com.android.settings")`，在Settings安全页面执行一次`observe_tree()`；按任务材料中的显式package和唯一locator创建搜索框、滚动容器及观察锚点Element。
+4. 依次显式调用一次`terminate_app("com.android.settings")`与一次`activate_app("com.android.settings")`；terminate合法`True`/`False`均记录并继续，不把两次操作称为原子launch。启动至固定`search_action_bar`首次资格完成前零back；随后在Settings安全页面执行一次`observe_tree()`，按任务材料中的显式package和唯一locator创建搜索框、滚动容器及观察锚点Element。
 5. `search_field.click()`后重新定位，并调用`inspect(attributes=("text", "focused", "bounds"))`；只断言批准的基线文本、focused状态和几何状态，不保存非必要原文。
 6. `search_field.replace_element_value("aca-smoke")`，重新定位并以`inspect(attributes=("text", "focused"))`确认固定文本；随后显式replace回任务材料记录的批准基线（基线为空则replace空串），再重定位确认精确恢复。不得从设备读取或保留其他搜索历史。
 7. `hide_keyboard()`后`back()`回到已核对Settings列表；读取观察锚点的`bounds`，对明确容器执行一次`swipe_gesture(direction="up", percent=0.5)`，再以`observe_tree()`或锚点重新定位事实确认可见集合/几何变化。若页面不滚动或锚点不适用，报告资源blocked，不换方向/percent重试。
@@ -159,7 +159,7 @@ AIF-01～10已经分别完成限定验收；当前源码又在AIF-10最终全量
 
 本smoke直接覆盖：设备发现、Runtime connection、Session创建/复用/quit、结构观测、Element绑定/重定位及single click、代表性文本和手势、Device hide/back/Home、应用生命周期及公开资源释放事实。
 
-除第160行明确列出的代表性入口外，其余公开能力与错误/边界均不由本smoke直接覆盖。重点包括：`inspect_structure`；double/long；`send_keys`/`clear`；`scroll_gesture`/official scroll/drag；全部IME/剪贴板/弹窗、除固定Home外的其他keycode、SystemUI面板/磁贴；install/remove；应用状态0、缺失包known error、terminate false；故障注入和真实多设备。它们由第7节当前永久测试和已验收feature证据继续负责，不得在coverage map中标为本次smoke实跑。
+除第160行明确列出的代表性入口外，其余公开能力与错误/边界均不由本smoke直接覆盖。重点包括：`inspect_structure`；double/long；`send_keys`/`clear`；`scroll_gesture`/official scroll/drag；全部IME/剪贴板/弹窗、除固定Home外的其他keycode、SystemUI面板/磁贴；install/remove；应用状态0、缺失包known error、Settings terminate本次未实际取得的另一bool分支及Calculator terminate false；故障注入和真实多设备。它们由第7节当前永久测试和已验收feature证据继续负责，不得在coverage map中标为本次smoke实跑。
 
 ## 9. 故障、timeout、cancel、unknown与清理
 
@@ -351,3 +351,19 @@ AIF-01～10索引及新独立`EvidenceReadinessAudit`确认当前`ready`：旧�
 Full提出F001 README旧状态和F002首次build/发行命令证据不完整。Repair-01修正README并如实保留原日志不可用，新增带stdout/stderr/returncode/时间的当前成功及HEAD旧脚本失败重现；F001/F002 closed，并发现F003文档churn分类不准。Repair-02只修正任务/台账分类，F003 closed、无新finding。Repair-02 manifest SHA-256 `b0e7da71cf4311807b024c54b709aa2bcd8b187d0d54c1f647b996daa057e506`；最终review result `5b3b666097e8ffa4b25bbeed4cf59c0388ee85ff03e841ca728a9aa132f0b840`。
 
 最终结论固定为：`implementation-and-non-device-pass; device-validation-blocked-known-clean; module not Done`。独审pass只关闭实现/文档/非设备finding，不能替代第8节smoke。Attempt-03为用户授权的最终尝试，未通过且无第四次授权；当前不能宣告“Automation当前平台最小收口Done”。若未来用户另行改变该决定，须为新设备增量重新走授权、验证和独立审查。
+
+## 24. AUTO-MA-02 Settings启动编排修订
+
+用户于2026-10-28显式`$spec-driven`授权修复Settings启动编排、确认窄SPEC delta后执行至多一次全新smoke及必要安全恢复；不改产品代码、永久测试、依赖或公开Interface。根SPEC判定no-delta；Automation SPEC因第579条新增Settings force-stop状态动作而需要窄delta。
+
+Pending delta首轮独立`AutoMa02SpecAudit` full审查提出F001 back阶段需精确、F002单次条件设备授权需放Required task package。修复后明确启动至首次locator资格零back、文本恢复＋hide后只保留原一次back，并在实施任务固定至多一次且任一结果后不自动再试。原上下文repair-only结论pass、F001/F002 closed、无新finding；初轮manifest SHA-256 `7dcba3c481947c5f315745a382393350baf311903860e7edb1e9112ef42a921a`，repair manifest `6b03b045456c56c9a53ef8d0f0fe2930fc7df06064ed4b78729ab73c996067a5`。
+
+用户随后确认窄delta；pending结构已删除并clean cutover到Automation SPEC第579条，当前SPEC SHA-256 `20258d7dbcebcca7e78ea024f6d8921e5ea9da8f2fed3adfeb8dcd708abe8b30`。本记录只完成SPEC/设计门槛；真实smoke和其独立证据审查尚未执行，模块状态仍沿第23节非Done结论。
+
+唯一获准AUTO-MA-02 smoke使用冻结wheel和全新CPython3.11.16环境；公开资格化确认一个connected目标、Runtime Appium3.7.0，未创建Session或执行UI。完整consumer恰好运行一次：Settings初始state3，terminate返回true，activate及初始observe成功；observe规范JSON 29,858 bytes、SHA-256 `0a5dd30d22649802366aa8b8bf74e93b96c903cd8d3b7b60ebe6e679dffe90e1`，未保存完整树。固定`search_action_bar`唯一点击成功，但随后固定Settings EditText XPath inspect由公开结果得到known `TargetError/target_not_found/response_received`。脱敏服务证据只证明对应出站请求计数，不保留或声称精确HTTP状态、响应body或空数组。
+
+按合同立即停止且不重试：未写文本、未手势、未进入Calculator/Home或replacement。primary经公开quit后closed/busy=false，Runtime退出；owned 4735服务停止且端口拒绝，未触碰4723，无response unknown、uncertain、敏感原文或未恢复副作用。首版manifest 17,114 bytes、SHA-256 `f11f8133d25b8bd39b4626a77bbf67ec1d5ec3f6ac0db3530d61f3ce766e7885`经独审F001发现服务响应事实命名过强；不执行设备动作，保留首版并以correction降格。当前manifest 18,499 bytes/29 payloads、SHA-256 `f11549df96b45bde6f1f799b06d8595410a034db2e295b7ac697fc5c28d8d73d`。状态保持`device-validation-blocked-known-clean`；单次授权已消耗，修复复审前后均不得提升模块Done或自动再试。
+
+新独立`AutoMa02EvidenceAudit` full核对4文件完整差异和首版26 payload，确认授权、单次consumer、公开调用顺序、known blocker及资源终态，但提出F001：原脱敏器只按出站请求/宽泛日志子串计数，却把若干字段命名为HTTP200或空响应，原日志已按隐私策略删除，不能补造。Full manifest SHA-256 `63f90b6dd614da4b2c2f2a721f6ca3db533599583afda829d8255d33d76a4cce`。
+
+Repair-01无设备/服务动作：完整保留首版manifest/service summary，新增correction，当前schema2 service summary只陈述出站请求计数并明确未保存HTTP status/body；三处文档改用公开smoke-result事实。原独立上下文repair-only结论pass，F001 closed、无新finding；repair manifest SHA-256 `7ce9114c7871cd92ea05fe35b1e37f017894f9bfc67365f9606e3398f9ff2443`。该pass只关闭证据真实性finding，不改变smoke未通过、模块非Done或无retry。

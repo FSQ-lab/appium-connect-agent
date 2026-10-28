@@ -4,7 +4,7 @@
 
 ## 当前最小模块收口进度
 
-- TaskID/FeatureID `AUTO-MA-01-MINIMAL-CLOSURE`，当前平台macOS / 单个明确Android Native目标 / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。用户已最终确认[最小收口设计](../superpowers/specs/2026-10-28-automation-module-acceptance-design.md)并显式`spec-driven`授权；状态：**实现/文档/非设备门槛及最终full＋两轮repair-only审查通过、无开放finding；最终smoke known-clean blocked，模块device-validation-blocked且非Done，不自动第四次**。
+- TaskID/FeatureID `AUTO-MA-01-MINIMAL-CLOSURE`及修复增量`AUTO-MA-02-SETTINGS-RESTART-SMOKE`，当前平台macOS / 单个明确Android Native目标 / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。原实现/文档/非设备门槛及AUTO-MA-02证据经独立full＋repair-only审查通过、无开放finding；唯一Settings terminate→activate修订smoke仍known-clean blocked、资源安全闭合且不自动再试。模块device-validation-blocked且非Done。
 - spec-driven起点master / `54f178eea6b692cf1081bb51681e4feee6177337`，0 tracked修改、1份已确认未跟踪设计；设计确认身份319行/25,324 bytes、SHA-256 `b82b23e04806a8e51134c77e9d81832c6eb322caf890b23f53d8886f9d33d251`。完整授权、文件所有权、验证入口与停止条件见[实施任务包](automation-minimal-closure-implementation.md)。
 - 根/Automation pending delta经新独立`MinimalClosureSpecAudit` full/pass、无finding；固定tracked diff 10,875 bytes/44 additions、SHA-256 `5786db705103ce58ef2ed0ec06fbd9f106a463f663073644372523ad5fe545b2`。用户明确确认后已就地替换旧义务并删除pending/amendment结构；当前根SPEC SHA-256 `fd599c39b23905821a99878b407edc7d4db5675819bdb924cd93e85f3ccf7fa8`，Automation SPEC `558f821cab329512679d2a949d95a581c484ca7476a2e82de0fb6e91cb1f8c46`。
 - 当前范围不支持`Device.clear_app`，remove仅保证包卸载bool、无数据删除保证；单真实设备代表smoke可完成限定收口但无真实多设备资格。专用/外部APK、永久runner、新测试、产品代码、工具、依赖、完整矩阵和所有能力同链均不新增或不重跑。
@@ -30,7 +30,10 @@
 - 新独立`MinimalClosureFinalAudit`完整审8 tracked＋2 untracked差异、当前Automation全部源码/永久测试/Runtime seam、质量/发行物/AIF索引和device血缘；未发现产品实现/永久测试合同缺陷。Full manifest `5a8e86d5212c55103fb9ca310deeb4c34a111ef36644d56092e19b74f86cb387`，tracked diff `1308b692dcacdfbba7c10004f8d2d3a06a04a0cd8cec8e2bb2b731db16e84e9b`。
 - Full审查F001要求修正README旧状态，F002要求如实闭合命令证据；Repair-01两项closed并新增F003文档churn分类。Repair-02关闭F003、无新finding，manifest SHA-256 `b0e7da71cf4311807b024c54b709aa2bcd8b187d0d54c1f647b996daa057e506`，最终结果 `5b3b666097e8ffa4b25bbeed4cf59c0388ee85ff03e841ca728a9aa132f0b840`。
 - 最终结论：`implementation-and-non-device-pass; device-validation-blocked-known-clean; module not Done`。独审pass不提升Attempt-03，不授权第四次。
-- 当前审查流程已闭合，但设备硬门槛未通过，故不能称最小收口Done。若未来用户另行决定解除blocker，新设备增量仍须重新验证和独立审查；当前不提交、推送。
+- 用户现已显式`$spec-driven`授权AUTO-MA-02：继续device-only Session，Settings观察前一次terminate后一次activate，合法True/False均继续，启动至首次固定locator资格零back，文本恢复＋hide后仅保留原一次back；known/unknown、固定locator及其余边界保持。不改产品/测试/依赖，只执行至多一次新smoke及必要安全恢复。
+- 根SPEC no-delta；Automation窄delta初轮独立full提出back阶段与授权分层两项问题，Repair-01全部closed、无新finding。初轮manifest `7dcba3c481947c5f315745a382393350baf311903860e7edb1e9112ef42a921a`，repair manifest `6b03b045456c56c9a53ef8d0f0fe2930fc7df06064ed4b78729ab73c996067a5`。用户已确认并clean cutover，当前Automation SPEC `20258d7dbcebcca7e78ea024f6d8921e5ea9da8f2fed3adfeb8dcd708abe8b30`；真实smoke和新证据独审前不提升模块状态。
+- AUTO-MA-02公开资格化通过且无Session/UI；唯一完整consumer中Settings state3→terminate true→activate/observe成功，固定search_action_bar点击成功，随后固定Settings EditText inspect由公开结果得到`target_not_found/response_received`。未写文本/手势/Calculator/Home/replacement；primary经公开quit后closed/busy=false、Runtime退出、owned 4735停止/端口关闭，4723未触碰，无unknown/uncertain或副作用。首版manifest `f11f8133d25b8bd39b4626a77bbf67ec1d5ec3f6ac0db3530d61f3ce766e7885`的服务字段被独审F001判定过度命名；无设备动作修复只保留出站请求计数和公开结果，当前manifest `f11549df96b45bde6f1f799b06d8595410a034db2e295b7ac697fc5c28d8d73d`（18,499 bytes/29 payloads），原件完整保留。单次授权已消耗；修复复审不能提升未通过的smoke或授权再试。
+- 新独立`AutoMa02EvidenceAudit` full确认4文档、唯一consumer/调用链及安全终态，但F001指出首版服务脱敏字段过度命名HTTP200/空响应事实。无设备动作Repair-01完整保留原件并降格当前service summary及文档；29/29 payload和修复差异复审pass，F001 closed、无新finding。Full manifest `63f90b6dd614da4b2c2f2a721f6ca3db533599583afda829d8255d33d76a4cce`，repair manifest `7ce9114c7871cd92ea05fe35b1e37f017894f9bfc67365f9606e3398f9ff2443`。独审pass不提升smoke、模块状态或授权再试。
 
 ## 当前 AIF-10 进度
 
