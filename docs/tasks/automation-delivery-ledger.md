@@ -2,6 +2,36 @@
 
 当前进度更新：2026-10-28。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
 
+## 当前最小模块收口进度
+
+- TaskID/FeatureID `AUTO-MA-01-MINIMAL-CLOSURE`，当前平台macOS / 单个明确Android Native目标 / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。用户已最终确认[最小收口设计](../superpowers/specs/2026-10-28-automation-module-acceptance-design.md)并显式`spec-driven`授权；状态：**实现/文档/非设备门槛及最终full＋两轮repair-only审查通过、无开放finding；最终smoke known-clean blocked，模块device-validation-blocked且非Done，不自动第四次**。
+- spec-driven起点master / `54f178eea6b692cf1081bb51681e4feee6177337`，0 tracked修改、1份已确认未跟踪设计；设计确认身份319行/25,324 bytes、SHA-256 `b82b23e04806a8e51134c77e9d81832c6eb322caf890b23f53d8886f9d33d251`。完整授权、文件所有权、验证入口与停止条件见[实施任务包](automation-minimal-closure-implementation.md)。
+- 根/Automation pending delta经新独立`MinimalClosureSpecAudit` full/pass、无finding；固定tracked diff 10,875 bytes/44 additions、SHA-256 `5786db705103ce58ef2ed0ec06fbd9f106a463f663073644372523ad5fe545b2`。用户明确确认后已就地替换旧义务并删除pending/amendment结构；当前根SPEC SHA-256 `fd599c39b23905821a99878b407edc7d4db5675819bdb924cd93e85f3ccf7fa8`，Automation SPEC `558f821cab329512679d2a949d95a581c484ca7476a2e82de0fb6e91cb1f8c46`。
+- 当前范围不支持`Device.clear_app`，remove仅保证包卸载bool、无数据删除保证；单真实设备代表smoke可完成限定收口但无真实多设备资格。专用/外部APK、永久runner、新测试、产品代码、工具、依赖、完整矩阵和所有能力同链均不新增或不重跑。
+- 唯一工作包没有产品/测试/新工具/依赖变化；窄修既有发行校验脚本的七依赖/Automation导入。README同步当前Automation能力、`clear_app`与最小收口语义并含必要Ruff格式；AIF-05/09/10三份历史设计仅做Ruff机械格式。首次全仓format失败4文档后最终123文件通过；Ruff lint、strict mypy59+1文件、import-linter5项、build通过。
+- 首轮未过滤全库出现2个Runtime短时间窗失败、2255 passed/980.95秒；原始失败保留。两项隔离复核2 passed/5.47秒，随后无并发验证的锁定未过滤全库 **2257 passed/970.48秒**，JUnit全绿。
+- 原发行脚本六依赖allowlist漏`defusedxml`而预检失败；no-delta窄修后官方入口验证wheel/sdist归档/元数据/源码一致、七直接依赖、两个隔离CPython3.11.16安装、pip check、仓库外`-I`导入与`py.typed`全部通过。README状态修正后重建的最终wheel SHA-256 `960608c01944d4ed9ddcb83080822aa7ca83ad317144f9b7475a9115e463c167`，sdist `04358353dc4a66546956831641e0947b22b172e4a629d0534f56b548781feaa1`。
+- AIF-01～10仓库证据索引SHA-256 `d213436406b91b39559a120e5e8b66aebdb8cb2f797bd333539db21573cadf33`；独立`EvidenceReadinessAudit`结论ready，SHA-256 `a19806c90e84c78e24f5bb5da885fdc6fbfc3057e5fef09f57a35a5916d755ef`。旧实现identity缺口由当前全模块源码/测试/发行物的新full重审闭合；旧设备效果只复用仓库可读既往独审identity并明确payload-unavailable/未重读，不能冒充本次smoke。
+- 非设备manifest `non-device-validation-manifest.json` 10,085 bytes、SHA-256 `713a1695f23fbae0e6eff2265ebd6a2938b2114f2c594c9f12ace2341f3077ca`，位于临时证据根`/var/folders/9_/pktc94b14nn766zv2c031q6h0000gn/T/aca-minimal-closure-XoDegnFZ`；最终审查仍须在文档元数据和smoke完成后重建当前身份。
+- 最终full审查F002指出首次build/发行失败日志缺exit/time且三个tee文件为0 bytes；不补造原始记录。标准库补强同时捕获stdout/stderr/returncode/时间：当前build/官方发行均exit0，HEAD原六依赖脚本仅改证据ROOT后精确复现`Unapproved dependencies`/exit1。补强manifest SHA-256 `a4f9cfa719623dfdd4004342ffd6beb24ba5c61153cc59f1e749aadda058733c`；明确是事后重现而非首次日志。
+- 用户随后明确授权固定设备/ADB/服务资格盘点，并在全部通过时条件执行Calculator/Settings最小smoke；范围不含工具/App安装卸载/clear、剪贴板/通知/磁贴/弹窗/其他keycode或权限/系统配置修改，任何身份/page mismatch/unknown立即停止。
+- 用户授权“盘点并条件执行”后，Attempt-01资格全部通过并在owned 127.0.0.1:4731创建primary Session；Settings/Calculator初始状态4/1，activate Settings和51,531-byte observe成功。页面没有唯一批准搜索控件，故未执行任何点击/文本/手势/Calculator生命周期动作。
+- 一次性consumer错误地在Runtime connection scope退出后才cleanup quit，得到`session_invalid/not_sent`、零DELETE，本地Session转uncertain；后续设备命令0、replacement未创建。Settings文本未读写，Calculator最后样本1，原无关服务/仓库不变。按unknown保守合同立即停止，不以consumer缺陷特殊处理。
+- owned服务`minimal-smoke-appium`当时继续隔离运行，远端Session/hidden policy/appops/forward/UIA终态未证明，设备与端点禁止复用。Attempt-01 manifest 9,095 bytes、SHA-256 `d632fd0a1d5d5efe80ba9015164a5a8314151c0b0cd43d3bd6bb4d658986c216`；按合同先等待用户另批独立人工恢复，未自动停止服务、DELETE或重跑smoke。
+- 用户另行授权独立恢复：Appium日志证明旧Session因500秒timeout已结束/移出master list，精确一次DELETE取得完整HTTP404已知终态；前后有限只读核对均为forward空、UIA无PID、hidden policy三项null、IME不变、MOCK_LOCATION allow。owned服务停止且4731拒绝连接，设备/端点可复用，无产品/UI命令。Recovery manifest SHA-256 `c3ae4faceba3349ee335775813c03f0be5209c985b0941d1b0453c94b638e31b`；父manifest加血缘后`ac83307389ca968c2c902f00f3d4360e63a085c7d59e5d60d5cbcbd2dd890086`。
+- Recovery不把Attempt-01升级为通过。全新smoke须修正consumer使cleanup/quit始终位于active Runtime scope，并只对白名单Settings search resource重新资格化；再次执行须用户另批。
+- 用户随后授权只读Qualification-02；全新4732服务/Session中observe 53,149 bytes后normal quit/closed，服务停止，无UI动作。两个候选均为`com.android.settings`：唯一`search_action_bar` LinearLayout与其`search_bar_title` TextView子标题；据职责固定下一次动作locator为前者，Settings Intelligence候选0。Manifest SHA-256 `f51b02c2cd7a0e275b7f3d8403e27b45ca607b08195ffbb502fde80223ca57c7`，资源安全闭合。
+- 全新smoke须使用固定`search_action_bar`并将所有cleanup/quit/replacement保持在active Runtime scope；点击后若唯一EditText/批准基线不成立则known blocked并正常quit，不换locator。再次完整执行仍须用户明确授权。
+- 用户授权一次全新Attempt-02：固定search_action_bar唯一资格并click一次后，consumer额外完整observe触发`observation_too_large/response_received`，Settings guard已恢复、Session保持active。严格不换locator/参数、不重试，未inspect/写文本/手势/Calculator/Home/replacement；primary normal DELETE后closed，服务停止，无unknown/副作用。
+- Attempt-02 manifest SHA-256 `83584115689418c799ef6908ff41d261659dfc6e408da4307bdd0e21d9f755df`；父manifest血缘`acd4724a37b827662000cb7560dceea542eaa50b9b80685bdd38ff9b5b6d5aa3`。可行修订为删除非必要全树observe，直接以公开Element resolver/inspect资格化唯一EditText；第三次且最终尝试须用户另批。
+- 用户批准第三次且最终Attempt-03，consumer删除非必要post-click observe并保持cleanup-in-scope。Settings初始state3、activate已知成功，但固定search_action_bar在15秒/30轮exact resolver中均0匹配，得到`condition_timeout/not_sent`、零clickGesture；不换locator/参数/重试。
+- 未observe/inspect/text/swipe/Calculator/Home/replacement；Settings文本未读写，Calculator最后样本1。primary正常DELETE后closed，服务停止、端口拒绝，无unknown/uncertain。Manifest SHA-256 `8f1db80023f89f4827d1cc5d7294ab09f62b8bb3d2ec9233075c8cd78a555e58`；父manifest最终`971ffa89dfc6cfcdbb70fd4286b29fc805b60e5af33669428fca1eea6ea3c42f`。
+- 代表性真实smoke未通过，最终状态`device-validation-blocked-known-clean`。按用户“最终一次”决定不自动第四次；只能进入当前差异/证据的只读full审查并准确报告模块非Done。
+- 新独立`MinimalClosureFinalAudit`完整审8 tracked＋2 untracked差异、当前Automation全部源码/永久测试/Runtime seam、质量/发行物/AIF索引和device血缘；未发现产品实现/永久测试合同缺陷。Full manifest `5a8e86d5212c55103fb9ca310deeb4c34a111ef36644d56092e19b74f86cb387`，tracked diff `1308b692dcacdfbba7c10004f8d2d3a06a04a0cd8cec8e2bb2b731db16e84e9b`。
+- Full审查F001要求修正README旧状态，F002要求如实闭合命令证据；Repair-01两项closed并新增F003文档churn分类。Repair-02关闭F003、无新finding，manifest SHA-256 `b0e7da71cf4311807b024c54b709aa2bcd8b187d0d54c1f647b996daa057e506`，最终结果 `5b3b666097e8ffa4b25bbeed4cf59c0388ee85ff03e841ca728a9aa132f0b840`。
+- 最终结论：`implementation-and-non-device-pass; device-validation-blocked-known-clean; module not Done`。独审pass不提升Attempt-03，不授权第四次。
+- 当前审查流程已闭合，但设备硬门槛未通过，故不能称最小收口Done。若未来用户另行决定解除blocker，新设备增量仍须重新验证和独立审查；当前不提交、推送。
+
 ## 当前 AIF-10 进度
 
 - TaskID `AUTO-AIF10-IMPL-20261028`，当前平台macOS / Android Native / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。最终状态：**Done（本feature限定范围）**。范围为本地单APK install与package-only remove bool；clear_app、数据清理保证及Automation模块/平台Done不在本结论内。

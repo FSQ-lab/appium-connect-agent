@@ -224,3 +224,14 @@
 - 两方法沿一次 operation、唯一 Session gate、final 成功优先、既有错误与 unknown 资源保留；不改 Session target、sessionId 或占用，不自动 query、启动、重装、恢复或重放。
 - 本批不交付 `clear_app`、keep-data、URL/APK 集、上传下载、权限、user/profile、其他平台或 Integrations。固定上游可能 force-stop、重试 ADB 命令或留下外部/备份/OEM 状态；详细 Interface、安全授权与验证义务见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-10 条款。AIF-10 通过不表示 Automation 模块或当前平台完整链验收。
 
+## Automation 当前平台最小模块收口
+
+
+- 当前收口组合固定为macOS宿主 / 单个明确Android Native目标 / Appium3.7.0 / UiAutomator2 8.7.0，以及现有Client6.0.8、Selenium4.51.0、Python3.11和实际已资格组件patch；不新增公共Interface、产品/开发依赖、模块方向、平台或Integrations。
+- 当前Automation明确不提供`Device.clear_app`或同义入口，应用清数据不是本轮及当前模块限定Done门槛。`remove_app`继续只承诺包卸载官方bool；true、false、query0或包absent均不保证任何数据删除或重装不恢复。
+- 当前模块真实收口只要求一个明确Android目标上的代表性安全smoke。不同device ID的独立Session/client/systemPort、同设备拒绝和分别quit继续由锁定真实Client/Selenium到受控协议服务的永久测试守护；本轮不取得或声明两个真实设备同时active、双forward、共享ADB故障隔离或真实多设备资格。
+- 当前限定收口依据为：AIF-01～10既有限定验收及独立审查证据仍有效；当前冻结制品的未过滤全量测试、静态质量、构建和wheel/sdist隔离安装通过；公开Interface经Calculator/Settings安全页面完成代表性单设备smoke和正常quit/replacement资源复用；当前完整差异与证据经新独立full审查通过。
+- 专用动态App、外部APK、永久验收runner、新模块测试文件、完整跨feature故障矩阵、所有公开能力同一链实跑及真实多设备链不属于当前限定Done硬门槛，也不得被最终报告声称已经完成。AIF-08磁贴和AIF-10安装卸载矩阵复用其已固定的feature证据，不在模块smoke重复。
+- 代表性smoke只证明设计列明的设备发现、Runtime/Session、结构观测、single click、最小文本替换并恢复、固定手势、有限Device动作、Calculator 1/3/4生命周期、正常quit和replacement链；其他能力由当前永久测试与已验收feature证据负责，不能填入本次smoke实跑coverage。
+- SPEC确认不等于模块Done。缺少当前质量/发行物、获准安全设备页面smoke、正常资源释放或最终独立审查时，必须报告对应blocked/not-Done，不得仅拼接历史证据宣称收口完成。
+

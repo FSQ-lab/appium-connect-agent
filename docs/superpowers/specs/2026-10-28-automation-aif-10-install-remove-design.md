@@ -68,6 +68,7 @@ AIF-10 通过仍不表示 Automation 模块或当前平台 Done。`clear_app`、
 ```python
 from pathlib import Path
 
+
 class Device:
     def install_app(
         self,

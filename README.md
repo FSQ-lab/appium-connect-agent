@@ -4,7 +4,7 @@
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 可显式准备一组指定的本地 Appium 组件，但不启停服务或管理 Session；设备操作、MCP 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于错误识别与 trace 版本固定，迁移验收状态见台账。Appium 3.7.0 / UiAutomator2 8.7.0 只有已记录的限定原生 Session 资格，不表示图像功能、整个 driver 或 Runtime 模块已验收。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备一组指定的本地 Appium 组件，但不启停服务或替 Automation 管理 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。MCP、其他 Integrations 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于错误识别与 trace 版本固定，迁移验收状态见台账。Appium 3.7.0 / UiAutomator2 8.7.0 的支持声明仅限已记录资格，不表示图像功能、整个 driver、Runtime 模块或 Automation 当前平台最小收口已经验收。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -168,9 +168,7 @@ def read_and_activate_approved_app(session: Session, app_id: str) -> int:
     state = session.device.query_app_state(
         app_id, control=OperationControl(timeout_seconds=10)
     )
-    session.device.activate_app(
-        app_id, control=OperationControl(timeout_seconds=10)
-    )
+    session.device.activate_app(app_id, control=OperationControl(timeout_seconds=10))
     return state  # 激活前的样本，不是激活后的后验。
 
 
@@ -336,7 +334,7 @@ incremental install仍可能替换已有应用，因此项目不提供误导的`
 解释为“绝无副作用”。本Interface只承诺包卸载bool，**不保证任何数据删除**：
 目标Android17真机已证明remove true、query0和包absent后，同签重装仍可看到
 原app-private sentinel；外部共享、备份、keystore、profile和OEM状态同样不保证。
-需要测试数据清理时必须使用未来独立`clear_app`，不能从remove结果推断。
+当前不提供`clear_app`或其他数据清理Interface；数据清理不属于当前Automation范围。调用方不能以remove替代，未来Integrations也不得隐式执行`pm clear`。
 
 `control=None` 不发送内部 timeout，沿固定上游 install 60 秒、remove 20 秒默认。
 显式 `OperationControl` 沿一次调用的原始总 deadline，在发送前取严格小于剩余
@@ -350,11 +348,16 @@ install 前的完整文件 hash、remove 前的安装检查/force-stop及ADB恢�
 uncertain、关闭本地client并保留device/systemPort。安装/卸载当前target也不会
 改写sessionId、target_app_id或短ID默认package，不会自动激活或重建。
 
-本批不提供 `clear_app`。真实安装/卸载必须另获明确设备、服务、专用无账号/个人
-数据APK、签名/版本/testOnly样本、允许force-stop/删除数据和恢复证据授权；不能
-用SystemUI、Launcher、Settings、输入法、Appium helper或业务应用代替。协议测试、
-HTTP None/bool或源码证据不能证明真实包、版本、签名和数据效果；当前交付状态见
+当前Automation范围不提供`clear_app`。真实安装/卸载仍须另获明确设备、服务、专用无账号/个人数据APK、签名/版本/testOnly样本、允许force-stop/包卸载及潜在数据副作用和恢复证据授权；不能用SystemUI、Launcher、Settings、输入法、Appium helper或业务应用代替。协议测试、HTTP None/bool或源码证据不能证明真实包、版本、签名和数据效果；当前交付状态见
 [Automation 台账](docs/tasks/automation-delivery-ledger.md)。
+
+### 当前平台最小模块收口
+
+Automation当前限定收口固定为macOS宿主、单个明确Android Native目标、Appium3.7.0和UiAutomator2 8.7.0。不新增公共Interface、依赖、APK、专用App、永久runner、产品代码、测试或仓库工具。
+
+模块收口复用AIF-01～10已验收的永久测试、真机证据和独立审查；当前冻结制品仍须重新通过未过滤全量测试、静态质量、构建和wheel/sdist隔离安装。另以一次性证据consumer在获准Calculator/Settings安全页面执行代表性单设备smoke：发现设备、连接、创建Session、结构观测、single click、固定非敏感文本替换并恢复、一次固定swipe、hide/back/Home、Calculator状态1/3/4、正常quit及replacement Session。
+
+该smoke不直接覆盖`inspect_structure`、double/long、send/clear、其余手势、IME/剪贴板/弹窗、其他keycode、SystemUI、install/remove、状态0/缺失包/terminate false、故障注入或真实多设备；这些只能引用当前永久测试和各feature已固定证据，不得写成本次实跑。最终状态若满足全部门槛，只能称为“Automation当前平台最小收口Done”，并须同时声明无`clear_app`、无数据删除保证、无专用App完整矩阵、无所有能力同链、无真实多设备资格及无Integrations/其他平台资格。
 
 ## 开发与验证
 

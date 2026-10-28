@@ -380,6 +380,7 @@ def _wait_for_ready_element(
 ```python
 _TextAction = Literal["send_keys", "clear", "replace"]
 
+
 class _AndroidElementTextActions:
     def perform(
         self,

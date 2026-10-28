@@ -18,6 +18,7 @@ DEPENDENCIES = {
     "node-semver==0.9.1",
     "Appium-Python-Client==6.0.8",
     "selenium==4.51.0",
+    "defusedxml==0.7.1",
 }
 METADATA_DEPENDENCIES = {dependency.lower() for dependency in DEPENDENCIES}
 STUB = "typings/nodesemver/__init__.pyi"
@@ -42,11 +43,12 @@ assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
 assert set(metadata.get_all('Requires-Dist')) == {
     'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1',
-    'appium-python-client==6.0.8', 'selenium==4.51.0'
+    'appium-python-client==6.0.8', 'selenium==4.51.0', 'defusedxml==0.7.1'
 }
 if sys.platform == 'darwin':
     from appium_connect_agent.runtime import InstallRequest, LocalSettings as RuntimeSettings
     from appium_connect_agent.runtime import Runtime, supported_combinations
+    from appium_connect_agent.automation import Device, Element, Session
     assert RuntimeSettings is LocalSettings
     assert callable(Runtime)
     assert InstallRequest().combination_id is None
@@ -55,6 +57,8 @@ if sys.platform == 'darwin':
     assert combinations[0].combination_id == 'macos-android-uiautomator2'
     assert combinations[0].appium_version == '3.7.0'
     assert combinations[0].driver_version == '8.7.0'
+    assert hasattr(Device, 'install_app') and hasattr(Device, 'remove_app')
+    assert hasattr(Element, 'inspect') and hasattr(Session, 'quit')
 else:
     assert 'appium_connect_agent.runtime' not in sys.modules
 print('Isolated installed package, metadata and py.typed: OK')
@@ -92,6 +96,7 @@ def main() -> None:
         "py.typed",
         "contracts/__init__.py",
         "runtime/__init__.py",
+        "automation/__init__.py",
     ):
         require(f"{PACKAGE}/{required}" in expected, f"Missing source: {required}")
     artifacts = sorted(p for p in (ROOT / "dist").iterdir() if p.name != ".gitignore")

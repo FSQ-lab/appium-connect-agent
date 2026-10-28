@@ -66,9 +66,11 @@ def activate_app(
     self, app_id: str, *, control: OperationControl | None = None
 ) -> None: ...
 
+
 def terminate_app(
     self, app_id: str, *, control: OperationControl | None = None
 ) -> bool: ...
+
 
 def query_app_state(
     self, app_id: str, *, control: OperationControl | None = None

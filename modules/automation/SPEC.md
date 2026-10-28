@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准，应用清数据尚未交付。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -105,7 +105,7 @@
 
 - 必须使用锁定的真实 Appium/Selenium 客户端和临时 HTTP 协议服务验证 W3C capabilities、初始 Settings、幂等键、无传输重试、direct connection 不切换、base path、create/quit 单次请求、有效错误/响应未知、显式预算、取消检查点和连接池关闭；不得只 mock 客户端成功。
 - 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/closing/closed、同 Session 立即忙、closed quit 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
-- 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 和专用 Android 设备，覆盖已安装包与本地 APK、500 秒协商、多设备独立 Session 和分别 quit；不得执行界面动作。没有服务、设备或 APK 时须明确报告缺口，模拟通过不代表真实 Session 链路通过。
+- 获准真实验收使用固定Appium3.7.0 / UiAutomator2 8.7.0和一个明确Android目标，覆盖实际Session创建、500秒协商、正常quit及确认释放后的replacement Session。四种应用输入、不同device ID独立资源、同设备拒绝、systemPort、状态机、known/unknown和分别quit继续由锁定真实Client/Selenium到临时HTTP服务的受控永久测试守护。当前资格不声明两个真实设备同时active或真实多设备隔离；未来增加该资格须独立设计、SPEC和资源授权。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
 
 ## AIF-03 Structure Observation
@@ -200,8 +200,7 @@
 - 必须覆盖0→出现、显示/启用变化、持续 timeout、每层0/1/多、每个 pre-action stale点、final action stale/有效错误/非None、response_unknown/慢头/体/断连、gate/state/connection、取消与三类 condition request_state、总预算竞争、completed_steps/cleanup_errors及 AIF-02/03 回归。
 - duration 覆盖 bool、float、0、1、500、60,000、60,001及相对总剩余预算的 <、=、>；raw-ID 覆盖 setting 初始 true/false、多轮 wait/stale/timeout、动作成功/失败、restore 成功/失败/unknown 和 mixed chain 零请求。
 - 当前 AIF-04 feature 的获准真实验收可在固定 Pixel 6 和预装普通 App 上验证 single、double、默认/显式 long、精确命令数量/载荷/None 结果及无自动滚动/观测/业务等待；延迟出现/显示/启用、歧义、pre-action stale、raw-ID、condition/operation timeout、response_unknown 和取消等精确合同以锁定真实客户端的受控协议服务为本 feature 权威证据。故障注入不得为真机验收破坏链路。
-- 用户确认将可制造完整动态状态的专用 Android 测试 App、跨 feature 真实场景矩阵和评分测评后置到 Automation 能力建成后的模块级验收；AIF-04 不创建 Android 构建工具链或测试 APK。该后置不降低受控测试、独立差异审查和基础真机动作链门槛，也不表示 Automation 模块或平台完成。
-- AIF-04 通过只表示三个 Element 点击动作及必要等待，不表示输入、其他手势、系统/应用能力、Automation 模块或平台完整链路完成；模块最终验收前必须另走测试 App/测评设计与授权。
+- AIF-04限定验收证据继续守护三个点击动作；当前模块最小收口仅在安全Settings页面执行代表性single click，不重跑double/long或专用动态App矩阵，也不声称这些能力在同一链完成。AIF-04通过仍只表示三个Element点击动作及必要等待，不单独表示Automation模块或平台收口完成。
 
 ## AIF-05 Element Text Actions
 
@@ -251,7 +250,7 @@
 - 必须覆盖0→出现、displayed/enabled变化、持续timeout、每层0/1/多、每个pre-action stale点、final stale/有效错误/非法返回、response_unknown/慢头/体/断连、gate/state/connection、取消与三类condition request_state、completed_steps/cleanup_errors、raw-ID完整矩阵及AIF-02/03/04回归。
 - Appium route过滤、driver下游replace flag、device-server内部clear/ACTION_SET_TEXT/progress/maxTextLength和字面反斜线+n冲突只由固定提交源码及实际manifest资格证明，用于限定不保证项；临时协议服务或mock不得冒充运行时证明。实际源码/manifest不符时停止。
 - 获准基础真机验收只在固定资格组合和无账号/网络/提交副作用的普通文本字段验证短ASCII replace、send、clear、replace empty、每调用一次final命令、项目None及显式AIF-03观测；不故障注入，不验证65KiB、特殊control、progress或全部控件。
-- 专用动态Android测试App、多行/Unicode/长文本/自定义控件、延迟/stale/故障及跨feature评分后置到Automation模块最终验收；该后置不降低AIF-05受控验证、独立差异审查和基础真机链门槛。AIF-05通过不表示手势、系统/应用能力、Automation模块或当前平台完整链路完成。
+- AIF-05限定验收证据继续守护send/clear/replace及文本边界；当前模块smoke只执行固定非敏感replace并恢复基线，不重跑多行/Unicode/长文本/自定义控件矩阵，也不提升覆盖。AIF-05通过不单独表示Automation模块或平台收口完成。
 
 ## AIF-06 Element Gestures And Restricted Scroll Search
 
@@ -313,7 +312,7 @@
 - official scroll须覆盖canonical-ID模板、target ID/accessibility、全部拒绝形状、mapTestTagToResourceId状态、target初始缺失、恰好一个final、no-such统一CommandError，以及成功后验0/多/hidden/stale/非法bool/unknown的分类和completed steps。
 - drag须覆盖rect形状、负坐标、0/1/正常尺寸、Java int边界、ratio 0/0.5/1、内部floor坐标、双目标整轮stale与一次final payload。
 - 临时协议服务只证明项目到Python client/Appium HTTP边界；固定源码/manifest证明driver/device-server调用链；获准真机页面证明实际触点、内容和drag。三层证据不得互相冒充。
-- 缺少获准的安全drag目标时报告 `device-validation-blocked`，不能以受控协议或源码资格代替适用基础真机链。专用动态App、跨feature场景和评分后置到Automation模块最终验收；AIF-06通过不表示系统/应用能力、Automation模块或平台完整链路完成。
+- AIF-06限定验收证据继续守护四类手势及拖放；当前模块smoke只执行一个固定容器上的`swipe_gesture(direction="up", percent=0.5)`，不重跑scrollGesture/official scroll/drag或专用App矩阵，也不提升覆盖。缺少获准安全目标时仍须`device-validation-blocked`，不能以协议或源码代替适用feature真机证据。
 
 ## AIF-ED Element-Bound Public Interface
 
@@ -433,7 +432,7 @@
 - 使用锁定真实Client/Selenium和既有临时HTTP协议服务，验证实际路由/payload、输入与资源边界、strict结果、错误/unknown/预算/取消、跨Element/Device/Session共享gate及原回归；不只mock转发、源码或便利helper回声。
 - IME必须验证已聚焦零点击、必要一次点击、同handle复核、点击后stale/失败/取消/超时无第二次点击或IME、原raw guard恢复及完成事实；严格剪贴板解码须区分合法空与错误，不放宽合同求通过。
 - 必须通过直接消费者smoke、适用真实设备链和完整独立差异审查。此前AIF-ED安全设备授权不自动扩展至Home/其他按键、剪贴板读写、IME提交或接受弹窗权限；实施前仍需明确设备、安全页面/数据、命令及副作用授权，模拟不冒充真机。
-- AIF-07不等于面板/应用管理、Automation模块或平台完整链。专用动态App、跨feature/故障/清理/多设备与真实Agent链仍属模块最终验收；详细依据见 [AIF-07设计](../../docs/superpowers/specs/2026-10-26-automation-aif-07-system-actions-design.md)。
+- AIF-ED/07限定验收与永久测试继续守护Element/Device/IME合同；当前模块smoke只执行设计列明的hide/back/Home代表动作。剪贴板、弹窗、IME、其他keycode、真实多设备及Integrations不在本次smoke重跑或资格声明中。AIF-07通过不单独表示面板、应用管理或模块收口完成。
 
 ## AIF-08 System Panels And Existing Tiles
 
@@ -524,7 +523,7 @@
 - activate在本组合使用官方resolver/am start-activity，不先force-stop或等待业务页；上游resolver可能改用dumpsys、拉APK至宿主临时目录、调用aapt2，失败warning后取首候选并清理临时目录。项目不追加fallback，不等于上游无这些行为或提供Element唯一性。
 - ADB故障恢复可能重连/原命令重试并kill-server/start-server，影响其他连接；单项目请求不保证设备exactly-once。ADB默认单次20秒、exclusive等待/恢复不是公开操作硬上限；上游环形输出缓存、APK拉取及aapt2处理不提供本项目全面内存/磁盘/时限保证，不为此重写传输或增加root/adb_shell insecure权限。
 - 需真实固定Client/Selenium协议验证、直接消费者smoke、原回归/质量/发行物验证、独立完整差异审查及获准安全应用真实链；协议或源码不能代替实际UI/系统效果。真机须明确设备/服务、可安全激活与force-stop的已安装包、后台切换/缺失包样本、证据保留、允许状态损失与恢复；旧设备授权不自动延续，无安全资源仍device-validation-blocked，不删四态/安全链验收。
-- 仅终态已知、Session仍active且获授权时可独立显式恢复；unknown后不使用uncertain Session补发恢复/DELETE，不承诺回滚任务栈/业务页/未保存数据。应用安装/卸载另由AIF-10契约约束；清数据、专用动态App完整竞态、跨feature/故障/清理/多设备与真实Agent链仍分别保留后续设计/授权及模块验收义务。AIF-09通过不等于模块/平台Done。
+- 仅终态已知、Session仍active且获授权时可独立显式恢复；unknown后不使用uncertain Session补发恢复/DELETE，不承诺回滚任务栈/业务页/未保存数据。应用安装/卸载另由AIF-10契约约束；当前模块smoke只复验Calculator terminate→1、activate→4、Home→3、terminate→1的瞬时状态链。状态0、缺失包known error、terminate false、清数据、完整竞态、真实多设备和Agent链不在本次smoke重跑或资格声明中。AIF-09通过不单独表示模块/平台收口完成。
 
 ## AIF-10 Application Installation And Removal
 
@@ -570,5 +569,16 @@
 - 固定appium-adb对特定连接错误可能恢复并直接重试原ADB命令，甚至reconnect或kill/start server；一个项目HTTP请求不保证设备端exactly-once。stdout/stderr环形缓存、exclusive等待及多个子命令也不构成全面资源保证。
 - 卸载固定不发送`-k`，但其消费者合同仅为包卸载bool。真机attempt-07证明：即使remove true、query0且包曾absent，同签重装仍可保留app-private sentinel；因此任何结果均不保证app-private、外部共享、备份恢复、keystore、secondary/profile、OEM数据删除或重装不恢复。known error也不能证明无部分副作用，unknown禁止自动重放或恢复。
 - 必须使用固定真实Client/Selenium临时HTTP验证精确payload、strict结果、path/bool/package、五倍timeout边界、gate/lifecycle/known/unknown及原回归；另需直接消费者、发行物验证、完整独立差异审查和获准专用APK真实链。协议/源码/HTTP None或bool不能代替实际安装、版本、签名、包卸载及数据限制事实。
-- 真机须另明确设备/服务、专用无账号/个人数据APK、hash/package/version/testOnly/签名矩阵、允许安装/替换/force-stop/卸载及潜在数据副作用和恢复证据。无安全资源须device-validation-blocked，不得改用系统、Appium helper、IME或业务应用。需要测试数据清理时必须等待未来独立`clear_app`设计/SPEC/实现/真机验收，AIF-10不隐式组合；跨feature故障/清理/多设备/专用动态App及真实Agent链仍属模块整体验收，AIF-10不等于模块/平台Done。
+- 真机feature验收仍须明确设备/服务、专用无账号/个人数据APK、hash/package/version/testOnly/签名矩阵、允许安装/替换/force-stop/卸载及潜在数据副作用和恢复证据。无安全资源须device-validation-blocked，不得改用系统、Appium helper、IME或业务应用。当前模块收口直接复用AIF-10已固定的安装、替换、签名、testOnly、remove true/false、target Session和数据限制证据，不重跑安装卸载，不要求`clear_app`，也不把feature证据冒充本次smoke实跑。
+
+## Current-Platform Minimal Closure
+
+- 当前组合固定为macOS宿主 / 单个明确Android Native目标 / Appium3.7.0 / UiAutomator2 8.7.0 / Client6.0.8 / Selenium4.51.0 / Python3.11，以及实际已资格Android driver14.2.0、appium-adb16.0.5、device-server10.6.6、Settings8.0.9。实际patch不符即blocked，不以caret范围或latest冒充。
+- 本收口不新增或修改任何公开Interface、错误、默认值、依赖、源码、测试、仓库工具或发行内容。`Device.clear_app`明确不支持；不得由调用方、验收consumer或Integrations隐式执行`pm clear`。`remove_app`的数据非保证不变。
+- 模块收口仅新增一次性证据consumer，不进入仓库或发行物。它只使用公开`list_devices`、Runtime connection、`create_session`、Session/Element/Device、OperationControl和公开错误；不使用裸WebDriver、elementId、私有gateway、raw HTTP、任意ADB shell、第二状态机或自动重试。
+- 真实smoke须使用调用方明确serial、已批准的`com.android.settings`/`com.google.android.calculator`和固定非敏感locator/文本基线；只执行设备发现、连接、device-only Session、observe_tree、single click、最小inspect/replace/恢复、固定swipe、hide/back/Home、Calculator 1/3/4生命周期、正常quit及replacement。页面/locator不符即device-validation-blocked，不换用业务App或扩大动作。
+- smoke未直接覆盖`inspect_structure`、double/long、send/clear、scrollGesture/official scroll/drag、IME/剪贴板/弹窗、其他keycode、SystemUI、install/remove、状态0/缺失包/terminate false、故障注入和真实多设备；这些只可映射到当前永久测试与已验收feature证据，不得标为smoke实跑。
+- 真实smoke不主动制造transport unknown。自然发生response unknown、Session uncertain或owned Session无法确认closed时立即停止，不发restore/query/remove/quit/DELETE；当前run非pass，设备/端点在owner确认旧工作停止和安全基线恢复前不得复用，人工恢复须另获授权。
+- 当前限定Done要求：AIF-01～10限定证据可读取且仍有效；当前HEAD未过滤全量pytest、Ruff、strict mypy、import-linter、build及wheel/sdist隔离安装通过；代表性单设备smoke通过；所有owned Session closed且replacement成功，Calculator最终query1、Settings固定文本恢复；无未决unknown/敏感泄漏/副作用；当前完整差异和证据索引经新独立full审查pass。
+- 最终状态必须命名为“Automation当前平台最小收口Done”，并同时声明：无`clear_app`、无数据删除保证、无专用App完整矩阵、无所有能力同链、无真实多设备资格、无Integrations/其他平台/远程云/自管服务。缺任一Done门槛时不得用“基本Done”或历史证据拼接替代。
 
