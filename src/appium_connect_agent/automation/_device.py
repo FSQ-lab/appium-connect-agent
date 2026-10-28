@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING, Literal
 
 from appium_connect_agent.runtime import OperationControl
 
-from ._element import _PreparedOperation
+from ._element import _PreparedOperation, _valid_package
 from ._models import InvalidRequestError
 from ._system_actions import (
+    _activate_app,
     _alert,
     _back,
     _clipboard_content,
@@ -18,9 +19,11 @@ from ._system_actions import (
     _key_arguments,
     _label,
     _press_keycode,
+    _query_app_state,
     _set_clipboard_text,
     _status_bar,
     _status_bar_command,
+    _terminate_app,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +39,45 @@ class Device:
 
     def __init__(self) -> None:
         raise TypeError("Device objects are created by Session.device")
+
+    def activate_app(
+        self, app_id: str, *, control: OperationControl | None = None
+    ) -> None:
+        """Activate an explicit package, without waiting for a business page."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        _check_app_id(app_id, operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _activate_app(driver, gateway, app_id),
+        )
+
+    def terminate_app(
+        self, app_id: str, *, control: OperationControl | None = None
+    ) -> bool:
+        """Force-stop an explicit package; preserve the official boolean."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        _check_app_id(app_id, operation_id)
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _terminate_app(driver, gateway, app_id),
+        )
+
+    def query_app_state(
+        self, app_id: str, *, control: OperationControl | None = None
+    ) -> int:
+        """Read one official state sample (0, 1, 3 or 4), not health."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        _check_app_id(app_id, operation_id)
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _query_app_state(driver, gateway, app_id),
+        )
 
     def status_bar(
         self,
@@ -171,6 +213,11 @@ class Device:
                 driver, gateway, accept=False, button_label=button_label
             ),
         )
+
+
+def _check_app_id(app_id: str, operation_id: str) -> None:
+    if not _valid_package(app_id):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
 
 
 def _bind_operation(

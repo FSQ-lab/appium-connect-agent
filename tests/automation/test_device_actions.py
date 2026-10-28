@@ -65,6 +65,9 @@ class DeviceProtocolService(ActionProtocolService):
                 "mobile: acceptAlert": "accept_alert",
                 "mobile: dismissAlert": "dismiss_alert",
                 "mobile: statusBar": "status_bar",
+                "mobile: activateApp": "activate_app",
+                "mobile: terminateApp": "terminate_app",
+                "mobile: queryAppState": "query_app_state",
             }
             if isinstance(script, str) and script in kinds:
                 return kinds[script]
@@ -75,6 +78,12 @@ class DeviceProtocolService(ActionProtocolService):
             return {"value": False}
         if kind in {"get_clipboard_text", "status_bar"}:
             return {"value": ""}
+        if kind == "activate_app":
+            return {"value": None}
+        if kind == "terminate_app":
+            return {"value": False}
+        if kind == "query_app_state":
+            return {"value": 0}
         if kind in _ACTIONS:
             return {"value": None}
         return super()._default_payload(request, kind)

@@ -3,15 +3,83 @@
 from __future__ import annotations
 
 import base64
+import math
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 from appium.webdriver.webdriver import WebDriver
 
-from ._models import InvalidRequestError
+from ._models import InvalidRequestError, OperationTimeoutError
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
+
+
+def _activate_app(
+    driver: WebDriver, gateway: _SessionOperationGateway, app_id: str
+) -> None:
+    def action() -> None:
+        _none(driver.execute_script("mobile: activateApp", {"appId": app_id}))
+
+    gateway.final_action(action)
+    gateway.complete("action_completed")
+
+
+def _terminate_wait(gateway: _SessionOperationGateway, deadline: float) -> int:
+    """Adapt the original remaining budget, never restarting or extending it."""
+    gateway.checkpoint()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.001:
+        # A sub-millisecond budget can be unexpired; cancellation still wins.
+        gateway.checkpoint()
+        raise gateway.failure(OperationTimeoutError, "operation_timeout", "not_sent")
+
+    # Cap before multiplication: even a huge finite deadline stays bounded.
+    milliseconds = math.floor(min(remaining, 0.5) * 1000)
+    # Multiplication can round across an integer boundary. Compare the actual
+    # float division used by the contract, correcting in constant time.
+    if milliseconds / 1000 >= remaining:
+        milliseconds -= 1
+    elif milliseconds < 500 and (milliseconds + 1) / 1000 < remaining:
+        milliseconds += 1
+    return milliseconds
+
+
+def _terminate_app(
+    driver: WebDriver, gateway: _SessionOperationGateway, app_id: str
+) -> bool:
+    def action() -> bool:
+        payload: dict[str, str | int] = {"appId": app_id}
+        deadline = gateway.operation_deadline
+        if deadline is not None:
+            # Sample only after the gateway has prepared this final request;
+            # presend controlled failures therefore remain not_sent.
+            payload["timeout"] = _terminate_wait(gateway, deadline)
+        result: object = driver.execute_script("mobile: terminateApp", payload)
+        if type(result) is not bool:
+            raise ValueError("terminateApp must return bool")
+        return result
+
+    result = gateway.final_action(action)
+    gateway.complete("action_completed")
+    return result
+
+
+def _query_app_state(
+    driver: WebDriver, gateway: _SessionOperationGateway, app_id: str
+) -> int:
+    def action() -> int:
+        result: object = driver.execute_script(
+            "mobile: queryAppState", {"appId": app_id}
+        )
+        if type(result) is not int or result not in (0, 1, 3, 4):
+            raise ValueError("queryAppState must return integer 0, 1, 3 or 4")
+        return result
+
+    result = gateway.final_action(action)
+    gateway.complete("app_state_read")
+    return result
 
 
 def _status_bar_command(

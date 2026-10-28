@@ -1,6 +1,21 @@
 # Automation 需求交接台账
 
-当前进度更新：2026-10-27。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+当前进度更新：2026-10-28。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+
+## 当前 AIF-09 进度
+
+- TaskID `AUTO-AIF09-IMPL-20261027`，当前平台macOS / Android Native / Appium3.7.0 / UiAutomator2 8.7.0，仅Automation。用户已确认[设计](../superpowers/specs/2026-10-27-automation-aif-09-application-lifecycle-design.md)、显式spec-driven及根/Automation SPEC delta。状态：**Done（本feature限定范围）**；SPEC、实现、完整验证/真实链及独立full/pass均闭合，不推进AIF-10，不代表模块/平台Done。
+- 任务、授权与验收详见[实施材料](automation-aif09-implementation.md)。起点master / `a59d793e5e889c0a1dee75a267157856dafc6e35`，0 tracked修改、1 untracked已确认设计；135文件起点完整ZIP/hash保留，不把设计原有正文混成本批实施新增，无依赖/lock变更。
+- 新增Device.activate_app/terminate_app/query_app_state，显式package、strict None/bool/int0/1/3/4、单次固定官方请求；内部正等待1..500ms严格小于采样剩余，原gate/预算/final成功优先/unknown保留、Session target及定位默认不变，无安装/重启/自动query或重放。
+- 最终未过滤串行全量回归 **2,147 passed/792.05秒**，JUnit无failure/error/skip；专项初轮198 passed。初轮格式和六项测试类型错误原始失败保留，修正未改生产行为或放宽strict/容量/unknown规则；最终回归覆盖全部用例。
+- Ruff lint、代码范围format59文件、strict mypy57文件、import-linter5项、构建通过；wheel/sdist各32份源码/类型标记与当前源码一致，两个隔离CPython3.11.16环境按七直接依赖及锁定约束安装、pip check/仓库外import/py.typed/公开入口通过，venv清理。locked offline sync resolved43/checked40，无包变更；旧CI分发脚本六依赖预存问题未纳入本批，当前七依赖独立分发验证通过。
+- 独立SDK→临时HTTP消费者exit0，保留合法标量/非法输入零请求/坏结果已知失败与可继续、显式查询重拉状态不重放、target A及before→after重定位/显式B路径、正常quit；这不是设备证据。
+- 用户分别批准只读盘点和计算器完整验收，明确设备、包、Home、缺失样本、隐私本地证据、隔离固定服务及必要临时策略/IME恢复；手工解锁前Dozing/keyguard真实阻塞被保留，无自动解锁/密码输入。真机只操作已安装计算器com.google.android.calculator及明确缺失样本，不输入/清除数据、不动其他业务应用/通知或重装helper。
+- `AUTO-AIF09-NATIVE-20261028` 实际Pixel6/Android17 API37、CPython3.11.16、Client6.0.8/Selenium4.51.0、隔离Appium3.7.0/UiA8.7.0且peer3.7.0、Android driver14.2.0/ADB16.0.5/server10.6.6/Settings8.0.9。独立窗口/PID/截图与SDK一致：计算器1→4→Home后3→terminate true后1，再terminate false；缺失query0/terminate false，activate预期command_failed/response_received后仍可继续。
+- 14对SDK记录：13个HTTP200和1个预期缺失包激活HTTP500，原始client/server及完整wire保留。三方法成功不提升为持续停止/健康；原Session target/sessionId不改。最终closed/busy=false，hidden API/有序IME/helper身份精确恢复，无forward/UIA进程；消费者exit0、临时4731服务/安装及隔离venv清理，原PID31900/4723的3.8.0/同git-sha保留。
+- 证据根 `/var/folders/xg/5v7ktvdx04vct4g1cjpcb9880000gn/T/aif09-implementation-0qziwpol`：baseline.json/starting-workspace.zip、SPEC gate与API资格、质量失败及最终记录、pytest-final.log/xml、direct-consumer、distribution-install-records.json和native-evidence。未提交/推送。
+- 独立新上下文 `Aif09ImplementationAudit / AUTO-AIF09-IMPL-AUDIT-01` full审查 **pass、无finding/阻塞**；独立核对135文件ZIP、HEAD七tracked路径/三untracked补充、九路径81,930bytes/9diff完整增量及重建，SHA-256 `6573b7b306b29924968ed9b0ba6312bc5c8984986345f08bd84f8e50852f663a`。审查版累计产品119/测试779/文档292行，移动排除0；官方复用、验证/分发、native43文件和14对raw wire/独立图片/系统恢复证据一致，建议限定验收，主会话据此判定Done。
+- 审查结果 `audit/review-result.txt` SHA-256 `195b708c6c968d5fe37891a3685cd9f22bbaaa84fc0005c9ad7acd0fdf4357ef`，完整身份 `audit/manifest.json`、轨迹 `history://Aif09ImplementationAudit`。问答/quality/offline-sync转录来源边界及真实CompletedProcess补证均已独立核对，不冒充自动raw JSONL。本条与任务包状态为审查后元数据，产品/测试/SPEC/设计不变，不将旧审核hash冒充最终文稿身份。
 
 ## 当前 AIF-08 进度
 

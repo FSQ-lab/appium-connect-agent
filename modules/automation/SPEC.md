@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；系统/应用动作及其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME 契约已确认；实际实现与验收状态以交付证据为准，应用管理尚未交付。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用激活/终止/状态查询契约已确认；实际实现与验收状态以交付证据为准，应用管理尚未交付。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -471,4 +471,58 @@
 - 需以固定真实Client/Selenium和既有临时HTTP服务验证三值/严格返回与边界、请求次数、共享gate/生命周期/unknown及原回归；必须有直接消费者smoke、适用三命令＋安全已有磁贴真实链与恢复证据，以及独立完整差异审查。协议/上游源码或空成功输出不能代替实际UI效果证据。
 - 真机须另明确设备/服务、通知隐私、安全磁贴及允许状态变化/恢复动作；既有设备授权不自动扩展至本feature。没有安全磁贴资源须device-validation-blocked，不缩减为只验三命令；不为验收擅自添加磁贴或改变网络/权限等未获准设置。
 - 获准测试方仅在终态已知、Session仍active时可作独立显式collapse/恢复，不属于库fallback；unknown后不使用uncertain Session补发恢复或DELETE，不保证自动恢复原面板/焦点/通知或磁贴状态。AIF-08不等于Automation模块/平台整体验收。
+
+## AIF-09 Application Lifecycle
+
+本节定义已确认的AIF-09契约增量，不表示实现或验收。依据为[已确认AIF-09设计](../../docs/superpowers/specs/2026-10-27-automation-aif-09-application-lifecycle-design.md)。本节在既有Device上增加应用生命周期，未列出的原契约不变。
+
+### Dependencies And Ownership
+
+- 当前组合为macOS / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / Client6.0.8 / Selenium4.51.0 / Python3.11；实际资格Android driver14.2.0、appium-adb16.0.5、server10.6.6、Settings8.0.9。UiA最低Android8/API26，不承诺其他OEM/平台资格。
+- 仅复用公开固定execute_script、原Device绑定、Session gateway、OperationControl、现有Element package matcher及Python3.11标准库math/time/re；不新增库、通用协议/进程解析/轮询、client、gate、状态机或模块依赖方向，其他模块和依赖/lock保持不变。
+- 应用方法属于所属Session创建的可信Device；无Session/Element同义入口、App对象、公共manager、Result/状态枚举、缓存或全局当前应用。应用生命周期与Session生命周期分开，不改target_app_id、sessionId或占用；终止目标应用、false或状态0均不等于quit。
+
+### Public Interface And Values
+
+| 同步公开签名 | 返回 |
+| --- | --- |
+| `Device.activate_app(app_id: str, *, control: OperationControl | None = None)` | `None` |
+| `Device.terminate_app(app_id: str, *, control: OperationControl | None = None)` | `bool` |
+| `Device.query_app_state(app_id: str, *, control: OperationControl | None = None)` | `int` |
+
+- app_id必须显式提供，不能默认取Session target、当前前台包、显示名、Element或Session ID；只验证形状，不宣称验证安装、可启动性或调用授权。
+- 复用现有Element package规则：str、1..255个ASCII字符，完整匹配 `[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*`；允许单段与下划线。不strip/lower/normalize/强转，不接收路径、component、URL、Unicode、空白/control、孤立surrogate或非法分段。新方法比create_session更窄，不改变create既有宽松app_id或Element规则。
+- 不公开上游timeout、Activity/intent、独立wait、bundleId或任意options/payload；绑定与纯值错误在gate和任何请求前invalid_argument/not_sent，原优先级保持。
+
+### Fixed Official Mapping And Strict Completion
+
+- 每次调用只发送一次 `driver.execute_script`；script分别固定为 `mobile: activateApp`、`mobile: terminateApp`、`mobile: queryAppState`，payload仅 `{"appId": app_id}`，terminate在显式Control时另加下节内部timeout。无额外Settings/find/source/current-package/安装检查/后置query，不增加项目fallback或重放。
+- activate合法客户端交付结果仅None；成功记action_completed，不等待业务页或推断前台稳定。客户端可能将缺失value等归一None，此检查不宣称原始wire必有显式null，不读私有传输字段补验。
+- terminate结果必须实际bool，原样保留；false表示上游首次无匹配原PID，包含未安装/原未运行。true沿官方判定：原PID全部消失或被新PID完全替换亦可能true，不保证返回时无新进程或持续停止。合法true/false均只记action_completed，不记app_stopped。
+- query仅接受实际int、排除bool、仅0/1/3/4；分别是官方安装检查未安装、已安装未观测到运行、运行但未找到前台证据、运行且找到前台证据。合法结果记app_state_read，不缓存或提升为健康保证；2及其他数/float/string/null等非法形状均明确失败，不转0/false。
+- 结果校验在gateway action callable内完成；非法客户端结果或完整官方错误均CommandError/command_failed/response_received，保留原因链且不记该次虚假完成事实，不从message猜未安装/权限/unsupported或把driver等待错误改成项目超时。
+
+### Terminate Wait And Operation Budget
+
+- 无Control时省略上游timeout，沿官方500ms进程等待及原客户端默认，不新增有限总预算。上游timeout经parseInt解析，timeout<=0会跳过核对；项目禁止此路径。
+- 显式Control沿公共调用原始deadline，临近发送处检查取消/到期并采样剩余秒数R，取满足 `1 <= T <= 500` 且 `T / 1000 < R` 的最大整数毫秒。用标准库常量时间向下适配、先截限参与计算值避免溢出，并复核浮点严格比较；不新建等待循环。
+- 无合法T（包括R恰好1ms或更少）时重新检查取消优先级后抛OperationTimeoutError/operation_timeout/not_sent，零请求、保持active；不发小数/字符串/0/负数、不强补1ms。R恰好500ms时不发500ms；大于500ms仍至多500ms，不重启预算。
+- 请求仍沿原gateway/传输发送前检查和最新剩余HTTP预算；参数约束仅对采样时成立，不保证远端开始等待时仍有同样剩余。原PID读取、force-stop、每轮ADB、网络和调度不包含在进程wait之内；上游立即首检、100ms轮询不代表最小wait，正在执行的条件不被抢占。客户端timeout不证明设备命令已停止，500秒Session空闲与500ms进程等待无关。
+
+### Execution, Errors And Session Invariants
+
+- 三项沿一次operation_id/started/deadline、可信绑定/纯值校验、原非阻塞gate、Session/Runtime connection状态、取消优先deadline和原gateway；与Element、其他Device、观测、quit共享唯一准入，非法先于busy、合法重叠session_busy/not_sent。
+- 三项均以final_action取得最终合法语义值，包括query；严格校验完成后成功优先于随后取消/deadline。保持gate至结果校验/必要收尾完成，不改变既有结构观测的多阶段postcheck或剪贴板规则。
+- 完整已知失败保持原active可继续路径；在途终态未知沿execution_unknown或可证明cancel/timeout分类，response_unknown使Session uncertain、关闭本地client并保留device/port；只读query也不自动恢复Session，不补发恢复、动作或DELETE。
+- 应用切换前后的旧/新Element短ID继续绑定原Session target；其他应用须显式package/完整ID，raw ID/guard/恢复/每次重定位规则不变。三种应用操作不写这些定位状态，不释放占用；正常quit且收尾确认成功后才释放。
+- 不自动安装/卸载/清数据、reset/restart、后台化、核验业务、处理弹窗、自动恢复或重建；合法命令完成不保证业务效果，也不提供retryable或回滚承诺。
+
+### Upstream Limitations And Authorization
+
+- query是安装/PID/窗口的非原子采样；PID依赖dumpsys精确包名匹配，不能保证自定义多进程/profile/OEM完整性，上游无unknown sentinel。本库不吞异常转0，不等于上游永不因识别局限返回0/1/3。
+- terminate使用force-stop，有Android stopped状态及未保存状态/广播/jobs/alarms/services副作用；其等待catch会将状态/PID查询异常统一包装，不能用错误文字断言真实运行状态，不额外query或再次终止弥补。
+- activate在本组合使用官方resolver/am start-activity，不先force-stop或等待业务页；上游resolver可能改用dumpsys、拉APK至宿主临时目录、调用aapt2，失败warning后取首候选并清理临时目录。项目不追加fallback，不等于上游无这些行为或提供Element唯一性。
+- ADB故障恢复可能重连/原命令重试并kill-server/start-server，影响其他连接；单项目请求不保证设备exactly-once。ADB默认单次20秒、exclusive等待/恢复不是公开操作硬上限；上游环形输出缓存、APK拉取及aapt2处理不提供本项目全面内存/磁盘/时限保证，不为此重写传输或增加root/adb_shell insecure权限。
+- 需真实固定Client/Selenium协议验证、直接消费者smoke、原回归/质量/发行物验证、独立完整差异审查及获准安全应用真实链；协议或源码不能代替实际UI/系统效果。真机须明确设备/服务、可安全激活与force-stop的已安装包、后台切换/缺失包样本、证据保留、允许状态损失与恢复；旧设备授权不自动延续，无安全资源仍device-validation-blocked，不删四态/安全链验收。
+- 仅终态已知、Session仍active且获授权时可独立显式恢复；unknown后不使用uncertain Session补发恢复/DELETE，不承诺回滚任务栈/业务页/未保存数据。安装/卸载/清数据、AIF-10、专用动态App完整竞态、跨feature/故障/清理/多设备与真实Agent链仍分别保留后续设计/授权及模块验收义务；AIF-09通过不等于模块/平台Done。
 

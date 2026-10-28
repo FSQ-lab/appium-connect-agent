@@ -201,3 +201,15 @@
 - 已有磁贴继续使用明确Element及原click规则；展开、观测、点击为独立调用，不自动选择面板/目标或推断开关状态，不新增磁贴组件API、设置家族、通知处理或自动恢复。
 - 详细输入、输出、生命周期与授权边界见[Automation模块SPEC](modules/automation/SPEC.md)的AIF-08条款；真实面板/安全磁贴操作仍须明确授权，feature验收不等于模块/平台完整链验收。
 
+## Automation Application Lifecycle（AIF-09）
+
+本节定义已确认的AIF-09契约增量，不表示实现或验收。依据为[已确认 AIF-09 设计](docs/superpowers/specs/2026-10-27-automation-aif-09-application-lifecycle-design.md)。
+
+- 延续macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0及既有Client6.0.8、Selenium4.51.0、Python3.11；复用原Device/Session执行链与package校验，不新增依赖、平台、模块方向或通用自研，其他模块及依赖/lock不变。
+- 在绑定的Device上新增同步 `activate_app(app_id: str, *, control: OperationControl | None = None) -> None`、`terminate_app(app_id: str, *, control: OperationControl | None = None) -> bool` 与 `query_app_state(app_id: str, *, control: OperationControl | None = None) -> int`；app_id必填，沿现有Element package的ASCII/1..255字符规则，不收紧既有create_session。
+- 每次仅发一次固定官方mobile命令；返回分别strict None、实际bool、排除bool的实际int且仅0/1/3/4。非法结果明确command_failed/response_received，不强转或伪造成false/0；成功不保证业务页、持续停止或持续健康。
+- 终止不公开timeout/options；无Control沿官方500ms默认，显式Control仅取不超过500ms且严格小于采样剩余预算的最大正整数毫秒；无法容纳1ms时零请求operation_timeout/not_sent，取消优先，不发0或补足预算。
+- 三方法沿一次操作起点/总预算、共享gate、final成功优先、既有错误与unknown保留；不改Session target/sessionId或释放占用。query0、terminate false、终止Session target都不等于quit，既有短ID默认包不随前台切换。
+- 不自动安装/卸载/清数据、重启、额外query、业务核验、恢复、重建或重放。上游PID替换也可能terminate true，状态为非原子采样；resolver可能拉APK/使用aapt2/内部fallback，ADB恢复可能重试或重启server，单项目请求不保证设备exactly-once或全面资源有界。
+- 详细输入、返回、预算、错误及安全授权见[Automation模块SPEC](modules/automation/SPEC.md)的AIF-09条款；真实安全应用链仍须另获授权，feature通过不表示模块/平台完整链验收。
+

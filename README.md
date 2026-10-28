@@ -153,6 +153,147 @@ unknown 后不得用 uncertain Session 追加恢复或退出请求。
 当前 feature/真机/模块验收状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)
 为准，空字符串和协议测试都不等于实际 UI 或 Automation 模块验收通过。
 
+### 应用激活、终止与状态查询
+
+在已创建的 Android Native Session 上，使用绑定的 `session.device`；三个同步
+方法均要求显式包名，不推断当前前台应用，也不默认采用 Session target：
+
+```python
+from appium_connect_agent.automation import Session
+from appium_connect_agent.runtime import OperationControl
+
+
+def read_and_activate_approved_app(session: Session, app_id: str) -> int:
+    # 仅传入调用方已明确获准查询、激活的已安装测试包。
+    state = session.device.query_app_state(
+        app_id, control=OperationControl(timeout_seconds=10)
+    )
+    session.device.activate_app(
+        app_id, control=OperationControl(timeout_seconds=10)
+    )
+    return state  # 激活前的样本，不是激活后的后验。
+
+
+def force_stop_approved_app(session: Session, app_id: str) -> bool:
+    # 必须另获 force-stop 授权，接受未保存状态等副作用后才调用。
+    return session.device.terminate_app(
+        app_id, control=OperationControl(timeout_seconds=10)
+    )
+```
+
+这些函数接收调用方已经建立的 Session，不创建服务、安装应用或自动恢复。
+两种示例用途需要分别批准；不要只因某个包可查询就认为可激活或终止。
+每个方法独立产生 operation_id 和总预算，以上多次调用不是原子事务。
+示例不代表当前会话已经获得真实设备操作许可，也不假设操作者有权限。
+实际代码/受控协议/真机与独立审查状态见
+[Automation 台账](docs/tasks/automation-delivery-ledger.md)。
+
+#### 输入与严格返回
+
+`app_id` 沿用 Element 的 package matcher：1..255 个 ASCII 字符，完整匹配
+`[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*`。
+允许单段和下划线，不要求必须有点；大小写原样保留。不 strip、转小写、归一化
+或强转，不收显示名、路径、URL、component、Unicode、空白、control 或非法分段。
+这只是项目接受的标识形状，不证明安装、可启动性或授权，也没有改变
+`create_session` 已有的较宽 app_id 规则。
+
+| 方法 | 合法客户端交付值 | 成功的完成事实 |
+| --- | --- | --- |
+| `activate_app(app_id, *, control=None)` | 仅 `None` | `action_completed` |
+| `terminate_app(app_id, *, control=None)` | 实际 `bool`，保留 `True` / `False` | `action_completed`（含 false） |
+| `query_app_state(app_id, *, control=None)` | 实际 `int`，排除 bool，仅 0/1/3/4 | `app_state_read` |
+
+激活的 None 是官方客户端交付边界：Selenium 可能把缺失 value 等响应归一为
+None，本库不声称验证原始 wire 必有显式 null，也不重写响应 parser。
+非预期值（如终止返回 0、查询返回 True/2/浮点数/字符串/null）会明确报告
+`CommandError / command_failed / response_received`，保留原因链，不强转成
+false/0、不假装成功、不记虚假完成事实。完整官方错误也沿这一分类，
+不会通过错误文字猜测“未安装”“权限”或把上游等待失败改成项目超时。
+
+| query 状态 | 固定 Android 上游报告的含义 |
+| --- | --- |
+| 0 | 安装检查报告未安装 |
+| 1 | 已安装，运行检查未观察到匹配进程 |
+| 3 | 报告运行，窗口采样未找到该包前台证据 |
+| 4 | 报告运行，窗口采样找到该包前台证据 |
+
+状态不缓存，不提供新公共枚举或 unknown 成功值。安装、PID、窗口是多个
+**非原子采样**；PID 依赖 dumpsys 精确包名匹配，前台依赖窗口文本。
+自定义多进程、profile、OEM 输出未必完整匹配；本库不吞异常转 0，不等于
+上游永不会因识别局限报告 0/1/3。状态不是持续健康、UI 页面或业务成功证明。
+
+terminate 的 false 表示上游首次没有匹配原 PID，包含未安装或原未运行。
+true 是官方终止判定：原 PID 全部消失，或**原 PID 被新 PID 完全替换**时也
+可能为 true，即使新进程已运行；不能解释为返回时/持续没有进程。
+部分原 PID 仍存活不能视作全替换成功。上游等待期间的状态/PID 错误可能统一
+包装为 still-running-after-timeout；该错误文字不能证明设备实际持续运行。
+本库不额外 query、再次 force-stop 或自动重放来“确认”这个 bool。
+
+#### 三种不同的时间含义
+
+* `control=None`：terminate 不发送 timeout，沿官方 **500 毫秒进程等待**默认；
+  原客户端默认可能没有有限响应上限。activate/query 也不新加有限预算。
+* 显式 `OperationControl`：沿本次公开调用的原始总 deadline，绑定/输入校验
+  耗时也计入。临近发送采样剩余秒数 R，terminate 内部选最大整数 T，满足
+  `1 <= T <= 500` 且 `T / 1000 < R`；不公开 timeout/options，也不重启预算。
+  恰好剩 500ms 只能取 499ms；大于 500ms 至多取 500ms。
+* 无法容纳正整数 1ms（包括恰好剩 1ms）时，重新检查取消优先后以
+  `OperationTimeoutError / operation_timeout / not_sent` 拒绝，零请求且 Session
+  仍 active。不补足预算，不发 0/负数/小数/字符串；上游 timeout<=0 跳过
+  终止核对的路径不会被使用。取消优先于这一不足预算失败。
+
+**Session 的 500 秒空闲超时**与上述 500 毫秒不是同一设置。
+内部 T 只对采样时成立，不保证远端开始等待时仍有同样剩余。
+原 PID 读取、force-stop、每轮 ADB、网络和调度均另有耗时；上游立即首检、
+100ms 轮询不代表最小 wait，正在执行的条件不被抢占。客户端总预算/超时不
+保证设备端硬时限或命令已停止，不把 T 宣称为整个 terminate 的执行上限。
+
+#### Session、定位与上游边界
+
+三方法共用原 Session 的唯一非阻塞 gate、客户端、取消、总预算与未知执行保护；
+与 Element、其他 Device、观测、quit 重叠会立即 session_busy，不排队。
+可信绑定与纯值错误先于 busy/cancel；严格结果校验仍在 gate 内完成。
+三方法均采用 final 成功边界：合法最终值校验完成后，晚到取消/deadline 不推翻
+成功，包括 query；不改变结构观测既有的多阶段检查规则。
+
+完整已知失败保持 active，允许调用方下一次显式操作。终态未知沿原规则使
+Session uncertain、关闭本地 client、保留设备/systemPort；query 虽只读也不能
+自动恢复 Session。库不追加 query、activate、terminate、restore 或 DELETE。
+query 0、terminate false、终止 Session target 都不等于 quit，不释放占用或改变
+sessionId/target_app_id；只有正常 quit 且收尾确认成功后才释放资源。
+
+切换应用后，旧 Element 和新建 Element 的短 resource-id 仍绑定原 Session
+target，不跟随前台切换；另一应用须显式 package 或完整 ID。raw-ID、Settings
+guard/恢复、每次重新定位规则不变。三种应用操作本身不增加 Settings/find/source、
+current-package、安装检查或后置 query，只发一次固定官方 mobile 命令。
+
+activate 在本组合使用官方 resolver/am start-activity，不先 force-stop，不等待
+业务页面。上游 resolver 可能转用 dumpsys，在宿主临时目录拉取 APK、调用
+aapt2 读 manifest；失败 warning 后可能取首候选并清理临时目录。
+项目不追加 fallback，不等于上游没有 fallback，也不提供 Element 式唯一性。
+
+terminate 是 **force-stop，不是温和退出**；Android stopped 状态、未保存状态、
+广播、jobs、alarms、services 等均可能受影响。命令成功不保证页面、业务结果、
+持续停止或后续健康，不提供 restart/reset、后台化、安装/卸载/清数据、自动恢复、
+重建或回滚承诺；需要效果事实时由调用方获准后独立观测。
+
+官方 ADB 在特定连接错误下可能内部重连、重试原命令，并 kill-server/start-server，
+影响其他连接。本库单次项目请求/no-replay **不保证设备 exactly-once**。
+ADB 默认单次 20 秒、exclusive 等待/恢复不是公开操作硬上限；上游环形输出
+缓存、APK 拉取和 aapt2 也不提供本项目全面内存、磁盘、资源或时间硬上限。
+不通过 root、adb_shell insecure、换版、直接 ADB 或新增兜底消除这些限制。
+
+#### 真实使用须另获安全授权
+
+真实链必须事先明确设备、服务、可安全激活与 force-stop 的已安装测试包 A、
+获准切后台的包 B/Launcher 动作、缺失包样本、证据保留、允许的状态损失与恢复。
+不能默用 SystemUI、Launcher、输入法、Settings helper 等关键包作为终止目标。
+以前的 Session/面板/文本/手势许可不自动覆盖这些副作用，包名校验不是授权。
+只有终态已知、Session 仍 active 且许可涵盖时，才可独立显式恢复；unknown 后
+不得用 uncertain Session 追加恢复或 DELETE，也不承诺还原业务页/任务栈/数据。
+没有安全资源时保留 device-validation-blocked，不把协议成功冒充真实四态/UI
+验证；本 feature 的通过也不等于 Automation 模块/平台完整链验收。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。
