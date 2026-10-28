@@ -15,6 +15,10 @@ from ._models import InvalidRequestError, OperationTimeoutError
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
 
+_TERMINATE_TIMEOUT_CAP_MS = 500
+_REMOVE_TIMEOUT_CAP_MS = 100_000
+_INSTALL_TIMEOUT_CAP_MS = 300_000
+
 
 def _activate_app(
     driver: WebDriver, gateway: _SessionOperationGateway, app_id: str
@@ -26,8 +30,10 @@ def _activate_app(
     gateway.complete("action_completed")
 
 
-def _terminate_wait(gateway: _SessionOperationGateway, deadline: float) -> int:
-    """Adapt the original remaining budget, never restarting or extending it."""
+def _bounded_timeout(
+    gateway: _SessionOperationGateway, deadline: float, cap_ms: int
+) -> int:
+    """Fit one positive integer timeout strictly inside the original budget."""
     gateway.checkpoint()
     remaining = deadline - time.monotonic()
     if remaining <= 0.001:
@@ -36,12 +42,12 @@ def _terminate_wait(gateway: _SessionOperationGateway, deadline: float) -> int:
         raise gateway.failure(OperationTimeoutError, "operation_timeout", "not_sent")
 
     # Cap before multiplication: even a huge finite deadline stays bounded.
-    milliseconds = math.floor(min(remaining, 0.5) * 1000)
+    milliseconds = math.floor(min(remaining, cap_ms / 1000) * 1000)
     # Multiplication can round across an integer boundary. Compare the actual
     # float division used by the contract, correcting in constant time.
     if milliseconds / 1000 >= remaining:
         milliseconds -= 1
-    elif milliseconds < 500 and (milliseconds + 1) / 1000 < remaining:
+    elif milliseconds < cap_ms and (milliseconds + 1) / 1000 < remaining:
         milliseconds += 1
     return milliseconds
 
@@ -55,7 +61,9 @@ def _terminate_app(
         if deadline is not None:
             # Sample only after the gateway has prepared this final request;
             # presend controlled failures therefore remain not_sent.
-            payload["timeout"] = _terminate_wait(gateway, deadline)
+            payload["timeout"] = _bounded_timeout(
+                gateway, deadline, _TERMINATE_TIMEOUT_CAP_MS
+            )
         result: object = driver.execute_script("mobile: terminateApp", payload)
         if type(result) is not bool:
             raise ValueError("terminateApp must return bool")
@@ -79,6 +87,53 @@ def _query_app_state(
 
     result = gateway.final_action(action)
     gateway.complete("app_state_read")
+    return result
+
+
+def _install_app(
+    driver: WebDriver,
+    gateway: _SessionOperationGateway,
+    *,
+    app_path: str,
+    allow_test_packages: bool,
+) -> None:
+    def action() -> None:
+        payload: dict[str, str | bool | int] = {
+            "appPath": app_path,
+            "replace": True,
+            "allowTestPackages": allow_test_packages,
+        }
+        deadline = gateway.operation_deadline
+        if deadline is not None:
+            payload["timeout"] = _bounded_timeout(
+                gateway, deadline, _INSTALL_TIMEOUT_CAP_MS
+            )
+        _none(driver.execute_script("mobile: installApp", payload))
+
+    gateway.final_action(action)
+    gateway.complete("action_completed")
+
+
+def _remove_app(
+    driver: WebDriver, gateway: _SessionOperationGateway, *, app_id: str
+) -> bool:
+    def action() -> bool:
+        payload: dict[str, str | bool | int] = {
+            "appId": app_id,
+            "keepData": False,
+        }
+        deadline = gateway.operation_deadline
+        if deadline is not None:
+            payload["timeout"] = _bounded_timeout(
+                gateway, deadline, _REMOVE_TIMEOUT_CAP_MS
+            )
+        result: object = driver.execute_script("mobile: removeApp", payload)
+        if type(result) is not bool:
+            raise ValueError("removeApp must return bool")
+        return result
+
+    result = gateway.final_action(action)
+    gateway.complete("action_completed")
     return result
 
 

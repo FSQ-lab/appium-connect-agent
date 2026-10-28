@@ -68,6 +68,8 @@ class DeviceProtocolService(ActionProtocolService):
                 "mobile: activateApp": "activate_app",
                 "mobile: terminateApp": "terminate_app",
                 "mobile: queryAppState": "query_app_state",
+                "mobile: installApp": "install_app",
+                "mobile: removeApp": "remove_app",
             }
             if isinstance(script, str) and script in kinds:
                 return kinds[script]
@@ -78,9 +80,9 @@ class DeviceProtocolService(ActionProtocolService):
             return {"value": False}
         if kind in {"get_clipboard_text", "status_bar"}:
             return {"value": ""}
-        if kind == "activate_app":
+        if kind in {"activate_app", "install_app"}:
             return {"value": None}
-        if kind == "terminate_app":
+        if kind in {"terminate_app", "remove_app"}:
             return {"value": False}
         if kind == "query_app_state":
             return {"value": 0}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from appium_connect_agent.runtime import OperationControl
@@ -16,10 +17,12 @@ from ._system_actions import (
     _clipboard_content,
     _get_clipboard_text,
     _hide_keyboard,
+    _install_app,
     _key_arguments,
     _label,
     _press_keycode,
     _query_app_state,
+    _remove_app,
     _set_clipboard_text,
     _status_bar,
     _status_bar_command,
@@ -77,6 +80,42 @@ class Device:
             control,
             deadline,
             lambda driver, gateway: _query_app_state(driver, gateway, app_id),
+        )
+
+    def install_app(
+        self,
+        app_path: Path,
+        *,
+        allow_test_packages: bool = False,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Install one local APK without activating or verifying the app."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        app_path = _check_app_path(app_path, operation_id)
+        allow_test_packages = _check_bool(allow_test_packages, operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _install_app(
+                driver,
+                gateway,
+                app_path=str(app_path),
+                allow_test_packages=allow_test_packages,
+            ),
+        )
+
+    def remove_app(
+        self, app_id: str, *, control: OperationControl | None = None
+    ) -> bool:
+        """Remove one explicit package and preserve the official boolean."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        _check_app_id(app_id, operation_id)
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _remove_app(driver, gateway, app_id=app_id),
         )
 
     def status_bar(
@@ -213,6 +252,26 @@ class Device:
                 driver, gateway, accept=False, button_label=button_label
             ),
         )
+
+
+def _check_app_path(app_path: object, operation_id: str) -> Path:
+    if not isinstance(app_path, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+
+    # Import lazily because Session owns the single file-rule implementation
+    # and creates Device while its own module is still being imported.
+    from ._session import _validate_app_path
+
+    valid_path = _validate_app_path(app_path, operation_id)
+    if valid_path is None:
+        raise RuntimeError("required app path validation returned no path")
+    return valid_path
+
+
+def _check_bool(value: object, operation_id: str) -> bool:
+    if type(value) is not bool:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return value
 
 
 def _check_app_id(app_id: str, operation_id: str) -> None:

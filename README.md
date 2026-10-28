@@ -294,6 +294,68 @@ ADB 默认单次 20 秒、exclusive 等待/恢复不是公开操作硬上限；�
 没有安全资源时保留 device-validation-blocked，不把协议成功冒充真实四态/UI
 验证；本 feature 的通过也不等于 Automation 模块/平台完整链验收。
 
+### 应用安装与卸载
+
+在已创建的 Android Native Session 上，通过绑定的 `session.device` 显式安装一个
+本地 APK 或卸载一个明确包：
+
+```python
+from pathlib import Path
+
+from appium_connect_agent.runtime import OperationControl
+
+
+session.device.install_app(
+    Path("/absolute/path/to/approved.apk"),
+    allow_test_packages=False,
+    control=OperationControl(timeout_seconds=360),
+)
+
+removed = session.device.remove_app(
+    "com.example.approved_test_app",
+    control=OperationControl(timeout_seconds=120),
+)
+```
+
+`install_app` 只接受实际 `Path`、绝对、现存、可读的普通小写 `.apk` 文件；
+不接受字符串路径、URL、相对路径、目录、`.apks` 或上传/下载。路径由 Appium
+server 进程读取；客户端检查通过不保证服务账号可读，检查与读取之间也存在竞态。
+项目不解析或信任 APK 的包名、版本、签名和内容。
+
+安装只公开 `allow_test_packages` 这一个实际 bool；调用方不能选择替换策略。
+Adapter固定发送 `replace=True`，请求官方 `adb install -r` 路径，但不保证降级、
+签名冲突、数据迁移或权限结果。目标Android17真机已经证明，即使不发送`-r`，
+incremental install仍可能替换已有应用，因此项目不提供误导的`replace=False`。
+`allow_test_packages=True`只请求官方`-t`；不会授予运行时权限，也不会自动卸载、
+重装、启动或查询应用。
+
+`install_app` 的唯一合法客户端交付值是 `None`。`remove_app` 固定发送
+`keepData=false`，不提供保留数据选项；结果必须是实际 `bool` 并原样返回。
+缺失包通常返回 false 且不卸载；已安装包会由固定上游先 force-stop，再执行
+不带 `-k` 的卸载。false 也可能来自已经执行命令但 stdout 未含 Success，不能
+解释为“绝无副作用”。本Interface只承诺包卸载bool，**不保证任何数据删除**：
+目标Android17真机已证明remove true、query0和包absent后，同签重装仍可看到
+原app-private sentinel；外部共享、备份、keystore、profile和OEM状态同样不保证。
+需要测试数据清理时必须使用未来独立`clear_app`，不能从remove结果推断。
+
+`control=None` 不发送内部 timeout，沿固定上游 install 60 秒、remove 20 秒默认。
+显式 `OperationControl` 沿一次调用的原始总 deadline，在发送前取严格小于剩余
+预算的最大正整数毫秒；内部上限分别是 install 300,000ms、remove 100,000ms。
+这两个五倍上限只约束对应 ADB 子命令，不是整个 server 工作或硬实时返回保证；
+install 前的完整文件 hash、remove 前的安装检查/force-stop及ADB恢复另有耗时。
+
+两个方法与 Element、其他 Device、观测和 quit 共用原 Session gate、客户端、
+取消、known/unknown 与资源保留。每个方法只发一次固定 final 请求；不自动 query、
+恢复、重放或 DELETE。known错误后Session可保持active；终态未知时Session转
+uncertain、关闭本地client并保留device/systemPort。安装/卸载当前target也不会
+改写sessionId、target_app_id或短ID默认package，不会自动激活或重建。
+
+本批不提供 `clear_app`。真实安装/卸载必须另获明确设备、服务、专用无账号/个人
+数据APK、签名/版本/testOnly样本、允许force-stop/删除数据和恢复证据授权；不能
+用SystemUI、Launcher、Settings、输入法、Appium helper或业务应用代替。协议测试、
+HTTP None/bool或源码证据不能证明真实包、版本、签名和数据效果；当前交付状态见
+[Automation 台账](docs/tasks/automation-delivery-ledger.md)。
+
 ## 开发与验证
 
 需要已安装的 uv 和 CPython 3.11，以及可访问锁文件所记录的批准镜像。

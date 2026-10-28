@@ -213,3 +213,14 @@
 - 不自动安装/卸载/清数据、重启、额外query、业务核验、恢复、重建或重放。上游PID替换也可能terminate true，状态为非原子采样；resolver可能拉APK/使用aapt2/内部fallback，ADB恢复可能重试或重启server，单项目请求不保证设备exactly-once或全面资源有界。
 - 详细输入、返回、预算、错误及安全授权见[Automation模块SPEC](modules/automation/SPEC.md)的AIF-09条款；真实安全应用链仍须另获授权，feature通过不表示模块/平台完整链验收。
 
+## Automation Application Installation And Removal（AIF-10）
+
+本节定义已确认的 AIF-10 契约增量，不表示已经实现或验收。依据为[已确认 AIF-10 设计](docs/superpowers/specs/2026-10-28-automation-aif-10-install-remove-design.md)。
+
+- 延续 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0，以及既有 Client 6.0.8、Selenium 4.51.0、Python 3.11；复用原 Device/Session gateway、OperationControl、本地 APK 与 package 校验，不新增依赖、平台、模块方向或通用自研。
+- 在绑定的 Device 上新增同步 `install_app(app_path: Path, *, allow_test_packages: bool = False, control: OperationControl | None = None) -> None` 与 `remove_app(app_id: str, *, control: OperationControl | None = None) -> bool`。安装只接受本地单 `.apk`并固定`replace=true`；调用方不能请求禁止替换。卸载固定`keepData=false`且不公开保留数据选项，但Interface只承诺包卸载及官方bool，不承诺任何数据删除或重装不恢复。
+- 每次只发一次固定官方 mobile 命令；install返回strict None，remove返回实际bool。目标Android17真实证据分别证明不带`-r`也可能替换应用，以及remove true/query0/包absent后同签重装仍可保留app-private sentinel；因此不提供误导的replace=false或数据清理保证。成功不保证APK/版本、应用启动、数据迁移或数据删除效果。
+- 无 Control 时沿固定上游 install 60,000ms / remove 20,000ms 默认；显式 Control 的内部 timeout 分别不超过 300,000ms / 100,000ms，且严格小于发送前采样的剩余总预算。该五倍上限是项目选择，不是上游默认或整个服务端命令硬上限。
+- 两方法沿一次 operation、唯一 Session gate、final 成功优先、既有错误与 unknown 资源保留；不改 Session target、sessionId 或占用，不自动 query、启动、重装、恢复或重放。
+- 本批不交付 `clear_app`、keep-data、URL/APK 集、上传下载、权限、user/profile、其他平台或 Integrations。固定上游可能 force-stop、重试 ADB 命令或留下外部/备份/OEM 状态；详细 Interface、安全授权与验证义务见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-10 条款。AIF-10 通过不表示 Automation 模块或当前平台完整链验收。
+

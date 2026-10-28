@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款。其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用激活/终止/状态查询契约已确认；实际实现与验收状态以交付证据为准，应用管理尚未交付。
+只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准，应用清数据尚未交付。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -524,5 +524,51 @@
 - activate在本组合使用官方resolver/am start-activity，不先force-stop或等待业务页；上游resolver可能改用dumpsys、拉APK至宿主临时目录、调用aapt2，失败warning后取首候选并清理临时目录。项目不追加fallback，不等于上游无这些行为或提供Element唯一性。
 - ADB故障恢复可能重连/原命令重试并kill-server/start-server，影响其他连接；单项目请求不保证设备exactly-once。ADB默认单次20秒、exclusive等待/恢复不是公开操作硬上限；上游环形输出缓存、APK拉取及aapt2处理不提供本项目全面内存/磁盘/时限保证，不为此重写传输或增加root/adb_shell insecure权限。
 - 需真实固定Client/Selenium协议验证、直接消费者smoke、原回归/质量/发行物验证、独立完整差异审查及获准安全应用真实链；协议或源码不能代替实际UI/系统效果。真机须明确设备/服务、可安全激活与force-stop的已安装包、后台切换/缺失包样本、证据保留、允许状态损失与恢复；旧设备授权不自动延续，无安全资源仍device-validation-blocked，不删四态/安全链验收。
-- 仅终态已知、Session仍active且获授权时可独立显式恢复；unknown后不使用uncertain Session补发恢复/DELETE，不承诺回滚任务栈/业务页/未保存数据。安装/卸载/清数据、AIF-10、专用动态App完整竞态、跨feature/故障/清理/多设备与真实Agent链仍分别保留后续设计/授权及模块验收义务；AIF-09通过不等于模块/平台Done。
+- 仅终态已知、Session仍active且获授权时可独立显式恢复；unknown后不使用uncertain Session补发恢复/DELETE，不承诺回滚任务栈/业务页/未保存数据。应用安装/卸载另由AIF-10契约约束；清数据、专用动态App完整竞态、跨feature/故障/清理/多设备与真实Agent链仍分别保留后续设计/授权及模块验收义务。AIF-09通过不等于模块/平台Done。
+
+## AIF-10 Application Installation And Removal
+
+本节定义已确认的 AIF-10 契约增量，不表示实现或验收。依据为[已确认 AIF-10 设计](../../docs/superpowers/specs/2026-10-28-automation-aif-10-install-remove-design.md)。未列出的既有契约不变。
+
+### Dependencies And Ownership
+
+- 当前组合延续 macOS / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0 / Client 6.0.8 / Selenium 4.51.0 / Python 3.11；实际资格为 Android driver 14.2.0、appium-adb 16.0.5、server 10.6.6、Settings 8.0.9。实施前须重取实际 manifest/API，不能以兼容范围或 latest 冒充身份。
+- 仅复用公开固定 `execute_script`、原 Device 绑定、Session gateway、OperationControl、现有本地 APK/package 校验与 Python 3.11 标准库 math/time/pathlib/os/stat；不新增库、APK/ADB/协议实现、client、gate、状态机或模块依赖方向，其他模块及依赖/lock保持不变。
+- 两方法属于所属 Session 创建的可信 Device；无 Session/Element 同义入口、App/manager、公共 Result、缓存或全局当前应用。安装/卸载与 Session 生命周期分开，不改 target_app_id、sessionId 或占用。
+
+### Public Interface And Inputs
+
+| 同步公开签名 | 返回 |
+| --- | --- |
+| `Device.install_app(app_path: Path, *, allow_test_packages: bool = False, control: OperationControl | None = None)` | `None` |
+| `Device.remove_app(app_id: str, *, control: OperationControl | None = None)` | `bool` |
+
+- install 的 app_path 必须是实际 Path、绝对、精确小写 `.apk`、现存、可读普通文件；拒绝 None、str、URL、相对路径、目录、`.apks` 及其他扩展。现有可选 path helper 会接受 None，install 必须先作必填包装并要求返回非None；若重构须让 create_session 与 install 共用同一必填核心，不能复制第二套校验。
+- allow_test_packages必须是实际bool，不强转。install不公开replace参数，Adapter固定replace=true；调用方不能请求禁止替换。app_id沿AIF-09的实际str、1..255 ASCII package grammar；不推断Session target、当前前台包、显示名、Element、component、路径或URL。
+- remove不接收keep_data；固定发送`keepData=false`。该值只表达传给上游的卸载选项，不构成数据删除合同；调用方不得从true、false或query0推断数据已清空。不公开上游timeout、checkVersion、grantPermissions、useSdcard、noIncremental、skipInstallCheck、user/profile或任意options/payload。
+- 可信绑定及全部输入在 Session gate 和任何 Appium 请求前校验；非法为 invalid_argument/not_sent，合法重叠才 session_busy。本地 stat/access 时间计入原总预算但不取得 gate；客户端检查与服务端读取仍存在 TOCTOU。
+
+### Fixed Mapping And Strict Results
+
+- install固定一次 `driver.execute_script("mobile: installApp", {"appPath": str(app_path), "replace": True, "allowTestPackages": allow_test_packages, ...})`；显式Control时仅再加内部timeout。合法客户端交付值仅None，成功只记action_completed。
+- remove 固定一次 `driver.execute_script("mobile: removeApp", {"appId": app_id, "keepData": False, ...})`；显式 Control 时仅再加内部 timeout。合法结果必须实际 bool并原样返回，true/false都只记action_completed。
+- 返回校验在 gateway action callable 内完成；非法形状或完整官方错误均 command_failed/response_received，保留原因链且不记虚假完成事实。Client便利install/remove返回self并丢失真实结果，不作为实现入口；不读私有wire、不直接ADB/raw HTTP。
+- 固定replace=true映射ADB `-r`；不提供false分支。真机证据证明目标Android17即使ADB install不带`-r`仍可incremental Success并替换应用，因此不以内建noIncremental、版本预检查或隐式后验补救。allow_test_packages=true只映射`-t`，不追加权限、签名修复或自动卸载重装。
+- remove先检查安装；缺失时false且不force-stop/uninstall，已安装时先force-stop再执行不带`-k`的uninstall，stdout含Success才true。false也可能来自已执行命令但stdout无Success，不能声称无副作用。
+
+### Operation Budget, Errors And Session Invariants
+
+- control=None时省略payload timeout，沿固定实际install 60,000ms和remove 20,000ms默认及原客户端响应处理；不新增Automation总预算。
+- 显式Control沿公共调用原始deadline，在final请求临近发送处检查取消优先并采样剩余R：install取最大整数 `1 <= T <= 300_000`，remove取最大整数 `1 <= T <= 100_000`，且都满足 `T / 1000 < R`。无合法1ms时取消优先，否则operation_timeout/not_sent、零请求；不重启或延长预算。
+- 五倍cap是项目确认的内部ADB子命令上限，不是上游默认、整个服务端工作或硬实时返回保证。install前的路径解析/cache guard/完整hash、remove前的安装检查/force-stop、ADB恢复与Package Manager工作不全受该timeout约束；同步请求不能被Event即时抢占。
+- 两方法均使用原 final_action；严格合法成功优先于响应后才观察到的取消/deadline。完整已知失败保持active；在途终态未知沿execution_unknown或可证明cancel/timeout分类，response_unknown使Session uncertain、关闭本地client并保留device/port，不补发query/install/remove/restore/DELETE。
+- 安装/替换/卸载当前target也不改Session target或短ID默认package，不释放占用、不自动激活/重建。后续Element/应用命令按真实响应失败或成功；只有正常quit且收尾确认成功后释放。
+
+### Upstream Limitations And Verification Authorization
+
+- Appium server按自身文件系统和权限读取appPath；Runtime loopback不证明服务账号可读。server会完整hash本地APK，本项目无APK大小硬上限；输入校验不验证包名、版本、签名、内容安全或恶意行为。
+- 固定appium-adb对特定连接错误可能恢复并直接重试原ADB命令，甚至reconnect或kill/start server；一个项目HTTP请求不保证设备端exactly-once。stdout/stderr环形缓存、exclusive等待及多个子命令也不构成全面资源保证。
+- 卸载固定不发送`-k`，但其消费者合同仅为包卸载bool。真机attempt-07证明：即使remove true、query0且包曾absent，同签重装仍可保留app-private sentinel；因此任何结果均不保证app-private、外部共享、备份恢复、keystore、secondary/profile、OEM数据删除或重装不恢复。known error也不能证明无部分副作用，unknown禁止自动重放或恢复。
+- 必须使用固定真实Client/Selenium临时HTTP验证精确payload、strict结果、path/bool/package、五倍timeout边界、gate/lifecycle/known/unknown及原回归；另需直接消费者、发行物验证、完整独立差异审查和获准专用APK真实链。协议/源码/HTTP None或bool不能代替实际安装、版本、签名、包卸载及数据限制事实。
+- 真机须另明确设备/服务、专用无账号/个人数据APK、hash/package/version/testOnly/签名矩阵、允许安装/替换/force-stop/卸载及潜在数据副作用和恢复证据。无安全资源须device-validation-blocked，不得改用系统、Appium helper、IME或业务应用。需要测试数据清理时必须等待未来独立`clear_app`设计/SPEC/实现/真机验收，AIF-10不隐式组合；跨feature故障/清理/多设备/专用动态App及真实Agent链仍属模块整体验收，AIF-10不等于模块/平台Done。
 
