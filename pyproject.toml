@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "appium-connect-agent"
 version = "0.1.0"
-description = "Python project foundation for Appium agent integration."
+description = "Local Appium readiness and automation for AI agent integrations."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,7 +16,12 @@ dependencies = [
     "Appium-Python-Client==6.0.8",
     "selenium==4.51.0",
     "defusedxml==0.7.1",
+    "mcp==2.3.0",
+    "pydantic==2.14.1",
 ]
+
+[project.scripts]
+appium-connect-agent-mcp = "appium_connect_agent.integrations._server:main"
 
 [dependency-groups]
 dev = [
@@ -105,3 +110,14 @@ source_modules = [
     "appium_connect_agent.runtime",
 ]
 forbidden_modules = ["appium_connect_agent.automation"]
+
+[[tool.importlinter.contracts]]
+name = "Lower-level modules cannot depend on Integrations"
+type = "forbidden"
+source_modules = [
+    "appium_connect_agent.contracts",
+    "appium_connect_agent.configuration",
+    "appium_connect_agent.runtime",
+    "appium_connect_agent.automation",
+]
+forbidden_modules = ["appium_connect_agent.integrations"]

@@ -209,6 +209,7 @@ class AutomationError(Exception):
         operation_id: str,
         request_state: RequestState,
         *,
+        session: Session | None = None,
         completed_steps: tuple[str, ...] = (),
         cleanup_errors: tuple[BaseException, ...] = (),
     ) -> None:
@@ -216,8 +217,13 @@ class AutomationError(Exception):
         self.code = code
         self.operation_id = operation_id
         self.request_state = request_state
+        self._session = session
         self.completed_steps = tuple(completed_steps)
         self.cleanup_errors = tuple(cleanup_errors)
+
+    @property
+    def session(self) -> Session | None:
+        return self._session
 
 
 class InvalidRequestError(AutomationError):
@@ -246,25 +252,6 @@ class SessionBusyError(AutomationError):
 
 class ResourceStateError(AutomationError):
     """Session or process-local resource state cannot be declared safe."""
-
-    def __init__(
-        self,
-        code: str,
-        operation_id: str,
-        request_state: RequestState,
-        *,
-        session: Session | None = None,
-        completed_steps: tuple[str, ...] = (),
-        cleanup_errors: tuple[BaseException, ...] = (),
-    ) -> None:
-        super().__init__(
-            code,
-            operation_id,
-            request_state,
-            completed_steps=completed_steps,
-            cleanup_errors=cleanup_errors,
-        )
-        self.session = session
 
 
 class TargetError(AutomationError):

@@ -235,3 +235,30 @@
 - 代表性smoke只证明设计列明的设备发现、Runtime/Session、结构观测、single click、最小文本替换并恢复、固定手势、有限Device动作、Calculator 1/3/4生命周期、正常quit和replacement链；其他能力由当前永久测试与已验收feature证据负责，不能填入本次smoke实跑coverage。
 - SPEC确认不等于模块Done。缺少当前质量/发行物、获准安全设备页面smoke、正常资源释放或最终独立审查时，必须报告对应blocked/not-Done，不得仅拼接历史证据宣称收口完成。
 
+
+## Integrations Local Stdio MCP And Exact Feature Rebaseline
+
+- 首个产品接入形式为本地stdio MCP，目标协议语义为MCP `2026-07-28`；只声明标准协议和本项目受控验证，不声明Copilot CLI、Codex CLI或其他具体Host兼容，不同时交付独立CLI/SDK、HTTP、远程/云或其他平台。
+- Integrations公开映射为`appium_connect_agent.integrations`，源码位于`src/appium_connect_agent/integrations/`；产品启动入口为安装制品console script `appium-connect-agent-mcp --config <absolute-path> --adb-executable <absolute-path>`。两个长option均必填；该单一bootstrap不是通用CLI，不读取环境变量/TOML/PATH/SDK root作为ADB来源，不搜索文件或写Host配置。
+- 新增精确直接运行依赖`mcp==2.3.0`（plain、无extras）和`pydantic==2.14.1`。MCP SDK仅供Integrations高层`MCPServer`、stdio、schema/structured output、lifespan/cancellation及测试Client；Pydantic仅供Integrations项目DTO/strict schema。不得替换Runtime现有HTTPX/AnyIO用途，不启用SDK CLI、low-level/private/provisional、HTTP/SSE/OAuth或遥测产品能力。
+- 开发顺序采用经用户确认的精确feature资格：Integrations feature可只依赖已分别限定Done、无开放finding的下层公开feature，同时原样继承并公开下层模块级gap。当前Automation AIF-01～10限定结论不变，Automation模块继续`device-validation-blocked-known-clean`、non-Done、无自动重试；任何Integrations结果都不能关闭或改写该状态。
+- 当前已确认`INT-MCP-01-LOCAL-READINESS`及`INT-MCP-02-SESSION-LIFECYCLE`合同。MCP-02须先完成`AUTO-AIF02-RETAINED-SESSION-ERROR`前序修复，之后才可实现显式open/status/close、一个opaque Session和安全shutdown；仍不执行UI/App动作。后续观测和动作须按设计顺序分别经过feature SPEC gate。
+- Integrations生产包出现后启用依赖方向：Integrations可依赖Configuration、Runtime、Automation和Contracts；四个下层产品包均不得依赖Integrations。MCP工具只能调用下层公开Interface，不提供raw WebDriver/Appium sessionId/elementId/HTTP/ADB shell、任意capabilities、fallback、隐式back、自动retry/replay或`clear_app`。
+
+详细当前Interface、错误、生命周期与验证义务由Integrations模块SPEC维护；依据为[已确认设计](docs/superpowers/specs/2026-10-29-integrations-mcp-first-design.md)。契约确认不等于实现、协议互操作、真实设备或模块验收。
+
+## INT-MCP-02 Session Lifecycle Delta
+
+本节已由用户在本次 `/spec-driven` SPEC gate明确确认；确认不替代前序修复、实现、验证、独立审查或真实资源授权。
+
+- 当前组合继续固定为 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0 / CPython 3.11，当前模块为 Integrations，FeatureID 为 `INT-MCP-02-SESSION-LIFECYCLE`。前序 `INT-MCP-01-LOCAL-READINESS` 的限定 Done、协议/发行/真实 Runtime 与 ADB 证据及无开放 finding 是本 feature 的前提；Automation 模块仍为 `device-validation-blocked-known-clean`、non-Done，Integrations 不提升其状态。
+- 实现 MCP-02 前先完成依赖修复 `AUTO-AIF02-RETAINED-SESSION-ERROR`：Automation 所有可返回的受控 create失败，只要保留内部 Session/device/systemPort，就必须通过公开错误携带可达 Session；未保留资源的错误保持 `session=null`。该修复须单独验证和独立审查通过，不能与 MCP-02 并行实施或用 Adapter 私有入口绕过。
+- 本 feature 在现有本地 stdio MCP 中新增 `appium.session.open`、`appium.session.status`、`appium.session.close`，显式持有一个 MCP-owned Runtime scope 与最多一个 non-closed Automation Session。Session 使用仅当前 server 进程有效的 opaque handle；不公开 Appium sessionId、Automation Session id、RuntimeConnection 或 server URL，不跨进程 attach、恢复、重放或持久化。
+- `session.open` 只适配 Automation AIF-02 已确认的一等输入：明确 device ID，可选本地 APK/app ID、`auto_launch`、`force_app_launch`、`should_terminate_app` 和 `new_command_timeout_seconds`。`no_reset=true`、`full_reset=false` 固定，不开放任意 capabilities、systemPort、server URL、direct connect、reset/clear、raw WebDriver/HTTP/ADB 或自动设备选择。
+- 首个 `session.open` 惰性进入唯一 external Runtime connection；Runtime scope 的 enter/exit由Integrations专用单线程owner执行，跨阶段预算由handler绝对deadline和同一Event派生remaining Control，不重置总预算。confirmed close且Runtime安全退出后才允许replacement；non-closed entry、生命周期in-flight、active scope或Runtime cleanup未决期间，第二个open与`runtime.check`均在任何下层请求前稳定拒绝，不排队。uncertain entry只允许本地status。
+- 正常 stdio shutdown 在全部现有 worker 实际结束后，对 active、无 in-flight、终态已知的 owned Session 用新的最多 60 秒 OperationControl 调用公开 `quit` 恰好一次；confirmed closed且Runtime正常退出后exit0。uncertain、quit failure/unknown、Runtime cleanup未决或资源终态不能确认时不补设备命令、不重试，以exit4报告degraded并明确远端可能遗留。Host强杀仍无受控清理保证。
+- 无新增或升级产品/开发依赖。继续复用已批准的 `mcp==2.3.0`、`pydantic==2.14.1`、Runtime公开connect、Automation公开Session入口和Python3.11标准库。Configuration、Runtime、Contracts no-delta；Automation仅有上文精确错误可达性delta。若需要其他下层新行为、private/low-level SDK、自研协议或新依赖，立即返回对应gate。
+- 永久测试与安装wheel官方Client consumer必须覆盖strict schema、opaque handle/容量/tombstone、四种app输入、known/unknown、并发、总预算、runtime gate、cancel/no-replay、完整primary/replacement闭环、EOF/broken pipe及shutdown矩阵。Feature Done另需用户单独授权的真实明确设备上完成`open A→status active→close A→status closed→open B→status active→close B→status closed→Runtime释放→stdio自然exit0`，全程无unknown/uncertain/non-closed entry；当前`/spec-driven`不授权设备、应用或服务副作用操作。
+
+详细 Interface、schema、错误、隐私和验证义务见 Integrations 模块 SPEC 的 INT-MCP-02 合同。
+

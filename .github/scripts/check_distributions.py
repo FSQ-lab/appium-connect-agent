@@ -19,6 +19,8 @@ DEPENDENCIES = {
     "Appium-Python-Client==6.0.8",
     "selenium==4.51.0",
     "defusedxml==0.7.1",
+    "mcp==2.3.0",
+    "pydantic==2.14.1",
 }
 METADATA_DEPENDENCIES = {dependency.lower() for dependency in DEPENDENCIES}
 STUB = "typings/nodesemver/__init__.pyi"
@@ -29,6 +31,7 @@ from importlib.metadata import distribution
 from importlib.resources import files
 from pathlib import Path
 import appium_connect_agent
+from appium_connect_agent import integrations
 from appium_connect_agent.contracts import LocalSettings
 
 assert Path(appium_connect_agent.__file__).resolve().is_relative_to(
@@ -36,15 +39,22 @@ assert Path(appium_connect_agent.__file__).resolve().is_relative_to(
 )
 assert files(appium_connect_agent).joinpath('py.typed').is_file()
 assert LocalSettings.__module__ == 'appium_connect_agent.contracts'
-assert LocalSettings().appium_executable is None
+assert integrations.__name__ == 'appium_connect_agent.integrations'
 metadata = distribution('appium-connect-agent').metadata
 assert metadata['Name'] == 'appium-connect-agent'
 assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
 assert set(metadata.get_all('Requires-Dist')) == {
     'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1',
-    'appium-python-client==6.0.8', 'selenium==4.51.0', 'defusedxml==0.7.1'
+    'appium-python-client==6.0.8', 'selenium==4.51.0', 'defusedxml==0.7.1',
+    'mcp==2.3.0', 'pydantic==2.14.1'
 }
+scripts = [
+    entry for entry in distribution('appium-connect-agent').entry_points
+    if entry.group == 'console_scripts' and entry.name == 'appium-connect-agent-mcp'
+]
+assert len(scripts) == 1
+assert scripts[0].value == 'appium_connect_agent.integrations._server:main'
 if sys.platform == 'darwin':
     from appium_connect_agent.runtime import InstallRequest, LocalSettings as RuntimeSettings
     from appium_connect_agent.runtime import Runtime, supported_combinations
@@ -97,6 +107,7 @@ def main() -> None:
         "contracts/__init__.py",
         "runtime/__init__.py",
         "automation/__init__.py",
+        "integrations/__init__.py",
     ):
         require(f"{PACKAGE}/{required}" in expected, f"Missing source: {required}")
     artifacts = sorted(p for p in (ROOT / "dist").iterdir() if p.name != ".gitignore")
@@ -114,7 +125,8 @@ def main() -> None:
                 ]
                 info = f"{stem}.dist-info"
                 metadata_names = {
-                    f"{info}/{n}" for n in ("WHEEL", "METADATA", "RECORD")
+                    f"{info}/{n}"
+                    for n in ("WHEEL", "METADATA", "entry_points.txt", "RECORD")
                 }
                 require(len(names) == len(set(names)), "Duplicate wheel members")
                 require(

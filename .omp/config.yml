@@ -1,0 +1,18 @@
+modelRoles:
+  default: github-copilot/gpt-5.6-sol-1m:medium
+
+task:
+  agentModelOverrides:
+    product-lead: github-copilot/gpt-5.6-sol:medium
+    architect: github-copilot/gpt-5.6-sol:medium
+    appium-expert: github-copilot/gpt-5.6-sol:medium
+    appium-engineer: github-copilot/gpt-5.6-sol:medium
+    agent-integration-engineer: github-copilot/gpt-5.6-sol:medium
+    quality-engineer: github-copilot/gpt-5.6-sol:medium
+    designer: github-copilot/gpt-5.6-sol:medium
+    librarian: github-copilot/gpt-5.6-sol:medium
+    reviewer: github-copilot/gpt-5.6-sol:medium
+    scout: github-copilot/gpt-5.6-sol:medium
+    security-reviewer: github-copilot/gpt-5.6-sol:medium
+    sonic: github-copilot/gpt-5.6-sol:medium
+    task: github-copilot/gpt-5.6-sol:medium

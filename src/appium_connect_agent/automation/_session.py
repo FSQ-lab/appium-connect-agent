@@ -583,9 +583,7 @@ class Session:
         cls,
         device_id: str,
         app_id: str | None,
-        reservation: _Reservation,
         runtime_connection: RuntimeConnection,
-        client: _LifecycleConnection,
     ) -> Session:
         instance = object.__new__(cls)
         instance._id = uuid4().hex
@@ -593,13 +591,10 @@ class Session:
         instance._device_id = device_id
         instance._target_app_id = app_id
         instance._state = "creating"
-        instance._reservation = reservation
         instance._runtime_connection = runtime_connection
-        instance._client = client
         instance._driver = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
-        instance._device = _create_device(instance)
         return instance
 
     @property
@@ -1128,7 +1123,6 @@ class Session:
                     "session_quit_unknown",
                     operation_id,
                     request_state,
-                    session=self,
                     cleanup_errors=self._client.cleanup_errors,
                 )
                 raise resource_error from cause
@@ -1145,7 +1139,6 @@ class Session:
                     "session_quit_unknown",
                     operation_id,
                     "response_unknown",
-                    session=self,
                     cleanup_errors=cleanup_errors,
                 )
             if cleanup_errors:
@@ -1154,7 +1147,6 @@ class Session:
                     "cleanup_failed",
                     operation_id,
                     "response_received",
-                    session=self,
                     completed_steps=("session_deleted",),
                     cleanup_errors=cleanup_errors,
                 )
@@ -1185,6 +1177,7 @@ def _raise_create_preflight(
         operation_id,
         "not_sent",
         cleanup_errors=cleanup_errors,
+        session=session if cleanup_errors else None,
     )
     raise error from cause
 
@@ -1205,6 +1198,7 @@ def _raise_create_failure(
             operation_id,
             "response_received",
             cleanup_errors=cleanup_errors,
+            session=session if cleanup_errors else None,
         )
         raise command_error from cause
     session._set_state("uncertain")
@@ -1261,6 +1255,7 @@ def create_session(
     )
     server_url = _active_server_url(connection, operation_id)
     _checkpoint(control, deadline, operation_id)
+    session = Session._creating(valid_device_id, valid_app_id, connection)
     try:
         reservation = _reserve(valid_device_id)
     except _DeviceBusy:
@@ -1269,28 +1264,32 @@ def create_session(
         raise ResourceStateError(
             "system_port_unavailable", operation_id, "not_sent"
         ) from None
+    session._reservation = reservation
 
-    client = _new_connection(server_url)
-    session = Session._creating(
-        valid_device_id, valid_app_id, reservation, connection, client
-    )
-    options = _build_options(
-        valid_device_id,
-        valid_app_id,
-        valid_app_path,
-        auto_launch,
-        force_app_launch,
-        no_reset,
-        full_reset,
-        should_terminate_app,
-        valid_timeout,
-        reservation.system_port,
-        valid_capabilities,
-    )
-    client.prepare_request(
-        control.cancellation if control is not None else None, deadline
-    )
     try:
+        client = _new_connection(server_url)
+        session._client = client
+    except Exception:
+        reservation.release()
+        raise
+    try:
+        session._device = _create_device(session)
+        options = _build_options(
+            valid_device_id,
+            valid_app_id,
+            valid_app_path,
+            auto_launch,
+            force_app_launch,
+            no_reset,
+            full_reset,
+            should_terminate_app,
+            valid_timeout,
+            reservation.system_port,
+            valid_capabilities,
+        )
+        client.prepare_request(
+            control.cancellation if control is not None else None, deadline
+        )
         driver = _SessionWebDriver(command_executor=client, options=options)
     except (_RequestCancelled, _RequestTimedOut) as cause:
         _raise_create_preflight(cause, operation_id, session, reservation, client)
@@ -1301,7 +1300,15 @@ def create_session(
             session._set_state("closed" if not cleanup_errors else "uncertain")
             if cleanup_errors:
                 cause.__dict__["automation_cleanup_errors"] = cleanup_errors
-            raise
+            if not cleanup_errors:
+                raise
+            raise ResourceStateError(
+                "cleanup_failed",
+                operation_id,
+                "not_sent",
+                session=session,
+                cleanup_errors=cleanup_errors,
+            ) from cause
         _raise_create_failure(cause, operation_id, session, reservation, client)
     except BaseException as cause:
         if client.request_started:

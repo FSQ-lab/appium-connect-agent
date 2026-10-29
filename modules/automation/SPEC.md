@@ -108,6 +108,16 @@
 - 获准真实验收使用固定Appium3.7.0 / UiAutomator2 8.7.0和一个明确Android目标，覆盖实际Session创建、500秒协商、正常quit及确认释放后的replacement Session。四种应用输入、不同device ID独立资源、同设备拒绝、systemPort、状态机、known/unknown和分别quit继续由锁定真实Client/Selenium到临时HTTP服务的受控永久测试守护。当前资格不声明两个真实设备同时active或真实多设备隔离；未来增加该资格须独立设计、SPEC和资源授权。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
 
+### Retained Session Error Reachability
+
+本合同是`INT-MCP-02-SESSION-LIFECYCLE`的已确认前序缺陷修复，FeatureID为`AUTO-AIF02-RETAINED-SESSION-ERROR`；必须先于MCP-02单独实现、验证和独立full审查。
+
+- `AutomationError`公开增加只读`session: Session | None`，默认`None`；既有class、code、operation_id、request_state、completed_steps、cleanup_errors及异常链不变。现有`ResourceStateError/session_create_unknown`改为通过同一基类字段继续携带原Session，不保留第二个同义属性实现。
+- `create_session`任何可返回的受控失败只要最终保留内部Session或device/systemPort占用，就必须令该Session为`uncertain`并在错误上设置同一`session`。既有preflight cancel/timeout或terminal-not-created错误在client cleanup失败时保留原class/code/request_state/completed_steps并附Session；此前未知的普通`Exception`若在request前发生且cleanup又失败，则以`ResourceStateError/cleanup_failed/not_sent`携带Session并以原异常为cause。request已开始的普通Exception继续沿现有known/unknown分类。
+- cleanup成功且占用已释放时Session为closed，错误`session=None`；其他非create错误及未保留Session的create错误也为None。不得把terminal-not-created改写成response unknown，或因暴露Session而自动quit/retry/release。`SystemExit`、`KeyboardInterrupt`及其他非`Exception`的process-fatal BaseException继续原样传播，不构成受控产品结果或资源清理保证，等同现有Host强杀边界。
+- 无新增依赖、设备请求、公共恢复/lookup入口或生命周期能力；只复用现有Session、错误层级和cleanup事实。用户在两轮独审修复后明确批准额外一次限定异常安全修复，并将产品churn上限由80放宽到120行；测试单列覆盖preflight cancel/timeout×cleanup success/failure、terminal-not-created×cleanup success/failure、request前普通Exception×cleanup成功（释放、`session=None`、原异常传播）/cleanup失败（`ResourceStateError/cleanup_failed/not_sent`、uncertain Session、cause保留）、Session身份生成/setup各异常点、既有session_create_unknown及所有无资源错误None。
+- 受控协议测试、现有AIF-02回归、全量质量/发行适用检查及全新独立full差异审查通过后，该修复才可限定Done并恢复MCP-02 Ready；无需真实设备操作。若无法在不改变主错误事实或需新依赖/私有入口的前提下实现，停止并返回用户决定。
+
 ## AIF-03 Structure Observation
 
 ### Python Architecture And Dependencies

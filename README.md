@@ -1,10 +1,10 @@
 # Appium Connect Agent
 
-当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备及 Python 工程基础；具体实现验收状态以[交付台账](docs/tasks/runtime-delivery-ledger.md)为准。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、Automation 公开能力，以及 Integrations 本地 stdio MCP readiness/discovery 与显式 Session lifecycle；各能力的实际验收状态以对应交付台账和模块 SPEC 为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 可显式准备一组指定的本地 Appium 组件，但不启停服务或替 Automation 管理 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。MCP、其他 Integrations 和正式产品 CLI 尚未交付。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；HTTPcore 仅用于错误识别与 trace 版本固定，迁移验收状态见台账。Appium 3.7.0 / UiAutomator2 8.7.0 的支持声明仅限已记录资格，不表示图像功能、整个 driver、Runtime 模块或 Automation 当前平台最小收口已经验收。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备一组指定的本地 Appium 组件，但不启停服务或替 Automation 管理 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前提供 Host 中立的本地 stdio MCP readiness/discovery 和一个进程内显式 Session 的 open/status/close；不提供 UI、独立 CLI/SDK、HTTP、跨进程 attach/recovery或多Session产品能力。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；MCP 接入固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`。Appium 3.7.0 / UiAutomator2 8.7.0 的支持声明仅限已记录资格，不表示图像功能、整个 driver、Runtime 模块或 Automation 当前平台最小收口已经验收。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -30,6 +30,29 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 参数优先于文件，未传字段保留文件值；两处分别校验，错误不能被覆盖掩盖。
 不提供临时清除，显式 `None` 或空字符串报错；参数不写回文件。
 通过 `loaded.sources` 查询 `file`、`override` 或 `default` 来源。
+
+## 本地 stdio MCP readiness/discovery 与 Session lifecycle
+
+安装制品只提供一个 MCP transport bootstrap，不是通用 CLI：
+
+```text
+appium-connect-agent-mcp --config /absolute/path/project.toml --adb-executable /absolute/path/adb
+```
+
+两个长 option 都必须且只能提供一次；不支持短名、位置参数、默认路径或环境变量、PATH、TOML、SDK root 回退。`--config` 只加载一次不可变 Configuration 快照；ADB 路径由 Integrations 独立持有，每次设备列举仍由 Automation 公开入口重新校验。stdout 专用于 MCP framing，运维错误写入脱敏 stderr。
+
+当前固定注册六个 MCP tool，顺序如下：
+
+1. `appium.capabilities.get`：返回固定平台、协议目标、工具和限制，不代表运行健康。
+2. `appium.runtime.check`：以 `static` 或 `external_connection` 模式执行一次有界 Runtime 检查；Session/Runtime scope存在时在任何下层调用前拒绝。
+3. `appium.devices.list`：通过启动时明确的 ADB executable 列举设备，不自动选择设备。
+4. `appium.session.open`：为明确device创建一个MCP-owned Session，返回仅当前server进程有效的opaque handle；最多一个non-closed Session。
+5. `appium.session.status`：只读本地Session事实，不探活、不发设备请求。
+6. `appium.session.close`：显式关闭handle；confirmed close后允许replacement，closed tombstone重复close为本地幂等成功。
+
+所有工具都使用 schema version 1；I/O 工具有有限总预算并把 MCP 取消桥接到同一个下层 cancellation Event，不重试或遗弃同步 worker。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常stdio shutdown会对已知active owned Session最多调用一次公开quit；终态未知时degraded退出并明确远端可能遗留。Appium 和 ADB server始终归外部所有。当前不执行 UI/App 动作，不提供 raw ADB/WebDriver/HTTP、fallback、自动 retry/replay 或 `clear_app`。
+
+协议目标为 MCP `2026-07-28`。当前未资格化 Copilot CLI、Codex CLI 或其他具体 Host，真实外部 Appium/ADB/设备链仍需另行授权和验证；Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，MCP 结果不改变该状态。
 
 ## Automation Element 接口
 

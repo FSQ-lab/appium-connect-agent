@@ -14,19 +14,25 @@ from typing import Any, cast
 
 import pytest
 
+import appium_connect_agent.automation._session as session_module
 from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
     InvalidRequestError,
     InvalidSessionStateError,
     OperationCancelledError,
+    OperationTimeoutError,
     ResourceStateError,
     Session,
     SessionBusyError,
     SessionInfo,
     create_session,
 )
-from appium_connect_agent.automation._session_client import _new_connection
+from appium_connect_agent.automation._session_client import (
+    _new_connection,
+    _RequestCancelled,
+    _RequestTimedOut,
+)
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import OperationControl, Runtime, RuntimeConnection
 
@@ -243,13 +249,81 @@ def assert_error(
     request_state: str,
     *,
     completed_steps: tuple[str, ...] = (),
+    retains_session: bool = False,
 ) -> None:
     assert type(error) is error_type
     assert error.code == code
     assert error.request_state == request_state
     assert error.completed_steps == completed_steps
+    assert (error.session is not None) is retains_session
     assert len(error.operation_id) == 32
     int(error.operation_id, 16)
+
+
+def capture_session_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[Session, str]]:
+    observed: list[tuple[Session, str]] = []
+    original = cast(Any, Session)._set_state
+
+    def record_state(session: Session, state: str) -> None:
+        original(session, state)
+        observed.append((session, state))
+
+    monkeypatch.setattr(Session, "_set_state", record_state)
+    return observed
+
+
+def patch_create_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cancel: bool = False,
+    timeout: bool = False,
+    program_error: Exception | None = None,
+    cleanup_error: Exception | None = None,
+) -> None:
+    original = _new_connection
+    injected = False
+
+    def controlled_connection(server_url: str) -> Any:
+        nonlocal injected
+        client = original(server_url)
+        if injected:
+            return client
+        injected = True
+        if cancel or timeout:
+
+            def stop_before_request() -> None:
+                if cancel:
+                    raise _RequestCancelled
+                raise _RequestTimedOut
+
+            monkeypatch.setattr(client, "_apply_request_control", stop_before_request)
+        if program_error is not None:
+
+            def fail_before_request(command: str, params: dict[str, Any]) -> Any:
+                del command, params
+                raise program_error
+
+            monkeypatch.setattr(client, "execute", fail_before_request)
+        if cleanup_error is not None:
+
+            def fail_clear() -> None:
+                raise cleanup_error
+
+            monkeypatch.setattr(client._conn, "clear", fail_clear)
+        return client
+
+    monkeypatch.setattr(
+        "appium_connect_agent.automation._session._new_connection",
+        controlled_connection,
+    )
+
+
+def test_automation_error_defaults_to_no_session() -> None:
+    error = AutomationError("example", "0" * 32, "not_sent")
+
+    assert error.session is None
 
 
 def appium_caps(request: Request) -> Mapping[str, Any]:
@@ -474,9 +548,207 @@ def test_all_one_hundred_system_ports_are_reserved_before_failure(
             session.quit()
 
 
-def test_terminal_create_error_closes_client_and_releases_ownership(
-    service: ProtocolService,
+def test_session_identity_error_precedes_reservation_and_client(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    defect = OSError("session identity failed")
+    original_uuid4 = cast(Any, session_module).uuid4
+    original_connection = _new_connection
+    uuid_injected = False
+    client_calls = 0
+
+    def fail_first_identity() -> Any:
+        nonlocal uuid_injected
+        if not uuid_injected:
+            uuid_injected = True
+            raise defect
+        return original_uuid4()
+
+    def observe_connection(server_url: str) -> Any:
+        nonlocal client_calls
+        client_calls += 1
+        return original_connection(server_url)
+
+    monkeypatch.setattr(session_module, "uuid4", fail_first_identity)
+    monkeypatch.setattr(
+        "appium_connect_agent.automation._session._new_connection",
+        observe_connection,
+    )
+    with connected(service) as connection:
+        with pytest.raises(OSError) as caught:
+            create_session(connection, "identity-error-device")
+        assert caught.value is defect
+        assert caught.value.__cause__ is None
+        assert not hasattr(caught.value, "automation_cleanup_errors")
+        assert client_calls == 0
+        assert service.lifecycle_requests() == []
+
+        replacement = create_session(connection, "identity-error-device")
+        replacement.quit()
+        assert client_calls == 1
+        requests = service.lifecycle_requests()
+        assert [request.method for request in requests] == ["POST", "DELETE"]
+        assert appium_caps(requests[0])["appium:systemPort"] == 8200
+
+
+def test_connection_factory_error_releases_reserved_resources(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    defect = RuntimeError("connection factory failed")
+    original = _new_connection
+    injected = False
+
+    def fail_first_factory(server_url: str) -> Any:
+        nonlocal injected
+        if not injected:
+            injected = True
+            raise defect
+        return original(server_url)
+
+    monkeypatch.setattr(
+        "appium_connect_agent.automation._session._new_connection",
+        fail_first_factory,
+    )
+    with connected(service) as connection:
+        with pytest.raises(RuntimeError) as caught:
+            create_session(connection, "factory-error-device")
+        assert caught.value is defect
+        assert caught.value.__cause__ is None
+        assert not hasattr(caught.value, "automation_cleanup_errors")
+        assert service.lifecycle_requests() == []
+
+        replacement = create_session(connection, "factory-error-device")
+        replacement.quit()
+        requests = service.lifecycle_requests()
+        assert [request.method for request in requests] == ["POST", "DELETE"]
+        assert appium_caps(requests[0])["appium:systemPort"] == 8200
+
+
+@pytest.mark.parametrize("stage", ["device", "options", "prepare"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_stable_session_setup_error_cleanup_resource_outcome(
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    cleanup_fails: bool,
+) -> None:
+    defect = RuntimeError(f"{stage} setup failed")
+    cleanup = OSError("pool clear failed")
+    original_connection = _new_connection
+    captured_clients: list[Any] = []
+    connection_injected = False
+
+    def controlled_connection(server_url: str) -> Any:
+        nonlocal connection_injected
+        client = original_connection(server_url)
+        if connection_injected:
+            return client
+        connection_injected = True
+        captured_clients.append(client)
+        if stage == "prepare":
+
+            def fail_prepare(cancellation: Any, deadline: Any) -> None:
+                del cancellation, deadline
+                raise defect
+
+            monkeypatch.setattr(client, "prepare_request", fail_prepare)
+        if cleanup_fails:
+
+            def fail_clear() -> None:
+                raise cleanup
+
+            monkeypatch.setattr(client._conn, "clear", fail_clear)
+        return client
+
+    monkeypatch.setattr(
+        "appium_connect_agent.automation._session._new_connection",
+        controlled_connection,
+    )
+    stage_injected = False
+    if stage == "device":
+        original_device = cast(Any, session_module)._create_device
+
+        def fail_device(session: Session) -> Any:
+            nonlocal stage_injected
+            if not stage_injected:
+                stage_injected = True
+                raise defect
+            return original_device(session)
+
+        monkeypatch.setattr(
+            "appium_connect_agent.automation._session._create_device", fail_device
+        )
+    elif stage == "options":
+        original_options = session_module._build_options
+
+        def fail_options(*args: Any, **kwargs: Any) -> Any:
+            nonlocal stage_injected
+            if not stage_injected:
+                stage_injected = True
+                raise defect
+            return original_options(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "appium_connect_agent.automation._session._build_options", fail_options
+        )
+
+    session_states = capture_session_states(monkeypatch)
+    with connected(service) as connection:
+        if not cleanup_fails:
+            with pytest.raises(RuntimeError) as program_error_caught:
+                create_session(connection, "setup-error-device")
+            assert program_error_caught.value is defect
+            assert program_error_caught.value.__cause__ is None
+            assert not hasattr(program_error_caught.value, "automation_cleanup_errors")
+            assert session_states[-1][1] == "closed"
+            assert captured_clients[0]._closed is True
+            assert captured_clients[0].cleanup_errors == ()
+            assert service.lifecycle_requests() == []
+
+            replacement = create_session(connection, "setup-error-device")
+            replacement.quit()
+            requests = service.lifecycle_requests()
+            assert [request.method for request in requests] == ["POST", "DELETE"]
+            assert appium_caps(requests[0])["appium:systemPort"] == 8200
+            return
+
+        with pytest.raises(ResourceStateError) as resource_error_caught:
+            create_session(connection, "setup-error-device")
+        assert_error(
+            resource_error_caught.value,
+            ResourceStateError,
+            "cleanup_failed",
+            "not_sent",
+            retains_session=True,
+        )
+        assert resource_error_caught.value.cleanup_errors == (cleanup,)
+        assert resource_error_caught.value.__cause__ is defect
+        retained = resource_error_caught.value.session
+        assert retained is not None
+        assert session_states[-1] == (retained, "uncertain")
+        assert retained.session_info().state == "uncertain"
+        assert captured_clients[0]._closed is True
+        assert captured_clients[0].cleanup_errors == (cleanup,)
+        assert service.lifecycle_requests() == []
+
+        with pytest.raises(ResourceStateError) as busy:
+            create_session(connection, "setup-error-device")
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        other = create_session(connection, "other-device")
+        create_requests = [
+            request
+            for request in service.lifecycle_requests()
+            if request.method == "POST"
+        ]
+        assert len(create_requests) == 1
+        assert appium_caps(create_requests[0])["appium:systemPort"] == 8201
+        other.quit()
+
+
+def test_terminal_create_error_closes_client_and_releases_ownership(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_states = capture_session_states(monkeypatch)
     service.create_plans.append(
         ResponsePlan(status=500, payload=error_response("cannot create"))
     )
@@ -486,6 +758,7 @@ def test_terminal_create_error_closes_client_and_releases_ownership(
         assert_error(caught.value, CommandError, "command_failed", "response_received")
         assert caught.value.cleanup_errors == ()
         assert caught.value.__cause__ is not None
+        assert session_states[-1][1] == "closed"
         replacement = create_session(connection, "terminal-device")
         replacement.quit()
         create_requests = [
@@ -496,39 +769,48 @@ def test_terminal_create_error_closes_client_and_releases_ownership(
         assert [
             appium_caps(request)["appium:systemPort"] for request in create_requests
         ] == [8200, 8200]
+        assert [request.method for request in service.lifecycle_requests()] == [
+            "POST",
+            "POST",
+            "DELETE",
+        ]
 
 
 def test_terminal_create_error_keeps_ownership_when_client_cleanup_fails(
     service: ProtocolService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-
     cleanup = OSError("pool clear failed")
-    original = _new_connection
-
-    def connection_with_failing_close(server_url: str) -> Any:
-        client = original(server_url)
-
-        def fail_clear() -> None:
-            raise cleanup
-
-        monkeypatch.setattr(client._conn, "clear", fail_clear)
-        return client
-
-    monkeypatch.setattr(
-        "appium_connect_agent.automation._session._new_connection",
-        connection_with_failing_close,
-    )
+    patch_create_client(monkeypatch, cleanup_error=cleanup)
     service.create_plans.append(
         ResponsePlan(status=500, payload=error_response("cannot create"))
     )
     with connected(service) as connection:
         with pytest.raises(CommandError) as caught:
             create_session(connection, "create-cleanup-device")
-        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        assert_error(
+            caught.value,
+            CommandError,
+            "command_failed",
+            "response_received",
+            retains_session=True,
+        )
         assert caught.value.cleanup_errors == (cleanup,)
+        assert caught.value.__cause__ is not None
+        retained = caught.value.session
+        assert retained is not None
+        assert retained.session_info().state == "uncertain"
+        with pytest.raises(InvalidSessionStateError) as invalid:
+            retained.quit()
+        assert_error(
+            invalid.value,
+            InvalidSessionStateError,
+            "session_invalid",
+            "not_sent",
+        )
         with pytest.raises(ResourceStateError) as busy:
             create_session(connection, "create-cleanup-device")
-        assert busy.value.code == "device_busy"
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        assert len(service.lifecycle_requests()) == 1
 
 
 @pytest.mark.parametrize(
@@ -552,14 +834,18 @@ def test_malformed_success_is_uncertain_and_keeps_ownership(
             ResourceStateError,
             "session_create_unknown",
             "response_received",
+            retains_session=True,
         )
         assert error.session is not None
+        assert error.cleanup_errors == ()
+        assert error.__cause__ is not None
         assert error.session.session_info().state == "uncertain"
         with pytest.raises(InvalidSessionStateError):
             error.session.quit()
         with pytest.raises(ResourceStateError) as busy:
             create_session(connection, "unknown-shape-device")
         assert busy.value.code == "device_busy"
+        assert len(service.lifecycle_requests()) == 1
 
 
 @pytest.mark.parametrize(
@@ -578,9 +864,12 @@ def test_non_w3c_http_error_is_unknown_and_keeps_ownership(
             ResourceStateError,
             "session_create_unknown",
             "response_unknown",
+            retains_session=True,
         )
         assert caught.value.session is not None
         assert caught.value.session.session_info().state == "uncertain"
+        assert caught.value.cleanup_errors == ()
+        assert caught.value.__cause__ is not None
         with pytest.raises(ResourceStateError) as busy:
             create_session(connection, "non-w3c-device")
         assert busy.value.code == "device_busy"
@@ -607,41 +896,133 @@ def test_unknown_create_transport_is_not_retried_or_released(
             ResourceStateError,
             "session_create_unknown",
             "response_unknown",
+            retains_session=True,
         )
         assert caught.value.session is not None
         assert caught.value.session.session_info().state == "uncertain"
+        assert caught.value.cleanup_errors == ()
+        assert caught.value.__cause__ is not None
         assert len(service.lifecycle_requests()) == 1
         with pytest.raises(ResourceStateError) as busy:
             create_session(connection, "transport-device")
         assert busy.value.code == "device_busy"
 
 
-def test_pre_request_cancel_wins_and_releases_reserved_resources(
-    service: ProtocolService,
-) -> None:
-    cancellation = threading.Event()
-    cancellation.set()
-    with connected(service) as connection:
-        with pytest.raises(OperationCancelledError) as caught:
-            create_session(
-                connection,
-                "cancel-device",
-                control=OperationControl(
-                    timeout_seconds=0.001, cancellation=cancellation
-                ),
-            )
-        assert_error(
-            caught.value,
+@pytest.mark.parametrize(
+    ("preflight", "error_type", "code", "cause_type"),
+    [
+        (
+            "cancel",
             OperationCancelledError,
             "operation_cancelled",
+            _RequestCancelled,
+        ),
+        ("timeout", OperationTimeoutError, "operation_timeout", _RequestTimedOut),
+    ],
+)
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_pre_request_cancel_or_timeout_cleanup_resource_outcome(
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    preflight: str,
+    error_type: type[AutomationError],
+    code: str,
+    cause_type: type[Exception],
+    cleanup_fails: bool,
+) -> None:
+    session_states = capture_session_states(monkeypatch)
+    cancellation = threading.Event()
+    cleanup = OSError("pool clear failed")
+    patch_create_client(
+        monkeypatch,
+        cancel=preflight == "cancel",
+        timeout=preflight == "timeout",
+        cleanup_error=cleanup if cleanup_fails else None,
+    )
+    control = OperationControl(timeout_seconds=1, cancellation=cancellation)
+    with connected(service) as connection:
+        with pytest.raises(error_type) as caught:
+            create_session(connection, "preflight-device", control=control)
+        assert_error(
+            caught.value,
+            error_type,
+            code,
             "not_sent",
+            retains_session=cleanup_fails,
         )
-        replacement = create_session(connection, "cancel-device")
-        replacement.quit()
-    assert [request.method for request in service.lifecycle_requests()] == [
-        "POST",
-        "DELETE",
-    ]
+        assert caught.value.cleanup_errors == ((cleanup,) if cleanup_fails else ())
+        assert type(caught.value.__cause__) is cause_type
+        assert session_states[-1][1] == ("uncertain" if cleanup_fails else "closed")
+        assert service.lifecycle_requests() == []
+        if cleanup_fails:
+            retained = caught.value.session
+            assert retained is not None
+            assert session_states[-1][0] is retained
+            assert retained.session_info().state == "uncertain"
+            with pytest.raises(ResourceStateError) as busy:
+                create_session(connection, "preflight-device")
+            assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+            assert service.lifecycle_requests() == []
+        else:
+            replacement = create_session(connection, "preflight-device")
+            replacement.quit()
+            assert [request.method for request in service.lifecycle_requests()] == [
+                "POST",
+                "DELETE",
+            ]
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_pre_request_program_error_cleanup_resource_outcome(
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_fails: bool,
+) -> None:
+    session_states = capture_session_states(monkeypatch)
+    defect = RuntimeError("driver setup failed")
+    cleanup = OSError("pool clear failed")
+    patch_create_client(
+        monkeypatch,
+        program_error=defect,
+        cleanup_error=cleanup if cleanup_fails else None,
+    )
+    with connected(service) as connection:
+        if not cleanup_fails:
+            with pytest.raises(RuntimeError) as program_error_caught:
+                create_session(connection, "program-error-device")
+            assert program_error_caught.value is defect
+            assert not hasattr(program_error_caught.value, "automation_cleanup_errors")
+            assert service.lifecycle_requests() == []
+            assert session_states[-1][1] == "closed"
+            replacement = create_session(connection, "program-error-device")
+            replacement.quit()
+            assert [request.method for request in service.lifecycle_requests()] == [
+                "POST",
+                "DELETE",
+            ]
+            return
+
+        with pytest.raises(ResourceStateError) as resource_error_caught:
+            create_session(connection, "program-error-device")
+        assert_error(
+            resource_error_caught.value,
+            ResourceStateError,
+            "cleanup_failed",
+            "not_sent",
+            retains_session=True,
+        )
+        assert resource_error_caught.value.cleanup_errors == (cleanup,)
+        assert resource_error_caught.value.__cause__ is defect
+        retained = resource_error_caught.value.session
+        assert retained is not None
+        assert session_states[-1][0] is retained
+        assert retained.session_info().state == "uncertain"
+        assert service.lifecycle_requests() == []
+        assert session_states[-1][1] == "uncertain"
+        with pytest.raises(ResourceStateError) as busy:
+            create_session(connection, "program-error-device")
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        assert service.lifecycle_requests() == []
 
 
 def test_cancellation_after_successful_response_does_not_erase_create(
@@ -775,7 +1156,7 @@ def test_quit_failure_or_unknown_retains_uncertain_session_and_ownership(
             "session_quit_unknown",
             expected_state,
         )
-        assert caught.value.session is session
+        assert caught.value.session is None
         assert session.session_info().state == "uncertain"
         with pytest.raises(InvalidSessionStateError) as second:
             session.quit()
