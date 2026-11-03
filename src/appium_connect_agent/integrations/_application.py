@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from collections import OrderedDict
@@ -17,7 +18,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 from appium_connect_agent.automation import (
     AutomationError,
     DeviceInfo,
+    Element,
+    ElementInspection,
+    ElementValidationError,
+    RawStructureObservation,
     Session,
+    TreeObservation,
     create_session,
     list_devices,
 )
@@ -39,12 +45,18 @@ from ._bridge import (
 )
 from ._models import (
     AUTOMATION_MODULE_STATUS,
+    AttributesObserveRequest,
     AutomationModuleStatus,
     CapabilityData,
     CapabilityResult,
     DeviceData,
     DeviceListData,
     DeviceListResult,
+    LocatorV1,
+    ObservationData,
+    ObservationDocument,
+    ObservationResult,
+    ObserveRequest,
     PlatformData,
     RuntimeCheck,
     RuntimeCheckData,
@@ -56,6 +68,7 @@ from ._models import (
     SessionOpenRequest,
     SessionOpenResult,
     SessionStatusResult,
+    StructureObserveRequest,
     ToolErrorData,
     canonical_json,
 )
@@ -184,9 +197,12 @@ class McpApplication:
                     "appium.session.open",
                     "appium.session.status",
                     "appium.session.close",
+                    "appium.ui.observe",
                 ),
                 limitations=(
-                    "no_ui_tools",
+                    "ui_observation_only",
+                    "no_node_cache",
+                    "observation_document_65536_bytes",
                     "single_session_capacity",
                     "opaque_handle_process_local",
                     "no_session_attach_recovery",
@@ -298,6 +314,148 @@ class McpApplication:
             automation_module_status=self._module_status(),
             data=DeviceListData(count=len(devices), devices=devices),
         )
+
+    def _prepare_observation(
+        self, handle: str, call_id: str
+    ) -> tuple[_SessionEntry, Session]:
+        with self._registry_lock:
+            entry = self._entry
+            if entry is None or entry.handle != handle or not entry.published:
+                tombstone = self._tombstones.get(handle)
+                if tombstone is None:
+                    self._raise_not_sent(call_id, "session_not_found")
+                self._raise_error(
+                    ToolErrorData(
+                        schema_version=1,
+                        call_id=call_id,
+                        code="session_closed",
+                        operation_id=None,
+                        request_state="not_sent",
+                        completed_steps=(),
+                        cleanup_status="not_needed",
+                        cleanup_error_count=0,
+                        warnings=(),
+                        session_handle=tombstone.handle,
+                        session_state="closed",
+                    )
+                )
+            if entry.state == "uncertain":
+                self._raise_not_sent(call_id, "session_uncertain", entry=entry)
+            if entry.state == "closed":
+                self._raise_not_sent(call_id, "session_closed", entry=entry)
+            if entry.busy or entry.state == "closing":
+                self._raise_not_sent(call_id, "session_busy", entry=entry)
+            session = entry.session
+            if session is None:
+                raise RuntimeError("published Session entry has no Session")
+            return entry, session
+
+    @staticmethod
+    def _element(session: Session, locator: LocatorV1) -> Element:
+        chain: list[LocatorV1] = []
+        current: LocatorV1 | None = locator
+        while current is not None:
+            chain.append(current)
+            current = current.parent
+        parent: Element | None = None
+        for item in reversed(chain):
+            by = "accessibility id" if item.by == "accessibility_id" else item.by
+            parent = session.element(
+                by,
+                item.value,
+                parent=parent,
+                package=item.package,
+                raw_id=item.raw_id,
+            )
+        if parent is None:
+            raise RuntimeError("locator chain unexpectedly produced no Element")
+        return parent
+
+    def _sync_observation_entry(self, entry: _SessionEntry, session: Session) -> None:
+        info = session.session_info()
+        state = self._handle_state(info.state)
+        with self._registry_lock:
+            if self._entry is entry:
+                entry.state = state
+                entry.busy = info.busy
+
+    @staticmethod
+    def _observation_document(
+        mode: Literal["tree", "attributes", "structure"],
+        result: TreeObservation | ElementInspection | RawStructureObservation,
+    ) -> ObservationDocument:
+        raw_document = result.to_json()
+        if len(raw_document) > 65_536:
+            raise RuntimeError("Automation observation exceeded 65,536 bytes")
+        parsed = json.loads(raw_document)
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Automation observation was not an object")
+        expected_kind = "element" if mode == "attributes" else mode
+        if (
+            parsed.get("schema") != 1
+            or parsed.get("kind") != expected_kind
+            or parsed.get("operation_id") != result.operation_id
+        ):
+            raise RuntimeError("Automation observation violated its public invariants")
+        return cast(ObservationDocument, parsed)
+
+    async def observe(self, request: ObserveRequest) -> ObservationResult:
+        call_id = self._call_id()
+        entry, session = self._prepare_observation(request.session_handle, call_id)
+
+        def observe_once(budget: OperationBudget) -> ObservationResult:
+            try:
+                if isinstance(request, AttributesObserveRequest):
+                    element = self._element(session, request.locator)
+                    observed: (
+                        TreeObservation | ElementInspection | RawStructureObservation
+                    )
+                    observed = element.inspect(
+                        attributes=request.attributes,
+                        control=budget.control(),
+                    )
+                elif isinstance(request, StructureObserveRequest):
+                    element = self._element(session, request.locator)
+                    observed = element.inspect_structure(
+                        scope=request.structure_scope,
+                        control=budget.control(),
+                    )
+                else:
+                    parent = (
+                        None
+                        if request.locator is None
+                        else self._element(session, request.locator)
+                    )
+                    observed = session.observe_tree(
+                        parent=parent,
+                        control=budget.control(),
+                    )
+                document = self._observation_document(request.mode, observed)
+                return ObservationResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=observed.operation_id,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=ObservationData(mode=request.mode, document=document),
+                )
+            finally:
+                self._sync_observation_entry(entry, session)
+
+        try:
+            return await self._workers.run_budget(request.timeout_seconds, observe_once)
+        except ApplicationDrainingError:
+            self._raise_not_sent(call_id, "server_draining", entry=entry)
+        except BridgeOperationTimeoutError:
+            self._raise_not_sent(call_id, "operation_timeout", entry=entry)
+        except BridgeOperationCancelledError:
+            self._raise_not_sent(call_id, "operation_cancelled", entry=entry)
+        except ElementValidationError as error:
+            self._raise_not_sent(call_id, error.code, entry=entry)
+        except AutomationError as error:
+            self._raise_automation_error(call_id, error, entry=entry)
 
     def _reserve_open(self, request: SessionOpenRequest, call_id: str) -> _SessionEntry:
         if not self._runtime_gate.acquire(blocking=False):

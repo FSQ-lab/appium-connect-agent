@@ -76,7 +76,7 @@ def _assert_only_clean_server_stop(harness: McpHarness) -> None:
     assert harness.events() == [{"event": "server_stopped", "result": 0}]
 
 
-def test_six_tools_have_fixed_order_annotations_and_session_schemas(
+def test_seven_tools_have_fixed_order_annotations_and_session_schemas(
     mcp_harness: McpHarness,
 ) -> None:
     async def scenario() -> list[Tool]:
@@ -134,8 +134,15 @@ def test_six_tools_have_fixed_order_annotations_and_session_schemas(
             "idempotentHint": True,
             "openWorldHint": True,
         },
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
     ]
-    for tool in tools:
+    for tool in tools[:6]:
         assert tool.input_schema["type"] == "object"
         assert tool.input_schema["required"] == ["request"]
         assert tool.output_schema is not None

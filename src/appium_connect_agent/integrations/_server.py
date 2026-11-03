@@ -24,6 +24,8 @@ from ._models import (
     CapabilityResult,
     DeviceListRequest,
     DeviceListResult,
+    ObservationResult,
+    ObserveRequest,
     RuntimeCheckRequest,
     RuntimeCheckResult,
     SessionCloseRequest,
@@ -32,7 +34,7 @@ from ._models import (
     SessionOpenResult,
     SessionStatusRequest,
     SessionStatusResult,
-    canonical_json,
+    canonical_value_and_json,
 )
 
 _LOGGER_NAME = "appium_connect_agent.integrations"
@@ -110,10 +112,10 @@ def _only_broken_pipe(error: BaseException) -> bool:
 
 
 def _success(model: BaseModel) -> CallToolResult:
-    text = canonical_json(model)
+    structured, text = canonical_value_and_json(model)
     return CallToolResult(
         content=[TextContent(type="text", text=text)],
-        structured_content=model.model_dump(mode="python"),
+        structured_content=structured,
         is_error=False,
     )
 
@@ -133,8 +135,8 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local readiness and explicit Session lifecycle only; no UI, retry, "
-            "attach, recovery, or HTTP tools."
+            "Local readiness, explicit Session lifecycle, and Native read-only "
+            "observation; no UI actions, retry, attach, recovery, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,
@@ -259,6 +261,26 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
             request.timeout_seconds,
         )
         return cast(SessionCloseResult, _success(result))
+
+    @server.tool(
+        name="appium.ui.observe",
+        description=(
+            "Observe one Native tree, Element attribute set, or raw structure scope."
+        ),
+        annotations=ToolAnnotations(
+            read_only_hint=True,
+            destructive_hint=False,
+            idempotent_hint=True,
+            open_world_hint=True,
+        ),
+        structured_output=True,
+    )
+    async def ui_observe(
+        request: ObserveRequest,
+        ctx: Context[McpApplication],
+    ) -> ObservationResult:
+        result = await ctx.request_context.lifespan_context.observe(request)
+        return cast(ObservationResult, _success(result))
 
     return server
 

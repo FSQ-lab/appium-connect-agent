@@ -7,14 +7,18 @@ import math
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
+    SerializerFunctionWrapHandler,
+    SkipValidation,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -144,9 +148,12 @@ class CapabilityData(_StrictModel):
         Literal["appium.session.open"],
         Literal["appium.session.status"],
         Literal["appium.session.close"],
+        Literal["appium.ui.observe"],
     ]
     limitations: tuple[
-        Literal["no_ui_tools"],
+        Literal["ui_observation_only"],
+        Literal["no_node_cache"],
+        Literal["observation_document_65536_bytes"],
         Literal["single_session_capacity"],
         Literal["opaque_handle_process_local"],
         Literal["no_session_attach_recovery"],
@@ -322,6 +329,531 @@ class DeviceListResult(_StrictModel):
         return value
 
 
+_OBSERVED_AT_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$"
+_OBSERVATION_OPERATION_ID = Annotated[StrictUtf8, Field(min_length=1, max_length=128)]
+_OBSERVED_AT = Annotated[
+    StrictUtf8, Field(min_length=27, max_length=27, pattern=_OBSERVED_AT_PATTERN)
+]
+_TREE_COVERAGE: TypeAlias = Literal[
+    "requested_scope",
+    "visible_with_ancestors",
+    "visible_with_ancestors_and_offscreen",
+]
+_STRUCTURE_COVERAGE: TypeAlias = Literal[
+    "requested_scope", "visible_with_ancestors_and_target"
+]
+_ELEMENT_ATTRIBUTE: TypeAlias = Literal[
+    "id",
+    "text",
+    "desc",
+    "type",
+    "package",
+    "enabled",
+    "focused",
+    "checkable",
+    "checked",
+    "selected",
+    "clickable",
+    "focusable",
+    "long_clickable",
+    "password",
+    "scrollable",
+    "displayed",
+    "bounds",
+    "window_id",
+]
+_TREE_VALUE_NAME: TypeAlias = Literal[
+    "type",
+    "id",
+    "text",
+    "desc",
+    "package",
+    "enabled",
+    "focused",
+    "checked",
+    "selected",
+    "bounds",
+    "window_id",
+]
+
+
+def _json_array(value: object) -> object:
+    if isinstance(value, list):
+        return tuple(value)
+    if isinstance(value, tuple):
+        return value
+    raise ValueError("value must be an array")
+
+
+class LocatorV1(_StrictModel):
+    by: Literal["id", "accessibility_id", "xpath"]
+    value: Annotated[StrictUtf8, Field(min_length=1, max_length=4096)]
+    package: Annotated[StrictUtf8, Field(max_length=255)] | None = None
+    raw_id: bool = False
+    parent: LocatorV1 | None = None
+
+    @field_validator("value")
+    @classmethod
+    def _without_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("locator value must not contain NUL")
+        return value
+
+    @model_validator(mode="after")
+    def _bounded_chain(self) -> LocatorV1:
+        depth = 0
+        current: LocatorV1 | None = self
+        while current is not None:
+            depth += 1
+            if depth > 16:
+                raise ValueError("locator chain exceeds 16 levels")
+            current = current.parent
+        return self
+
+
+class TreeObserveRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    mode: Literal["tree"]
+    locator: LocatorV1 | None
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class AttributesObserveRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    mode: Literal["attributes"]
+    locator: LocatorV1
+    attributes: tuple[_ELEMENT_ATTRIBUTE, ...] = Field(
+        min_length=1,
+        max_length=18,
+        json_schema_extra={"uniqueItems": True},
+    )
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _attributes_array(cls, value: object) -> object:
+        return _json_array(value)
+
+    @field_validator("attributes")
+    @classmethod
+    def _unique_attributes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("attributes must be unique")
+        return value
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class StructureObserveRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    mode: Literal["structure"]
+    locator: LocatorV1
+    structure_scope: Literal["target", "declared_parent"]
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+ObserveRequest: TypeAlias = Annotated[
+    TreeObserveRequest | AttributesObserveRequest | StructureObserveRequest,
+    Field(discriminator="mode"),
+]
+
+
+class AutomationLocatorDocument(_StrictModel):
+    by: Literal["id", "accessibility id", "xpath"]
+    value: Annotated[StrictUtf8, Field(min_length=1, max_length=4096)]
+    package: Annotated[StrictUtf8, Field(max_length=255)] | None
+    raw_id: bool
+    parent: AutomationLocatorDocument | None
+
+    @field_validator("value")
+    @classmethod
+    def _without_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("locator value must not contain NUL")
+        return value
+
+    @model_validator(mode="after")
+    def _bounded_chain(self) -> AutomationLocatorDocument:
+        depth = 0
+        current: AutomationLocatorDocument | None = self
+        while current is not None:
+            depth += 1
+            if depth > 16:
+                raise ValueError("locator chain exceeds 16 levels")
+            current = current.parent
+        return self
+
+
+class ObservationScopeDocument(_StrictModel):
+    kind: Literal["root", "element", "declared_parent"]
+    locator: AutomationLocatorDocument | None
+    range_locator: AutomationLocatorDocument | None
+
+
+BoundsDocument: TypeAlias = Annotated[
+    tuple[int, int, int, int], BeforeValidator(_json_array)
+]
+ObservationDocumentValue: TypeAlias = (
+    StrictUtf8 | int | float | bool | BoundsDocument | None
+)
+
+
+class ValueObservationDocument(_StrictModel):
+    state: Literal["value"]
+    value: ObservationDocumentValue
+
+
+class MissingObservationDocument(_StrictModel):
+    state: Literal["missing"]
+
+
+class UnknownObservationDocument(_StrictModel):
+    state: Literal["unknown"]
+
+
+class NotApplicableObservationDocument(_StrictModel):
+    state: Literal["not_applicable"]
+
+
+ObservedValueDocument: TypeAlias = Annotated[
+    ValueObservationDocument
+    | MissingObservationDocument
+    | UnknownObservationDocument
+    | NotApplicableObservationDocument,
+    Field(discriminator="state"),
+]
+
+
+class AttributeValueDocument(_StrictModel):
+    name: _ELEMENT_ATTRIBUTE
+    state: Literal["value"]
+    value: ObservationDocumentValue
+
+
+class AttributeMissingDocument(_StrictModel):
+    name: _ELEMENT_ATTRIBUTE
+    state: Literal["missing"]
+
+
+class AttributeUnknownDocument(_StrictModel):
+    name: _ELEMENT_ATTRIBUTE
+    state: Literal["unknown"]
+
+
+class AttributeNotApplicableDocument(_StrictModel):
+    name: _ELEMENT_ATTRIBUTE
+    state: Literal["not_applicable"]
+
+
+AttributeObservationDocument: TypeAlias = Annotated[
+    AttributeValueDocument
+    | AttributeMissingDocument
+    | AttributeUnknownDocument
+    | AttributeNotApplicableDocument,
+    Field(discriminator="state"),
+]
+
+
+class SourceMetadataDocument(_StrictModel):
+    allow_invisible_elements: bool
+    enable_multi_windows: bool
+    snapshot_max_depth: int | None
+
+
+class ViewportDocument(_StrictModel):
+    width: ObservedValueDocument
+    height: ObservedValueDocument
+    rotation: ObservedValueDocument
+
+
+def _compact_tree_schema(schema: dict[str, Any]) -> None:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return
+    compact_names = set(TreeNodeDocument.model_fields) - {
+        "children",
+        "visible",
+        "viewport_relation",
+    }
+    for name in compact_names:
+        field_schema = properties.get(name)
+        if not isinstance(field_schema, dict):
+            continue
+        variants = field_schema.get("anyOf")
+        if isinstance(variants, list):
+            non_null = [item for item in variants if item != {"type": "null"}]
+            if len(non_null) == 1 and isinstance(non_null[0], dict):
+                title = field_schema.get("title")
+                field_schema.clear()
+                field_schema.update(non_null[0])
+                if title is not None:
+                    field_schema["title"] = title
+            else:
+                field_schema["anyOf"] = non_null
+        field_schema.pop("default", None)
+
+
+class TreeNodeDocument(_StrictModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        frozen=True,
+        json_schema_extra=_compact_tree_schema,
+    )
+
+    children: tuple[TreeNodeDocument, ...]
+    visible: Literal["visible", "partially_visible", "not_visible", "unknown"]
+    viewport_relation: Literal[
+        "inside",
+        "intersects",
+        "outside_left",
+        "outside_right",
+        "outside_above",
+        "outside_below",
+        "unknown",
+    ]
+    type: StrictUtf8 | None = None
+    type_ns: Literal["android.view", "android.widget"] | None = None
+    id: StrictUtf8 | None = None
+    text: StrictUtf8 | None = None
+    desc: StrictUtf8 | None = None
+    package: StrictUtf8 | None = None
+    enabled: bool | None = None
+    focused: bool | None = None
+    checked: bool | None = None
+    selected: bool | None = None
+    bounds: BoundsDocument | Literal["parent"] | None = None
+    window_id: int | None = None
+    missing: tuple[_TREE_VALUE_NAME, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=11,
+        json_schema_extra={"uniqueItems": True},
+    )
+    unknown: tuple[_TREE_VALUE_NAME, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=11,
+        json_schema_extra={"uniqueItems": True},
+    )
+    na: tuple[_TREE_VALUE_NAME, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=11,
+        json_schema_extra={"uniqueItems": True},
+    )
+
+    @field_validator("children", "missing", "unknown", "na", mode="before")
+    @classmethod
+    def _array_fields(cls, value: object) -> object:
+        if value is None:
+            return None
+        return _json_array(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compact_fields_are_never_null(cls, value: object) -> object:
+        if isinstance(value, dict):
+            required = {"children", "visible", "viewport_relation"}
+            if any(
+                item is None for name, item in value.items() if name not in required
+            ):
+                raise ValueError("compact tree fields cannot be null")
+        return value
+
+    @model_validator(mode="after")
+    def _unique_state_arrays(self) -> TreeNodeDocument:
+        for values in (self.missing, self.unknown, self.na):
+            if values is not None and len(values) != len(set(values)):
+                raise ValueError("compact tree state arrays must be unique")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_compact_fields(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        serialized = handler(self)
+        if not isinstance(serialized, dict):
+            raise TypeError("tree node serializer returned a non-object")
+        return {key: value for key, value in serialized.items() if value is not None}
+
+
+class RawNodeDocument(_StrictModel):
+    tag: Annotated[StrictUtf8, Field(max_length=256)]
+    attributes: tuple[
+        tuple[Annotated[StrictUtf8, Field(max_length=256)], StrictUtf8], ...
+    ] = Field(max_length=64)
+    children: tuple[RawNodeDocument, ...]
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _attribute_pairs(cls, value: object) -> object:
+        converted = _json_array(value)
+        assert isinstance(converted, tuple)
+        return tuple(_json_array(item) for item in converted)
+
+    @field_validator("children", mode="before")
+    @classmethod
+    def _children_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class TreePayloadDocument(_StrictModel):
+    roots: tuple[TreeNodeDocument, ...]
+    viewport: ViewportDocument
+
+    @field_validator("roots", mode="before")
+    @classmethod
+    def _roots_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class AttributesPayloadDocument(_StrictModel):
+    attributes: tuple[AttributeObservationDocument, ...]
+
+    @field_validator("attributes", mode="before")
+    @classmethod
+    def _attributes_array(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class StructurePayloadDocument(_StrictModel):
+    roots: tuple[RawNodeDocument, ...]
+    target_path: tuple[Annotated[int, Field(ge=0)], ...] = Field(max_length=128)
+
+    @field_validator("roots", "target_path", mode="before")
+    @classmethod
+    def _array_fields(cls, value: object) -> object:
+        return _json_array(value)
+
+
+class TreeObservationDocument(_StrictModel):
+    document_schema: Literal[1] = Field(alias="schema")
+    kind: Literal["tree"]
+    operation_id: _OBSERVATION_OPERATION_ID
+    observed_at: _OBSERVED_AT
+    scope: ObservationScopeDocument
+    coverage: _TREE_COVERAGE
+    complete_for_requested_scope: bool
+    upstream_completeness: Literal["unknown"]
+    source: SourceMetadataDocument
+    payload: TreePayloadDocument
+
+    @model_validator(mode="after")
+    def _tree_scope_and_completeness(self) -> TreeObservationDocument:
+        if self.complete_for_requested_scope != (self.coverage == "requested_scope"):
+            raise ValueError("tree coverage must match completeness")
+        if self.scope.kind == "root":
+            if self.scope.locator is not None or self.scope.range_locator is not None:
+                raise ValueError("root tree scope cannot carry a locator")
+        elif (
+            self.scope.kind != "element"
+            or self.scope.locator is None
+            or self.scope.locator != self.scope.range_locator
+        ):
+            raise ValueError("scoped tree must carry one matching Element locator")
+        return self
+
+
+class AttributesObservationDocument(_StrictModel):
+    document_schema: Literal[1] = Field(alias="schema")
+    kind: Literal["element"]
+    operation_id: _OBSERVATION_OPERATION_ID
+    observed_at: _OBSERVED_AT
+    scope: ObservationScopeDocument
+    coverage: Literal["requested_scope"]
+    complete_for_requested_scope: Literal[True]
+    upstream_completeness: Literal["unknown"]
+    consistency: Literal["sequential_non_atomic"]
+    payload: AttributesPayloadDocument
+
+    @model_validator(mode="after")
+    def _element_scope(self) -> AttributesObservationDocument:
+        if (
+            self.scope.kind != "element"
+            or self.scope.locator is None
+            or self.scope.locator != self.scope.range_locator
+        ):
+            raise ValueError("attribute scope must carry one matching Element locator")
+        return self
+
+
+class StructureObservationDocument(_StrictModel):
+    document_schema: Literal[1] = Field(alias="schema")
+    kind: Literal["structure"]
+    operation_id: _OBSERVATION_OPERATION_ID
+    observed_at: _OBSERVED_AT
+    scope: ObservationScopeDocument
+    coverage: _STRUCTURE_COVERAGE
+    complete_for_requested_scope: bool
+    upstream_completeness: Literal["unknown"]
+    source: SourceMetadataDocument
+    payload: StructurePayloadDocument
+
+    @model_validator(mode="after")
+    def _structure_scope_and_completeness(self) -> StructureObservationDocument:
+        if self.complete_for_requested_scope != (self.coverage == "requested_scope"):
+            raise ValueError("structure coverage must match completeness")
+        if (
+            self.scope.kind not in ("element", "declared_parent")
+            or self.scope.locator is None
+            or self.scope.range_locator is None
+        ):
+            raise ValueError("structure scope must carry target and range locators")
+        return self
+
+
+ObservationDocument: TypeAlias = Annotated[
+    TreeObservationDocument
+    | AttributesObservationDocument
+    | StructureObservationDocument,
+    Field(discriminator="kind"),
+]
+
+
+class ObservationData(_StrictModel):
+    mode: Literal["tree", "attributes", "structure"]
+    document: SkipValidation[ObservationDocument]
+
+
+class ObservationResult(_StrictModel):
+    schema_version: Literal[1]
+    call_id: CallId
+    execution: Literal["completed"]
+    operation_id: _OBSERVATION_OPERATION_ID
+    request_state: None
+    warnings: tuple[StableCode, ...] = Field(
+        max_length=16, json_schema_extra={"uniqueItems": True}
+    )
+    automation_module_status: AutomationModuleStatus
+    data: ObservationData
+
+    @field_validator("warnings")
+    @classmethod
+    def _unique_warnings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("warnings must be unique")
+        return value
+
+    pass
+
+
 class SessionOpenRequest(_StrictModel):
     schema_version: Literal[1]
     device_id: Annotated[
@@ -494,9 +1026,9 @@ class ToolErrorData(_StrictModel):
         return self
 
 
-def canonical_json(model: BaseModel) -> str:
-    """Return the one canonical JSON representation used on both result channels."""
-    value = model.model_dump(mode="json")
+def canonical_value_and_json(model: BaseModel) -> tuple[dict[str, Any], str]:
+    """Dump once and derive both MCP success channels from the same Python value."""
+    value = model.model_dump(mode="python", by_alias=True, warnings=False)
     encoded = json.dumps(
         value,
         ensure_ascii=False,
@@ -504,6 +1036,16 @@ def canonical_json(model: BaseModel) -> str:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8", errors="strict")
-    if not isinstance(model, ToolErrorData) and len(encoded) > _MAX_SUCCESS_BYTES:
+    if isinstance(model, ObservationResult) and len(encoded) > 69_632:
+        raise ValueError("observation result exceeds the defensive ceiling")
+    if (
+        not isinstance(model, (ToolErrorData, ObservationResult))
+        and len(encoded) > _MAX_SUCCESS_BYTES
+    ):
         raise ValueError("structured result exceeds the defensive ceiling")
-    return encoded.decode("utf-8")
+    return value, encoded.decode("utf-8")
+
+
+def canonical_json(model: BaseModel) -> str:
+    """Return the one canonical JSON representation used for an error payload."""
+    return canonical_value_and_json(model)[1]

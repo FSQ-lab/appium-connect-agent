@@ -2,7 +2,7 @@
 
 日期：2026-10-29。TaskID：`INTEGRATIONS-MCP-DESIGN-20261029`。
 
-状态：**INT-MCP-01、INT-MCP-02均在各自feature限定范围Done。MCP-02产品、永久测试、全量质量/发行、安装wheel完整controlled-protocol矩阵、独立full＋两轮repair-only实现审查、两轮真实device-only Session闭环及新独立最终真实证据审查全部pass，无开放finding。Integrations模块、Automation模块、当前平台/项目整体仍non-Done；不自动推进MCP-03。**
+状态：**INT-MCP-01、INT-MCP-02均在各自feature限定范围Done；INT-MCP-03已完成产品、永久测试、全量质量/发行、安装wheel controlled-protocol矩阵及独立full＋Repair-01实现审查，non-device无开放finding，但真实UI读取未授权，故为`device-validation-blocked`/non-Done。Integrations模块、Automation模块、当前平台/项目整体仍non-Done；不自动推进MCP-04。**
 
 ## 1. 授权、仓库基线与文档关系
 

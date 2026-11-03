@@ -4,7 +4,7 @@
 
 本模块维护 MCP、CLI、SDK 等接入形式的适配边界。
 
-当前确认首个接入形式为本地stdio MCP；公共合同含INT-MCP-01 readiness/discovery与INT-MCP-02 explicit Session lifecycle。观测、动作及CLI/SDK/HTTP不因模块定位自动承诺。
+当前确认首个接入形式为本地stdio MCP；公共合同含INT-MCP-01 readiness/discovery、INT-MCP-02 explicit Session lifecycle与INT-MCP-03 Native read-only observation。UI动作及CLI/SDK/HTTP不因模块定位自动承诺。
 
 ## Responsibilities
 
@@ -22,7 +22,7 @@
 
 ## Current Status
 
-INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation前序修复delta已确认，实际实现、协议互操作、真实Session链与独立审查状态以各feature交付证据为准。契约确认不表示INT-MCP-02或模块Done。
+INT-MCP-01与INT-MCP-02均在各自feature限定范围Done且无开放finding；INT-MCP-03产品、永久测试、完整non-device验证/发行、安装wheel受控consumer及独立full＋Repair-01审查已pass且无开放finding，但真实UI读取未授权，当前`device-validation-blocked`/non-Done。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -57,10 +57,10 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 - `CapabilitiesRequest`只含required `schema_version`。`RuntimeCheckRequest`含required `schema_version`、required `mode: static|external_connection`、optional `timeout_seconds` default `10.0`且`0 < value <= 60.0`。`DeviceListRequest`含required `schema_version`、optional `timeout_seconds` default `30.0`且`0 < value <= 60.0`。
 - 每个进入handler的调用在任何下层操作前用`secrets.token_urlsafe(16)`生成一次`call_id`，wire固定24个ASCII字符、pattern `^c_[A-Za-z0-9_-]{22}$`；schema/SDK在handler前拒绝的调用没有项目call_id。共同成功字段全部required：`schema_version=1`、`call_id`、`execution=completed`、`operation_id: string(1..128)|null`、`request_state:null`、`warnings`、`automation_module_status`和tool-specific `data`。warnings是按发生顺序、无重复的0..16项stable code，每项pattern `^[a-z0-9_]{1,128}$`。
 - `automation_module_status`固定required object且四字段required：`feature_qualification=aif_01_to_10_individually_done`、`module_state=device_validation_blocked_known_clean`、`module_done=false`、`automatic_retry_authorized=false`。不得使用斜线拼值或把feature资格提升为模块Done。
-- `CapabilityResult`的共同`operation_id=null`。data固定required object：`integration_form=mcp`、`transport=stdio`、`protocol_target=2026-07-28`、`host_compatibility=unqualified`、`adb_configured=true`、required platform object `{host:macos,target:android_native,driver:uiautomator2}`、tools和limitations。tools固定有序数组`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close]`。limitations固定有序数组`[no_ui_tools, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`；两数组不接受其他项。
+- `CapabilityResult`的共同`operation_id=null`。data固定required object：`integration_form=mcp`、`transport=stdio`、`protocol_target=2026-07-28`、`host_compatibility=unqualified`、`adb_configured=true`、required platform object `{host:macos,target:android_native,driver:uiautomator2}`、tools和limitations。tools固定有序数组`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations固定有序数组`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`；两数组不接受其他项。
 - `RuntimeCheckResult.data`固定required `mode`、`report`和`connection`。report字段全部required：`operation_id:string(1..128)`、`observed_at`（UTC aware ISO8601，固定`+00:00`）、`host=macOS`、`target=Android`、`driver=UiAutomator2`、`checks`和`observer_errors`。checks是0..32项有序对象：required `check_id`/`reason_code` pattern `^[a-z0-9_]{1,128}$`、required `status=pass|fail|unknown|not_applicable`、required evidence 0..8项（每段最多512 Unicode code points）和required nullable remediation（null或最多512 code points）。observer_errors是0..8项、每项最多512 code points。共同operation_id必须等于report.operation_id。static时connection=null；external_connection时connection为三字段required object `{ownership:external,appium_version:string(1..128)|null,compatibility:declared_compatible|unverified}`，不含server_url。
 - `DeviceListResult`共同operation_id=null。data固定required `count`和`devices`；count是0..256并等于数组长度。devices是Automation原排序的0..256项对象，三个字段均required：`id`为1..1024 code points且无空白/control，`name`为null或最多1024 code points且无control，`connection_state=connected|offline|unauthorized|unknown`。
-- 已知项目错误JSON字段全部required：`schema_version=1`、`call_id`、`code`（`^[a-z0-9_]{1,128}$`）、`operation_id:string|null`（null或`^[A-Za-z0-9_-]{1,128}$`）、`request_state=not_sent|response_received|response_unknown|null`、`completed_steps`（按下层顺序、无重复、0..32项、每项`^[a-z0-9_]{1,128}$`）、`cleanup_status=not_needed|completed|failed|unknown`、`cleanup_error_count`（integer 0..32）、`warnings`（同成功约束），以及required nullable `session_handle`与`session_state`。三项MCP-01工具的两个Session字段恒为null；INT-MCP-02非null资源矩阵见下文。
+- 已知项目错误JSON字段全部required：`schema_version=1`、`call_id`、`code`（`^[a-z0-9_]{1,128}$`）、`operation_id:string|null`（null或`^[A-Za-z0-9_-]{1,128}$`）、`request_state=not_sent|response_received|response_unknown|null`、`completed_steps`（按下层顺序、无重复、0..32项、每项`^[a-z0-9_]{1,128}$`）、`cleanup_status=not_needed|completed|failed|unknown`、`cleanup_error_count`（integer 0..32）、`warnings`（同成功约束），以及required nullable `session_handle`与`session_state`。三项MCP-01工具的两个Session字段恒为null；INT-MCP-02与INT-MCP-03的非null资源矩阵见下文。
 - 所有项目规范JSON统一为`json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))`的UTF-8编码。旧三工具两个Session字段为null时，schema-valid联合最大错误JSON为6796 bytes，固定包装后capabilities/runtime/devices完整wire上限为6852/6849/6848 bytes；原6753/6809/6806/6805值已被clean cutover替换。消费者按固定前缀后定位marker；永久测试同步schema digest、联合最大、完整wire及每字段/数组边界，不保留旧错误DTO。
 - 成功structured对象规范JSON设置4MiB发送前defensive ceiling并由同一对象生成TextContent；它防止未来schema漂移或内部错误，不是当前schema可达的公共边界。永久测试必须分别构造CapabilityResult、RuntimeCheckResult和DeviceListResult全部字段/数组/字符串联合最大合法对象，固定schema hash与实际canonical JSON bytes、证明均低于4MiB并可正常发送；每个公开字段/数组各自做上限及加一拒绝。不得用schema-invalid任意dict伪造4MiB+1边界。未来合法schema接近或超过ceiling时先走SPEC gate，当前不截断/分页。SDK自身参数validation error不是ACA_ERROR，可能回显client自己提供的非法值，但必须isError、structuredContent=null、零下层请求且经SDK日志filter后不得进入stderr原文。
 
@@ -79,7 +79,7 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 - 启动Interface的永久测试和构建wheel controlled-stdio consumer必须覆盖两个长option正反序、缺失任一项、重复、任何位置参数、全部短名（含`-c`/`-a`）、相对/缺失文件/目录/不可执行及符号链接跟随stat目标语义。缺少`--adb-executable`时分别提供候选产品环境变量、PATH fake adb、TOML `adb_executable`、以及含`platform-tools/adb`的合法`android_sdk_root`/`ANDROID_HOME`/`ANDROID_SDK_ROOT`，仍必须缺option失败且不读取/推导/回退。每个负例同时断言MCP transport未启动、Runtime调用0次、`list_devices`调用0次、ADB子进程/I/O 0次、stdout无协议外输出、stderr无路径/值/repr；合法路径只产生获准`adb devices -l`调用。
 - 受控consumer必须从构建wheel在全新CPython3.11环境用官方`mcp==2.3.0` Client启动正式console script，完成默认2026协议发现、tools/list/call、schema、成功/known error、普通cancel、late success/known error保留、in-flight EOF、资源等待/释放和正常/故障shutdown；broken stdout/pipe只可使用设计§15.2的raw pipe故障注入窄例外，正常协议仍用官方Client。consumer须证明精确中性日志行、一次下层、Event、no-replay、进程/pipe清理；fake ADB/受控Appium只证明`controlled-protocol`。
 - `appium.runtime.check`适用真实外部Appium范围进入/退出、`appium.devices.list`适用真实明确ADB/设备发现仍需另行资源授权并通过，才能判feature Done；缺失只能`device-validation-blocked`且non-Done。Copilot/Codex未实测不影响当前协议feature门槛，也不得声明兼容。
-- MCP-01三工具自身不创建Session；当前server仅通过INT-MCP-02显式open/status/close持有一个opaque Session。仍不交付观测、Element/Device动作、应用/安装管理、CLI/SDK/HTTP或其他平台；无raw入口、fallback、隐式back、retry、`clear_app`或数据删除保证。Automation模块known-clean blocker原样保留。
+- MCP-01三工具自身不创建Session；当前server通过INT-MCP-02显式open/status/close持有一个opaque Session，并通过INT-MCP-03提供Native只读观测。仍不交付Element/Device动作、应用/安装管理、CLI/SDK/HTTP或其他平台；无raw入口、fallback、隐式back、retry、`clear_app`或数据删除保证。Automation模块known-clean blocker原样保留。
 
 详细设计和后续feature边界见[确认文档](../../docs/superpowers/specs/2026-10-29-integrations-mcp-first-design.md)。
 
@@ -89,7 +89,7 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 
 ### Scope, Dependencies And Reuse Gate
 
-- 当前平台组合固定为 macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；当前只交付`INT-MCP-02-SESSION-LIFECYCLE`，不交付观测、Element/Device动作、应用管理、HTTP、独立CLI/SDK、具体Host兼容或多Session资格。
+- 本节的feature范围固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11下的`INT-MCP-02-SESSION-LIFECYCLE`；该feature本身不交付观测、Element/Device动作、应用管理、HTTP、独立CLI/SDK、具体Host兼容或多Session资格。当前Native只读观测由下文INT-MCP-03合同唯一维护。
 - 精确依赖为限定Done且无开放finding的`INT-MCP-01-LOCAL-READINESS`、Runtime公开external `connect`及Automation AIF-02。MCP-02实现前必须先完成并独立验收`AUTO-AIF02-RETAINED-SESSION-ERROR`，保证任何可返回的受控create错误在保留Session/device/systemPort时公开携带可达Session；不得通过Automation私有入口或猜测协调器状态绕过。Automation模块仍`device_validation_blocked_known_clean`、`module_done=false`、无自动重试。
 - 不新增、替换或升级依赖。继续在已批准版本/用途内复用`mcp==2.3.0`高层MCPServer/stdio/lifespan/cancellation、`pydantic==2.14.1` strict DTO、公开Runtime/Automation及Python3.11标准库`secrets`、`concurrent.futures`、短锁和有界容器。禁止low-level/private/provisional SDK、自研MCP/HTTP/Appium协议、raw WebDriver/ADB或复制下层状态机/校验。
 - Configuration、Runtime、Contracts no-delta；Automation只有上述错误资源可达性delta。需要Runtime lease/跨线程新保证、其他下层行为、新恢复入口、raw协议或新库用途时立即停止并返回相应SPEC/选型gate。
@@ -106,8 +106,8 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 
 ### Tool Requests, Capability Surface And Strict Input
 
-- 工具固定有序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close]`。limitations完整固定有序为`[no_ui_tools, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。server instructions只增加explicit Session lifecycle，仍明确no UI/retry/HTTP。
-- tools/list annotation wire值固定：capabilities `(readOnly=true, destructive=false, idempotent=true, openWorld=false)`；runtime check和devices list `(true,false,true,true)`；session open `(false,false,false,true)`；session status `(true,false,true,false)`；session close `(false,true,true,true)`。annotation是Host hint而非授权；close的idempotent只陈述同handle tombstone重复调用，不承诺失败/unknown重试安全。
+- 当前工具固定有序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations完整固定有序为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。server instructions明确readiness、显式Session lifecycle与Native只读观测，并保持no UI actions/retry/attach/recovery/HTTP。
+- tools/list annotation wire值固定：capabilities `(readOnly=true, destructive=false, idempotent=true, openWorld=false)`；runtime check和devices list `(true,false,true,true)`；session open `(false,false,false,true)`；session status `(true,false,true,false)`；session close `(false,true,true,true)`；ui observe `(true,false,true,true)`。annotation是Host hint而非授权；close的idempotent只陈述同handle tombstone重复调用，observe的idempotent不保证动态UI结果相同，二者均不承诺失败/unknown重试安全。
 - 所有新增request/result及嵌套对象继续strict/frozen、JSON Schema2020-12、`additionalProperties=false`、required`schema_version=1`。数值wire接受实际JSON integer或number但排除bool，进入handler前规范为有限float再校验；NaN/Inf、非法Unicode、未知字段及边界在handler前拒绝并零registry lookup/下层请求。锁定SDK的request JSON-object字符串兼容保持，`60`与`60.0`语义等价。
 - 统一`SessionHandle`为actual string、34 ASCII字符、pattern`^s_[A-Za-z0-9_-]{32}$`；request/result/error的所有非null handle均复用该类型。非法空串、33/35字符、Unicode或非法字符在handler前拒绝；只有合法但不存在/已淘汰handle进入`session_not_found/not_sent`。
 - `SessionOpenRequest`含required`schema_version`、required`device_id`（1..1024 code points且无whitespace/control）、optional nullable`app_id=null`（1..255且无whitespace/control）、optional nullable`app_path=null`（strict UTF-8 1..4096、absolute并交Automation权威验证）、optional actual-bool`auto_launch=false`、`force_app_launch=false`、`should_terminate_app=false`、optional finite-number`new_command_timeout_seconds=500.0`且`0<=value<=86400.0`、optional finite-number`timeout_seconds=180.0`且`0<value<=300.0`。Adapter固定`no_reset=true`、`full_reset=false`、`capabilities=None`。
@@ -119,9 +119,9 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 
 - 三项成功结果沿共同required字段，`operation_id=null`、`request_state=null`、`warnings=[]`固定；Automation成功不暴露内部operation/Session ID。Session data全部required：`ownership=mcp`、handle、`session_state=active|uncertain|closing|closed`、device_id、nullable target_app_id、actual-bool busy。open只能`active/false`，close只能`closed/false`，status返回当时本地事实；creating只存在于provisional内部，不向尚未持有handle的其他请求泄露。
 - canonical success JSON可达最大固定为open5601、status5604、close5601 bytes；仍受4MiB defensive ceiling。TextContent与structuredContent来自同一DTO，不截断/分页/重复构造。永久测试用真实DTO经SDK固定schema hash、最大对象和字段±1。
-- 六工具共同ToolErrorData原位新增required nullable`session_handle`与`session_state`；state非null只为`active|uncertain|closing|closed`且必须与handle同时非null。旧三工具、schema拒绝、runtime gate、第二open capacity、handle generation failure、合法not-found及open未保留Session的错误两字段均null。
-- 只有两类错误返回handle/state：本次open的公开错误携带 retained Session；或请求显式携带且匹配该handle的close错误。open retained统一绑定同一handle并按`session_info`返回uncertain；close pre-send cancel/timeout若snapshot仍active则返回active并允许未来新的显式close，本次不自动重试；snapshot uncertain才quarantine；close busy返回closing；confirmed closed但Runtime退出失败返回closed。
-- error canonical JSON：旧三工具两个null字段联合最大6796 bytes，完整wire为6852/6849/6848；Session错误非null联合最大6835，open/status/close完整wire为6887/6889/6888。原6753与6809/6806/6805值被替换。逐字段/数组、null矩阵和完整wire须测试。
+- 七工具共同ToolErrorData含required nullable`session_handle`与`session_state`；state非null只为`active|uncertain|closing|closed`且必须与handle同时非null。三项MCP-01工具、schema拒绝、runtime gate、第二open capacity、handle generation failure、合法not-found及open未保留Session的错误两字段均null。
+- 非null资源pair来自三类错误：本次open的公开错误携带retained Session；显式匹配handle的close错误；或显式匹配active live handle的observe错误。open retained统一绑定同一handle并按`session_info`返回uncertain；close pre-send cancel/timeout若snapshot仍active则返回active并允许未来新的显式close；observe在返回前按公开`session_info`同步active/uncertain事实。close/observe busy返回当时匹配state，confirmed closed但Runtime退出失败返回closed；任何unknown均不自动重试。
+- error canonical JSON：三项MCP-01工具两个null字段联合最大6796 bytes，完整wire为6852/6849/6848；Session/observe错误非null联合最大6835，open/status/close/observe完整wire为6887/6889/6888/6885。原6753与6809/6806/6805值已被替换。逐字段/数组、null矩阵和完整wire须测试。
 - Runtime实际进入后，Adapter可按顺序前置一次`runtime_connected` completed step；不伪造设备请求。open无retained Session时退出Runtime并不返回handle；retained unknown保持entry/Runtime。close后以公开session_info为资源事实，不把not_sent active改成uncertain。
 - Session已confirmed closed后调用owner退出Runtime。退出成功才允许replacement；退出失败则写tombstone closed、返回`cleanup_failed`及handle/closed、设置sticky`runtime_cleanup_failed`，禁止new open/runtime.check。该scope不再次`__exit__`、不发设备命令；status/幂等close仍返回closed，shutdown终止owner并exit4。
 
@@ -145,6 +145,49 @@ INT-MCP-01限定范围Done且无开放finding；INT-MCP-02合同及其Automation
 
 - stdout只含MCP framing。stderr/证据不得记录handle、raw device/app/path、Appium/Automation ID、URL、capabilities或异常文本；只允许稳定code/state/count。正式结果仅向当前client返回获准handle/device/target事实。
 - 永久测试使用锁定真实Appium/Selenium client到临时HTTP协议服务，覆盖前序Automation retained-error修复、四种app输入、strict number（integer/decimal等价、bool/NaN/Inf拒绝）/handle/bytes、8次碰撞、256/257 FIFO、不刷新、provisional不可寻址、live/tombstone、全部error resource矩阵、跨阶段remaining budget、单owner thread enter/exit、capacity/runtime gate、cancel/no-replay、完整shutdown表及资源只在confirmed close+Runtime exit后复用。
-- 安装wheel官方MCP2.3.0 Client consumer覆盖六tool/schema/annotation和完整`open A→status active→close A→status closed→幂等close→open B→status active→close B→status closed`；断言两次Runtime enter/exit、两次create/quit、最终无non-closed entry/active scope及自然exit0。另覆盖active自动quit clean、一次quit unknown degraded、uncertain零quit degraded、EOF/raw broken pipe、一次下层和进程/pipe/owner回收；受控Appium只称`controlled-protocol`。
+- MCP-02验收时的安装wheel官方MCP2.3.0 Client consumer覆盖当时六tool/schema/annotation和完整`open A→status active→close A→status closed→幂等close→open B→status active→close B→status closed`；断言两次Runtime enter/exit、两次create/quit、最终无non-closed entry/active scope及自然exit0。该历史证据另覆盖active自动quit clean、一次quit unknown degraded、uncertain零quit degraded、EOF/raw broken pipe、一次下层和进程/pipe/owner回收；当前七工具surface与Native observation的增量consumer义务由INT-MCP-03维护。
 - Feature Done另需用户单独授权，在固定真实组合和一个明确Android目标上执行同一primary/replacement完整闭环，最终Runtime释放、stdio自然exit0且无unknown/uncertain/non-closed entry；不执行UI/App动作、安装/卸载、shell或服务启停。当前`/spec-driven`未授权该真实链，缺失时`device-validation-blocked`/non-Done。
-- Integrations产品churn目标900..1200行，测试/文档另计；前序Automation修复单独统计、验证和full独审。完整质量/发行/consumer/适用真实链及全新独立full实现审查通过后才可判MCP-02限定Done；模块/平台仍不自动Done，不自动推进MCP-03。
+- MCP-02产品churn目标900..1200行，测试/文档另计；前序Automation修复单独统计、验证和full独审。其完整质量/发行/consumer/真实链及全新独立full实现审查已经限定通过；该历史结论不代替INT-MCP-03或当前模块/平台的独立验收。
+
+## INT-MCP-03 Native Observation
+
+本节已由用户在本次SPEC gate明确确认并clean cutover；确认只授权本feature的非设备实现、受控验证与独立审查，不自动授权读取真实设备、应用或页面内容。
+
+### Scope, Dependencies And Reuse Gate
+
+- 当前组合继续固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；本feature只在现有本地stdio MCP增加Native只读观测，不交付click/text/gesture、Device或应用动作、面板/剪贴板/弹窗、install/remove、HTTP、独立CLI/SDK、具体Host兼容或多Session资格。
+- 精确依赖为限定Done且无开放finding的INT-MCP-02，以及Automation AIF-03/AIF-ED公开`Session.element`、`Session.observe_tree`、`Element.inspect`、`Element.inspect_structure`与公开结果/错误。Automation继续`device_validation_blocked_known_clean`、`module_done=false`、无自动重试；MCP-03不得提升或关闭其Settings模块smoke gap。
+- 无新增、替换或升级依赖。继续在已批准用途内复用`mcp==2.3.0`高层MCPServer/stdio/schema/lifespan/cancellation、`pydantic==2.14.1` strict DTO、Python3.11标准库`json`及既有bridge/Registry；标准库足以解析Automation公开`to_json()`的schema=1规范JSON，不新增serialization/schema库。禁止low-level/private/provisional MCP SDK、自研MCP/XML/Appium协议、raw WebDriver/HTTP/ADB、Automation私有入口或复制下层resolver/Settings/XML/uncertain状态机。
+- Configuration、Runtime、Contracts、Automation no-delta。若需要下层新行为、private/raw入口、节点引用、第二Session gate、fallback/retry、缓存或新依赖用途，立即停止并返回对应SPEC/选型gate。
+
+### Tool Surface And Strict Request Union
+
+- 固定工具顺序clean cutover为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。`appium.ui.observe` annotations固定为`readOnly=true, destructive=false, idempotent=true, openWorld=true`；idempotent只表示重复读取不增加项目动作副作用，不保证动态UI结果相同，annotation也不构成读取真实UI的授权。
+- capabilities limitations完整固定顺序clean cutover为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。移除`no_ui_tools`；server instructions改为readiness、显式Session生命周期和Native只读观测，仍明确no UI actions/retry/attach/recovery/HTTP。
+- tool仍只有一个必填顶层`request`；公开input schema为按required `mode`判别的三个strict/frozen object联合，每个分支JSON Schema2020-12且`additionalProperties=false`。共同required字段为`schema_version=1`、现有`session_handle`、`mode`；optional `timeout_seconds=90.0`为actual finite number、排除bool且`0 < value <= 120.0`。锁定SDK的JSON-object字符串request兼容、并列顶层extra忽略及内部strict规则保持。
+- `mode=tree`分支只增加required nullable `locator`；显式`null`表示root，非null表示该Element范围，不接受attributes或structure_scope。`mode=attributes`分支要求non-null locator和required attributes数组；数组1..18、无重复、保留顺序，只接受`id/text/desc/type/package/enabled/focused/checkable/checked/selected/clickable/focusable/long_clickable/password/scrollable/displayed/bounds/window_id`，不接受structure_scope。`mode=structure`分支要求non-null locator和required `structure_scope=target|declared_parent`，不接受attributes；MCP不静默继承下层默认以避免无意扩大结构披露范围。
+- `LocatorV1`为递归strict object：required `by=id|accessibility_id|xpath`、required strict UTF-8 `value`（1..4096 code points、禁NUL）、optional nullable `package=null`（strict UTF-8、最多255 code points）、optional actual-bool `raw_id=false`、optional nullable `parent=null`；整链最多16层，17层在handler前拒绝。Adapter只把`accessibility_id`映射为Automation公开拼写`accessibility id`，从最老parent到leaf调用公开`Session.element`；不trim/normalize/补package/解析ID/换strategy/选择首个匹配。package/raw ID/parent+XPath/unresolved ID的语义校验仍由Automation工厂权威执行。
+
+### Public Dispatch And Observation Result
+
+- active live handle取得现有Session引用后立即释放Registry短锁；Element只存在于本次调用栈，不进入Registry。tree精确调用一次`Session.observe_tree(parent=element_or_none)`；attributes精确调用一次`Element.inspect(attributes=...)`；structure精确调用一次`Element.inspect_structure(scope=...)`。不预定位、自动observe、滚动、back、focus、动作建议、缓存节点、分页、fallback或重放。
+- 成功沿既有共同required字段，`operation_id`为Automation观测operation_id、`request_state=null`、`warnings=[]`、automation_module_status不变。`data`只含required `mode`和required typed object `document`；document是对应Automation公开`to_json()`的schema=1规范观测文档，request mode `attributes`对应document `kind=element`，其他kind分别为tree/structure。
+- outputSchema必须精确固定三种document及其嵌套字段/enum/required/nullability，不得用无约束dict或转义JSON字符串。Adapter只对公开`to_json()`执行一次标准JSON解析并核对顶层object、schema=1、kind与mode匹配、document operation_id与公开结果一致；随后同一ObservationResult同时生成structuredContent与canonical TextContent。违反这些下层已确认不变量属于未知程序缺陷并沿既有SDK脱敏路径，不伪装成source_invalid或成功。
+- document逐字段保留Automation语义和规范形状：observed_at、scope、coverage、complete_for_requested_scope、upstream_completeness；tree的source/viewport/roots/visibility/viewport_relation及compact missing/unknown/na；element的consistency与有序attributes/ValueState；structure的source、原tag/attributes顺序/children及target_path。合法空串、0和false保持value；数据unknown/missing/not_applicable不等于response_unknown。document内locator保留Automation公开拼写`accessibility id`，不在envelope复制第二份locator或解释为动作许可。
+- Automation完整document自身继续以其规范编码计量且最大65,536 UTF-8 bytes；Integrations不为外层留空间而截断、降采样、删字段、分页或再次请求。完整ObservationResult另有69,632-byte防御上限并继续低于全局4MiB ceiling；实施资格须用真实DTO固定三个mode各自可达最大canonical bytes、outputSchema digest和完整wire bytes，不能把不可达的4MiB±1冒充自然边界。双通道只保留一次下层bytes、一次JSON解析和一个Result DTO，不缓存或记录UI document。
+
+### Registry, Errors, Cancellation And Shutdown
+
+- 仅published active live handle可进入公开观测。合法未知/已淘汰handle为`session_not_found/not_sent`且资源字段null；closed tombstone为`session_closed/not_sent`并返回handle/closed；uncertain为`session_uncertain/not_sent`并返回handle/uncertain；closing或lifecycle busy为`session_busy/not_sent`并返回匹配handle及当时state。provisional仍不可寻址。
+- 不增加observation in-flight Registry、队列或第二Session gate。active调用只复制Session引用；同一Session与observe/quit/未来动作重叠由Automation唯一非阻塞gate立即`session_busy/not_sent`，不排队。status继续读取本地公开snapshot；每个worker成功或失败后用公开`session_info()`同步现有entry的state/busy，锁内不做Element构造、JSON解析或I/O。
+- 每个handler从进入起固定一个absolute deadline和一个Event，只调用一次既有`WorkerRegistry.run_budget`；worker内Element纯值构造后向唯一公开观测调用传同一remaining `OperationControl`。定位、Settings/source请求、解析、下层64KiB计量、恢复及收尾共享总预算；不使用control=None、不重置预算、不abandon worker。pre-start timeout/cancel、in-flight cancel、late success/known lower error、reason-neutral stall、EOF/broken pipe和no-replay沿现有bridge合同。
+- 公开`ElementValidationError`映射其原code，`operation_id=null`、`request_state=not_sent`、匹配handle/active且零设备请求。AutomationError逐字段保留code/operation_id/request_state/completed_steps和cleanup count/status；返回前必须用公开`session_info()`刷新匹配handle/state。所有合法live-handle观测错误均回传资源pair；response_unknown或Settings恢复终态不明导致下层uncertain时，entry原子进入既有quarantine，后续UI/close/open/runtime.check零下层拒绝且只允许status。不得因`AutomationError.session is None`丢失已持有Session事实。
+- 观测错误不删除entry、不退出Runtime、不插tombstone、不自动quit/restore/probe/rebuild/retry。document不变量或外层防御上限违反为未知程序缺陷，不制造已知业务code。shutdown先等待所有观测worker真实结束；active且终态已知继续沿既有一次quit/Runtime exit clean矩阵，uncertain或资源未决则零补设备命令并degraded exit4。Host强杀和external Appium/ADB ownership不变。
+
+### Privacy, Verification And Done Gate
+
+- UI tree、text/desc、raw structure、locator value/package、handle、device/app标识及异常输入可能敏感；只允许返回发起且获准的当前MCP client。stdout仍只含MCP framing；stderr、telemetry、Registry、manifest、默认测试/审查证据不得包含UI document、locator原文、handle/device/app/path、Appium/Automation ID、异常message/repr/traceback。项目日志只允许既有tool/code/call_id/operation_id/phase/duration/request_state/state/count allowlist；不做内容redaction后落盘，因为这仍会复制内容。
+- 永久测试须覆盖七工具顺序、完整limitations/instructions、annotation、三分支input/output schema与digest、对象/JSON-object字符串request、mode无关字段拒绝、timeout/strict数字、Locator深度16/17及唯一拼写映射、attributes enum/顺序/重复/1..18、structure显式scope、所有schema拒绝零Registry/下层请求。
+- 使用锁定真实Appium/Selenium/defusedxml client到受控HTTP服务覆盖root/scoped tree、attributes、structure两scope、每mode恰好一次公开调用、ElementValidationError、全部known/unknown/cleanup资源矩阵、65,536 document成功与下层超限、full→visible、ValueState/target_path/operation_id保持、同Session并发busy、close竞态、总预算/cancel/late/EOF/broken pipe/shutdown、一次下层/no-replay/no-cache和隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio三mode、schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
+- Feature Done另需用户单独授权固定真实组合、明确设备、无敏感应用/页面、允许读取的locator/属性/结构范围及证据保留方式。正式安装wheel＋官方Client须完成`open→status active→tree→attributes→structure target/declared_parent的获准组合→status active→close→status closed→Runtime释放→stdio自然exit0`，retries=0且无动作、unknown、uncertain、non-closed entry或敏感证据复制。固定页面/locator不成立即`device-validation-blocked`，不得换场景/locator拼接通过；当前`/spec-driven`不授权该真实UI链。
+- 产品churn目标700..1100，测试/文档另计；预计明显超过则先重拆，不删错误、资源、隐私或验证合同。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判MCP-03限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进MCP-04，也不声明Copilot/Codex等具体Host兼容。

@@ -28,7 +28,7 @@
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
 - 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8、selenium==4.51.0 与 defusedxml==0.7.1。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及其传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi；defusedxml 仅用于 Automation AIF-03 page-source XML 安全解析。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
-- Runtime、Contracts、Configuration 及 Automation 的当前公开契约由对应模块 SPEC 维护；Integrations 仍仅建立职责和文档所有权。契约确认不等于功能或设备链路已验收。
+- Runtime、Contracts、Configuration及Automation的当前公开契约由对应模块SPEC维护；Integrations当前公开契约已包含Host中立的本地stdio MCP readiness/discovery、显式Session lifecycle与下述Native observation合同。契约确认或feature限定Done均不等于模块、平台或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
 ## Python Architecture
@@ -262,3 +262,15 @@
 
 详细 Interface、schema、错误、隐私和验证义务见 Integrations 模块 SPEC 的 INT-MCP-02 合同。
 
+
+## INT-MCP-03 Native Observation Delta
+
+本节已由用户在本次`/spec-driven` SPEC gate明确确认并clean cutover；确认只授权本feature非设备实现、受控验证与独立审查，不授权读取真实设备、应用或页面内容。详细Interface、schema、错误、隐私和验证义务由Integrations模块SPEC的INT-MCP-03条款维护。
+
+- 当前组合继续固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；当前模块为Integrations，FeatureID为`INT-MCP-03-NATIVE-OBSERVATION`。精确前序为限定Done且无开放finding的INT-MCP-02及Automation AIF-03/AIF-ED公开Interface；Automation仍`device-validation-blocked-known-clean`、module non-Done、无自动重试，MCP-03不得提升其状态。
+- 本地stdio MCP固定追加单一`appium.ui.observe`工具，提供`tree|attributes|structure`三种只读Native观测。请求必须显式携带当前进程opaque Session handle；tree用required nullable Locator明确root或Element范围，attributes要求明确Locator和1..18项有序唯一属性，structure要求明确Locator和`target|declared_parent`范围。Locator v1只允许`id|accessibility_id|xpath`递归链，Adapter只转换accessibility拼写，不补package、不换定位、不选首个匹配。
+- 只调用公开`Session.observe_tree`、`Element.inspect`和`Element.inspect_structure`，并复用现有Session gate、Registry、一次handler总deadline/Event及受管worker。不得使用Automation私有入口、raw WebDriver/HTTP/ADB、任意UiAutomator、节点/Element缓存、fallback、自动滚动/back/focus、观察建议、后观测、retry/replay或第二状态机。
+- 成功结果以typed object无损携带Automation schema=1规范观测document，保留operation_id、scope、coverage、complete、upstream completeness、ValueState、空间事实、target_path与原始结构语义；structuredContent和TextContent来自同一Integrations DTO。Automation document继续最大65,536 UTF-8 bytes且不截断、不分页；完整MCP ObservationResult另受69,632-byte防御上限及现有4MiB全局ceiling。
+- 观测错误保留下层code/request_state/completed_steps/cleanup及匹配handle最终state。response unknown或Settings恢复不明导致Session uncertain时，沿既有quarantine只允许status，不补发、探活、恢复、quit或重建；同Session重叠由Automation非阻塞gate立即busy。UI、locator、handle、设备/应用标识和异常原文不得进入stderr、telemetry、Registry或默认证据。
+- 无新增、替换或升级依赖。继续复用已批准`mcp==2.3.0`、`pydantic==2.14.1`、Python3.11标准库JSON及Automation公开结果；Configuration、Runtime、Contracts、Automation no-delta。MCP-03不交付任何UI/App动作、HTTP、CLI/SDK产品或具体Host兼容。
+- Feature Done需要永久合同、完整质量/发行、安装wheel官方MCP Client受控stdio链、全新独立full差异审查，以及用户另行授权的明确设备/无敏感页面真实观测链全部通过。当前`/spec-driven`不授权真实UI读取；缺少授权或固定页面/Locator不成立时只能`device-validation-blocked`/non-Done，不换场景拼接通过。即使feature通过，Integrations、Automation、当前平台与项目整体仍non-Done，且不自动推进MCP-04。
