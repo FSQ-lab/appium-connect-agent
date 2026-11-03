@@ -16,3 +16,12 @@ task:
     security-reviewer: github-copilot/gpt-5.6-sol:medium
     sonic: github-copilot/gpt-5.6-sol:medium
     task: github-copilot/gpt-5.6-sol:medium
+
+memory:
+  backend: local
+
+memories:
+  maxRolloutsPerStartup: 8
+  stage1Concurrency: 2
+  phase1InputTokenLimit: 3000
+  summaryInjectionTokenLimit: 2500
