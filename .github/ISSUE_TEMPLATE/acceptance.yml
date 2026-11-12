@@ -1,0 +1,91 @@
+name: Acceptance
+description: 登记真实设备、服务、Agent 或模块级验收。
+title: "[Acceptance] "
+labels: ["type:acceptance", "status:backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        验收 Issue 不自动授权设备、账号、外部服务或敏感数据读取。请只保留脱敏证据，不粘贴设备标识、Session handle、凭据或私有页面内容。
+  - type: textarea
+    id: target
+    attributes:
+      label: 验收目标与非目标
+      description: 说明要证明的行为和明确排除的范围。
+    validations:
+      required: true
+  - type: input
+    id: combination
+    attributes:
+      label: 固定环境组合
+      description: 填写宿主、目标平台、Appium/driver、项目制品与必要服务版本。
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 前置依赖与关联 Issue
+      description: 列出被验收能力、前序 Done 证据和当前 blocker；没有则写“无”。
+    validations:
+      required: true
+  - type: dropdown
+    id: spec-impact
+    attributes:
+      label: SPEC 判定
+      description: 验收通常为 no-delta；若发现契约需要变化，必须停止并返回 SPEC gate。
+      options:
+        - 待判定
+        - delta：验收前需要修改根或模块 SPEC
+        - no-delta：验证现行 SPEC 契约
+    validations:
+      required: true
+  - type: textarea
+    id: spec-basis
+    attributes:
+      label: SPEC 或契约依据
+      description: 引用待验证的根/模块 SPEC 条款；delta 时说明待确认内容和停止边界。
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 固定场景与步骤
+      description: 给出不可自动替换的页面、Locator、调用顺序或外部交互；不适用时说明。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 通过标准
+      description: 列出成功、失败、资源释放、重试次数和最终状态等可判定标准。
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据与隐私边界
+      description: 说明允许保留的布尔、计数、哈希或日志，以及禁止保留的数据和证据位置。
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: 外部操作授权
+      description: 明确设备、应用、账号、服务、网络、安装、清理及恢复权限；未授权项保持 blocked。
+    validations:
+      required: true
+  - type: textarea
+    id: stop-conditions
+    attributes:
+      label: 停止条件
+      description: 包含 contract delta、unknown/uncertain、固定场景不成立、资源终态不明、敏感内容暴露或权限不足等情况。
+    validations:
+      required: true
+  - type: checkboxes
+    id: ready-check
+    attributes:
+      label: Ready 自检
+      options:
+        - label: 我理解创建验收 Issue 不授权外部操作；只有固定范围、SPEC 判定、通过标准、证据边界和权限齐备并标记 status:ready 后才能执行。
+          required: true

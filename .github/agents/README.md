@@ -8,7 +8,7 @@
 
 | Agent | 职责 | 工具边界 |
 | --- | --- | --- |
-| [tech-lead](./tech-lead.agent.md) | SDD 总协调：SPEC 门槛、任务分派、集成与最终验收 | 读取、编辑、执行、研究及调用团队角色；写入受工作流授权约束 |
+| [tech-lead](./tech-lead.agent.md) | Issue 驱动交付协调：Ready、SPEC 门槛、任务分派、集成与最终验收 | 读取、编辑、执行、研究及调用团队角色；写入受 Issue 授权范围约束 |
 | [product-lead](./product-lead.agent.md) | 产品负责人：需求、范围和验收标准 | 只读研究，不再调度实现团队 |
 | [architect](./architect.agent.md) | 架构师：方案比较、模块边界、接口契约 | 只读研究 |
 | [appium-expert](./appium-expert.agent.md) | Appium 专家：内部架构、命令链路、生态项目与用法、能力拆解和复用评估 | 只读研究；仅执行任务证据读取、搜索和校验命令，不写入、实验、构建、安装、启动服务或操作设备 |
@@ -21,7 +21,7 @@
 ## 使用方式
 
 1. 在支持项目级自定义 Agent 的 VS Code Copilot 环境中打开本项目。
-2. 在聊天的 Agent 选择器中选择 `tech-lead` 作为 SDD 日常入口，也可以手动选择其他角色。
+2. 在聊天的 Agent 选择器中选择 `tech-lead` 作为日常入口，也可以手动选择其他角色。
 3. 先明确一个目标，例如：“先梳理目标用户和首个使用场景，不开始编码；需要关键决定时让我确认。”
 4. Tech Lead 只在有必要时委派专家，汇总结果后交由用户确认关键决策；产品负责人负责需求而非实现调度。
 
@@ -29,19 +29,21 @@
 
 ## 协作流程
 
-用户目标 → 产品负责人澄清与必要研究 → Tech Lead 的 SPEC 门槛 → 用户确认 → 按依赖分配实现 → 验证 → 独立差异审查 → 必要的修复复审 → Tech Lead 汇总验收。
+GitHub Issue → 需求澄清与必要研究 → Ready 与 SPEC 门槛 → 按依赖分配实现 → 验证 → 独立差异审查 → 必要的修复复审 → Tech Lead 汇总验收并关闭 Issue。
 
 工作流依据见根 [AGENTS.md](../../AGENTS.md)，当前产品事实见根 [SPEC.md](../../SPEC.md)。
 
-### SDD 入口
+### Issue 驱动入口
 
-- `/requirements-to-design <需求>` 或 `$requirements-to-design <需求>`：可选，生成经审查和用户确认的设计，不改 SPEC 或实现。
-- `/spec-driven <已确认设计文档路径或直接变更请求>` 或 `$spec-driven <已确认设计文档路径或直接变更请求>`：项目开发唯一写入工作流；先判定并确认 SPEC delta，或提供 no-delta 证据，再实现、验证和独立审查。
-- `/spec-implementation-audit <任务包与差异清单> [full|repair-only]` 或 `$spec-implementation-audit <任务包与差异清单> [full|repair-only]`：只读审查，不自动授权修复。
+- 所有仓库写入关联 open Issue；新产品 feature 没有 Issue 不启动。
+- `status:backlog` 只表示登记；目标、依赖、验收、SPEC 判定、权限和停止条件齐备后才能标记 `status:ready`。
+- 用户或维护者要求处理 Ready Issue，或将其分配给当前执行者，即授权在 Issue 范围内实施；开始后标记 `status:in-progress`。不再要求任何工作流 skill 命令。
+- 设计可写在 Issue 或链接设计文档；需要 SPEC delta 时在 Issue 固定变更并确认后先更新 SPEC。真实设备、依赖、提交、推送、合并和发布等权限仍须单独明确。
+- 阻塞 Issue 保持 open 并标记 `status:blocked`。PR 完整交付时使用 `Closes #N`；只提供部分证据或前置变更时使用 `Refs #N`。只有验收、验证和适用审查通过后才能关闭。
 
-同一技能的 `/` 与 Codex `$` 显式调用形式授权等价，无需同时发送；须由用户发起工作流并明确任务范围，引用命令、仅提及技能名称、模型自动加载技能或一般同意不构成授权。对应技能位于 [skills](../skills)，Codex 适配见 [.codex/README.md](../../.codex/README.md)。若宿主尚未发现新技能，需重开聊天或检查技能加载状态。首次审查覆盖完整差异，后续仅复核问题与修复增量，最多自动修复两轮。
+独立只读审查仍使用未参与实现或测试编写的新上下文；首次覆盖完整差异，后续仅复核问题与修复增量，最多自动修复两轮。审查由 Tech Lead 在已授权 Issue 内委派，不要求用户输入技能命令。
 
-这套配置从 FSQ 的工作流适配，保留其 SPEC 所有权、授权、任务包和完整 Git 差异审查门槛；保留本项目专业角色，新增 Tech Lead。不复制 FSQ 业务模块、版权声明或尚未选定的 Python/前端规则。跨角色共同规则集中在根 AGENTS，避免多份常驻指令相互漂移。
+这套配置保留 SPEC 所有权、任务包和完整 Git 差异审查门槛；GitHub Issue 是项目状态与实施授权记录，历史设计和任务材料只提供细节及证据。跨角色共同规则集中在根 AGENTS，避免多份常驻指令相互漂移。
 
 - MVP 范围、目标平台、接入形式、技术栈、公共接口和有实际影响的操作先由用户确认。
 - 专家不创建下级团队；简单任务不要求所有角色参与。

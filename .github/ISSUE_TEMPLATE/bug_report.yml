@@ -1,7 +1,7 @@
 name: Bug Report
 description: 报告问题，提供复现信息和发生环境。
 title: "[Bug] "
-labels: [bug]
+labels: [bug, "status:backlog"]
 body:
   - type: markdown
     attributes:

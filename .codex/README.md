@@ -1,12 +1,12 @@
 # Codex 项目团队
 
-本配置让 Codex 复用现有 Copilot 七角色和 SDD 流程。`.github/agents/` 与 `.github/skills/` 的正文仍是角色职责和流程的唯一来源；`.codex/agents/` 与 `.agents/skills/` 仅负责 Codex 发现和调用适配，不复制源职责。本轮仅窄化 architect/appium-expert 源角色的命令禁令，允许读取、搜索与校验任务证据的只读文件命令，继续禁止写入、实验、构建、安装、服务和设备操作。项目事实以根 [SPEC.md](../SPEC.md) 为准，开发授权以根 [AGENTS.md](../AGENTS.md) 为准。
+本配置让 Codex 复用现有 Copilot 七角色和 GitHub Issue 驱动流程。`.github/agents/` 是角色职责的唯一来源；`.codex/agents/` 只负责 Codex 发现和调用适配，不复制源职责。项目事实以根 [SPEC.md](../SPEC.md) 为准，工作授权与状态以根 [AGENTS.md](../AGENTS.md) 和关联 GitHub Issue 为准。
 
 ## 角色与调度
 
 | 角色 | 职责来源 | Codex 中的使用方式 |
 | --- | --- | --- |
-| tech-lead | [原角色](../.github/agents/tech-lead.agent.md) | 主会话承担 SDD 协调、SPEC gate、任务包、集成和最终验收 |
+| tech-lead | [原角色](../.github/agents/tech-lead.agent.md) | 主会话承担 Issue Ready、SPEC gate、任务包、集成和最终验收 |
 | product-lead | [原角色](../.github/agents/product-lead.agent.md) | 直接委派的叶角色，需求、范围和验收建议，只读研究 |
 | architect | [原角色](../.github/agents/architect.agent.md) | 直接委派的叶角色，项目技术方案与契约，只读研究 |
 | appium-expert | [原角色](../.github/agents/appium-expert.agent.md) | 直接委派的叶角色，Appium 架构、生态与复用，只读研究 |
@@ -16,23 +16,16 @@
 
 主会话通过项目 [config.toml](./config.toml) 的提示读取原 tech-lead 正文，直接分配其余六个叶角色。七份角色配置位于 [agents](./agents)，不将 tech-lead 作为普通子角色派发，不嵌套委派。简单任务只调用必要角色；并行必须满足依赖和文件所有权要求。`max_concurrent_threads_per_session = 3` 限制最多三个并发子角色，加上主会话最多四个会话，不表示每个任务都会启动三个角色。
 
-所有角色执行前须完整读取对应 `.github/agents/<角色名>.agent.md`、根 AGENTS 和相关 SPEC。适配正文中的仓库路径从仓库根解析；原角色、原技能内部的相对链接按原文件的位置解析。
+所有角色执行前须完整读取对应 `.github/agents/<角色名>.agent.md`、根 AGENTS、关联 Issue 和相关 SPEC。适配正文中的仓库路径从仓库根解析；原角色内部的相对链接按原文件的位置解析。
 
 ## 日常入口
 
-在本项目的新 Codex 聊天中使用原生 `$` 技能入口，并提供实际任务：
+1. 在 GitHub 创建或选择 Issue；Issue 记录目标、非目标、依赖、SPEC 判定、验收、验证、权限和停止条件。
+2. `status:backlog` 只登记工作。条件齐备后标记 `status:ready`，由用户或维护者要求当前会话处理，或分配给当前执行者。
+3. 在聊天中直接引用 Issue，例如“处理 #16”；不再使用工作流 skill 命令作为项目入口。
+4. 开始实施后标记 `status:in-progress`；阻塞时标记 `status:blocked` 并保持 open；满足 Done gate 后由 PR `Closes #N` 或带证据的关闭评论完成。
 
-```text
-$requirements-to-design <需求>
-$spec-driven <已确认设计文档路径或直接变更请求>
-$spec-implementation-audit <任务包与差异清单> [full|repair-only]
-```
-
-上述入口与 `/requirements-to-design`、`/spec-driven`、`/spec-implementation-audit` 的对应显式调用授权等价，无需补发 `/` 命令。`$requirements-to-design` 仅授权需求澄清和设计文档写入，不授权修改 SPEC 或实现。`$spec-driven` 是项目开发唯一写入工作流：先核对 SPEC delta/no-delta、基线和任务包，再实现、验证及独立审查。`$spec-implementation-audit` 只读审查，不授权修复；主会话 tech-lead 可在已授权的 SDD 任务内明确委派审查，不要求用户为每次复审重复输入命令。
-
-用户通过原生技能入口显式选择对应技能并明确任务范围，即按上述边界授权；三份 `agents/openai.yaml` 保留显式选择策略，设置 `allow_implicit_invocation: false`。引用或举例命令、仅提及技能或角色、模型自动加载技能、自然语言请求或一般同意不构成授权；任务不明确时先澄清。使用宿主实际支持的入口；兼容 `/...` 不表示已向 Codex 注册斜杠命令，文件变更也不代表既有会话已重新加载技能。
-
-技能适配：[spec-driven](../.agents/skills/spec-driven/SKILL.md)、[requirements-to-design](../.agents/skills/requirements-to-design/SKILL.md)、[spec-implementation-audit](../.agents/skills/spec-implementation-audit/SKILL.md)。执行前必须完整读取适配所指向的 `.github/skills/` 正文；不以适配摘要代替完整流程。
+SPEC、依赖、设备、提交、推送、合并和发布门槛仍按根 AGENTS 执行。独立只读审查可由 tech-lead 在已授权 Issue 内委派 [spec-implementation-audit](../.agents/skills/spec-implementation-audit/SKILL.md)；它不是项目入口，也不授权修复。
 
 ## 发现、信任与回退
 

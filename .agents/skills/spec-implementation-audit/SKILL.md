@@ -1,6 +1,6 @@
 ---
 name: spec-implementation-audit
-description: "在用户显式调用 /spec-implementation-audit 或 $spec-implementation-audit，或已授权 SDD 内主会话 tech-lead 明确委派时，执行 full 或 repair-only 独立只读审查。"
+description: "由 tech-lead 在已授权 GitHub Issue 内委派，执行 full 或 repair-only 独立只读审查。"
 ---
 
 # Codex 适配
@@ -9,7 +9,7 @@ description: "在用户显式调用 /spec-implementation-audit 或 $spec-impleme
 
 下面的仓库路径均从仓库根解析；源正文的内部相对链接仍按源文件所在目录解析，不能相对于本适配目录解析。
 
-允许用户显式调用 `$spec-implementation-audit <任务包与差异清单> [full|repair-only]` 或 `/spec-implementation-audit <任务包与差异清单> [full|repair-only]`，二者授权等价，无需补发另一种形式；也允许主会话 tech-lead 在已有授权的 SDD 任务内明确委派，后者不要求用户为每次复审再次输入命令。引用或举例命令、仅提及技能名称或模型自动加载技能不构成授权；任务不明确时先澄清。
+本适配不是项目入口。主会话 tech-lead 仅在关联 Issue 已授权的任务内明确委派；审查不授权修复。任务不明确、Issue 未 Ready 或证据不完整时报告 `audit-blocked`。
 本入口不授权修复。只读核对根/相关模块 SPEC、完整任务包、完整 Git 差异和未跟踪文件补充证据及其身份；首次 full，后续 repair-only。
 审查必须在未参与本批实现或测试编写的新上下文进行；不得编辑、修复或再委派，证据不完整或独立性不足时报告 audit-blocked。最多两轮自动修复由主会话按原流程协调，审查者不自报 Done。
 

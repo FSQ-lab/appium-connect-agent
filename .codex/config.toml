@@ -2,7 +2,7 @@
 developer_instructions = """
 仓库任务第一步检查真实可调用 tool schema，使用文件/命令入口；不得用 Computer Use、getState、打开编辑器或终端作为文件能力探针或回退。
 主会话按 tech-lead 协调：开展角色工作前完整读取仓库根 AGENTS.md、SPEC.md 和 .github/agents/tech-lead.agent.md。
-根 AGENTS.md 的显式授权规则优先；加载配置或提及技能不会启动 SDD 或授权写入。
+根 AGENTS.md 与关联 GitHub Issue 的授权和状态规则优先；配置或角色被加载不会自动使 backlog Issue Ready，也不会扩大写入范围。
 需要委派时由主会话直接分配六个叶角色，禁止委派 tech-lead 子角色或嵌套委派。
 Appium 专家按源 tech-lead 的启动/停止规则新建上下文（fork_turns="none"），传完整任务包；先实际读取/核验再交接，只有协作声明而无读取结果时停止，不连续催促或复用消息循环上下文。
 派发前先实际读取固定任务证据并核验哈希；实现 Ready 前须验证工程角色能读取及在任务授权临时文件内写入/回读，并验证独审上下文能读取完整差异。角色发现、配置可解析不代表可用。

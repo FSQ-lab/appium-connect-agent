@@ -1,0 +1,92 @@
+name: Feature
+description: 提议一个可独立验收的产品或工程能力。
+title: "[Feature] "
+labels: ["type:feature", "status:backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issue 是本项目的工作与状态入口。创建 Issue 不代表 Ready；请勿粘贴凭据、设备标识、私有页面内容或未脱敏日志。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题与目标
+      description: 说明当前问题、目标用户或调用方，以及完成后的可观察结果。
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: 非目标
+      description: 明确本 Issue 不交付的行为、平台或兼容范围。
+    validations:
+      required: true
+  - type: input
+    id: scope
+    attributes:
+      label: 模块与平台范围
+      description: 填写模块、宿主、自动化目标和必要 driver；不适用时说明原因。
+      placeholder: "例如：Integrations；macOS host / Android Native / UiAutomator2"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与关联 Issue
+      description: 列出前序 Issue、已验收 Interface、外部服务或环境依赖；没有则写“无”。
+    validations:
+      required: true
+  - type: dropdown
+    id: spec-impact
+    attributes:
+      label: SPEC 判定
+      description: 不确定时保持“待判定”，并添加 needs:spec-confirmation；流程、文档和工程基础也必须判定为流程类 no-delta。
+      options:
+        - 待判定
+        - delta：需要修改根或模块 SPEC
+        - no-delta：实现既有契约或仅变更流程、文档、工程基础
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: 设计与关键决定
+      description: 记录最小方案、Interface、错误和生命周期；复杂设计可链接仓库文档。未决定时列出待决项。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: 使用可观察、可判定的清单；不要只写“测试通过”。
+      placeholder: "- [ ] ..."
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: 聚焦验证入口
+      description: 列出可实际运行的最小命令、脚本或真实链路，以及不可用环境的处理。
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: 权限与数据边界
+      description: 说明依赖安装、网络、设备、服务、敏感数据、提交、推送、合并或发布权限；不适用项明确写出。
+    validations:
+      required: true
+  - type: textarea
+    id: stop-conditions
+    attributes:
+      label: 停止条件
+      description: 列出契约冲突、依赖缺失、unknown/uncertain、环境或权限不足等必须停止的情况。
+    validations:
+      required: true
+  - type: checkboxes
+    id: ready-check
+    attributes:
+      label: Ready 自检
+      options:
+        - label: 我理解 Issue 创建不等于 Ready；只有范围、依赖、SPEC、验收、验证、权限和停止条件齐备并标记 status:ready 后才能实施。
+          required: true

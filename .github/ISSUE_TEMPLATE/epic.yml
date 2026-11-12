@@ -1,0 +1,46 @@
+name: Epic
+description: 组织多个可独立验收 Issue 的交付目标。
+title: "[Epic] "
+labels: ["type:epic", "status:backlog"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Epic 只组织目标、顺序和整体 Done gate；不能替代子 Issue 的范围、授权、实现和验收。
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 用户结果
+      description: 说明 Epic 完成后用户或调用方获得的整体可观察能力。
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: 非目标
+      description: 明确本 Epic 不覆盖的平台、模块和后续能力。
+    validations:
+      required: true
+  - type: textarea
+    id: child-issues
+    attributes:
+      label: 子 Issue 与依赖顺序
+      description: 列出 feature、acceptance、bug 或决策 Issue；未创建项明确标记。
+      placeholder: "- [ ] #N — 依赖 ..."
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: 关键决定与开放问题
+      description: 记录跨 Issue 的平台、Interface、依赖和权限决定；细节留在对应子 Issue。
+    validations:
+      required: true
+  - type: textarea
+    id: done-gate
+    attributes:
+      label: Epic Done gate
+      description: 列出子 Issue、整体验证、真实链路、兼容性及发布边界的关闭条件。
+      placeholder: "- [ ] ..."
+    validations:
+      required: true

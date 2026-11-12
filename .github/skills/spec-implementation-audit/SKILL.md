@@ -1,23 +1,23 @@
 ---
 name: spec-implementation-audit
-description: "Use for an independent audit explicitly invoked via /spec-implementation-audit or $spec-implementation-audit, or delegated within authorized SDD, of root/module SPEC against complete implementation diffs; supports full and repair-only modes. 独立规格实现审查。"
-argument-hint: "<task-package-and-diff-manifest> [full|repair-only]"
-user-invocable: true
+description: "Use for an independent read-only audit delegated by Tech Lead within an authorized GitHub Issue; compares root/module SPEC and Issue acceptance against complete implementation diffs. 独立规格实现审查。"
+argument-hint: "<issue-and-task-package-and-diff-manifest> [full|repair-only]"
+user-invocable: false
 disable-model-invocation: true
 ---
 
 # SPEC Implementation Audit
 
-遵循根 [AGENTS.md](../../../AGENTS.md)。只读审查，不修复、不编辑测试或实现、不执行未经授权的设备操作。可由用户显式调用 `/spec-implementation-audit <任务包与差异清单> [full|repair-only]` 或 `$spec-implementation-audit <任务包与差异清单> [full|repair-only]`，二者授权等价；也可由 Tech Lead 在已授权的 SDD 任务内委派。引用命令、仅提及技能名称或模型自动加载技能不构成授权；任务不明确时先澄清。
+遵循根 [AGENTS.md](../../../AGENTS.md)。本技能不是项目入口，只能由 Tech Lead 在已授权的 GitHub Issue 内委派；只读审查，不修复、不编辑测试或实现、不执行未经授权的设备操作。Issue、任务包或证据不明确时报告 `audit-blocked`。
 
 ## Required inputs
 
-- TaskID、授权、验收标准、根与相关模块 SPEC，以及其确认状态和固定版本。
+- 关联 GitHub Issue、TaskID、授权、验收标准、根与相关模块 SPEC，以及其确认状态和固定版本。
 - 根 AGENTS 要求的库复用/选型或例外自研记录、可核验的用户确认与版本/用途范围、版本化官方文档/API、适配及实际验证证据；已批准范围内复用引用原依据，不适用须说明原因。
 - 仓库/分支/HEAD 或 `unborn` 基线、已有用户改动、允许和禁止修改的文件。
 - 完整 Git 差异产物及未跟踪文件补充产物，每份包含绝对路径、SHA-256、字节数、`diff --git` 数量和路径清单。
 - 实际验证命令、输出、环境及未运行项。
-- 当前平台组合/模块、FeatureID、独立设计审查与用户确认依据、依赖验收证据、规模预算及产品/测试/文档分项统计；不适用项说明原因。多个 feature 未提交时，提供当前增量及前序固定快照、哈希与审查身份，不能只给总差异摘要。
+- 当前平台组合/模块、FeatureID、Issue 中的设计与确认依据、依赖验收证据、规模预算及产品/测试/文档分项统计；不适用项说明原因。多个 feature 未提交时，提供当前增量及前序固定快照、哈希与审查身份，不能只给总差异摘要。
 - 审查模式；`repair-only` 还需要上轮问题清单、上轮审查身份与修复增量。
 
 ## Audit
