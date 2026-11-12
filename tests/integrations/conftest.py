@@ -22,6 +22,7 @@ TOOL_NAMES = (
     "appium.ui.observe",
     "appium.element.click",
     "appium.element.text",
+    "appium.device.back",
 )
 AUTOMATION_STATUS = {
     "feature_qualification": "aif_01_to_10_individually_done",

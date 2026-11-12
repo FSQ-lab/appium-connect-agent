@@ -22,6 +22,8 @@ from ._application import McpApplication
 from ._models import (
     CapabilitiesRequest,
     CapabilityResult,
+    DeviceBackRequest,
+    DeviceBackResult,
     DeviceListRequest,
     DeviceListResult,
     ElementClickRequest,
@@ -140,9 +142,10 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
         version="0.1.0",
         instructions=(
             "Local readiness, explicit Session lifecycle, Native observation, one "
-            "caller-requested Element click, and caller-requested Element text send, "
-            "clear, or replace; no automatic focus, submit, observation, verification, "
-            "action chain, retry, replay, rollback, attach, recovery, or HTTP tools."
+            "caller-requested Element click, caller-requested Element text send, clear, "
+            "or replace, and one caller-requested Device back; no automatic focus, "
+            "submit, observation, verification, navigation, action chain, retry, replay, "
+            "rollback, attach, recovery, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,
@@ -323,6 +326,24 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
     ) -> ElementTextResult:
         result = await ctx.request_context.lifespan_context.text(request)
         return cast(ElementTextResult, _success(result))
+
+    @server.tool(
+        name="appium.device.back",
+        description="Send one caller-requested back command to the bound Device.",
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+        structured_output=True,
+    )
+    async def device_back(
+        request: DeviceBackRequest,
+        ctx: Context[McpApplication],
+    ) -> DeviceBackResult:
+        result = await ctx.request_context.lifespan_context.back(request)
+        return cast(DeviceBackResult, _success(result))
 
     return server
 

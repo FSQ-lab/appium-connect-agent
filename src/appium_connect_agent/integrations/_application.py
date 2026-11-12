@@ -51,6 +51,9 @@ from ._models import (
     AutomationModuleStatus,
     CapabilityData,
     CapabilityResult,
+    DeviceBackData,
+    DeviceBackRequest,
+    DeviceBackResult,
     DeviceData,
     DeviceListData,
     DeviceListResult,
@@ -212,11 +215,13 @@ class McpApplication:
                     "appium.ui.observe",
                     "appium.element.click",
                     "appium.element.text",
+                    "appium.device.back",
                 ),
                 limitations=(
-                    "native_observation_single_click_and_element_text",
+                    "native_observation_single_click_element_text_and_device_back",
                     "no_automatic_post_action_observation",
                     "no_automatic_focus_submit_or_verify",
+                    "no_automatic_navigation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
                     "single_session_capacity",
@@ -592,6 +597,46 @@ class McpApplication:
         return await self._run_ui_worker(
             budget,
             text_once,
+            call_id,
+            entry,
+        )
+
+    async def back(self, request: DeviceBackRequest) -> DeviceBackResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def back_once(budget: OperationBudget) -> DeviceBackResult:
+            try:
+                session.device.back(control=budget.control())
+                info = session.session_info()
+                if info.state != "active" or info.busy:
+                    raise RuntimeError(
+                        "successful back did not leave Session active and idle"
+                    )
+                return DeviceBackResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceBackData(
+                        action="back",
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(
+            budget,
+            back_once,
             call_id,
             entry,
         )

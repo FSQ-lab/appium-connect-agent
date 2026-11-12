@@ -22,6 +22,7 @@ from appium_connect_agent.integrations import _application
 from appium_connect_agent.integrations._application import McpApplication
 from appium_connect_agent.integrations._models import (
     CapabilityResult,
+    DeviceBackResult,
     DeviceListResult,
     ElementClickResult,
     ElementTextResult,
@@ -45,9 +46,9 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "ccd527f1098dd061691bef7e0a8142780c21b4fd565b75dc45123a8db333a024"
+    "1bc5434767493afcb365126dd0824adde33c2af1e828dec9d6e826181cc48864"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3267
+CAPABILITY_MAX_CANONICAL_BYTES = 3326
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
@@ -55,6 +56,7 @@ SESSION_STATUS_MAX_CANONICAL_BYTES = 5604
 SESSION_CLOSE_MAX_CANONICAL_BYTES = 5601
 ELEMENT_TEXT_MAX_CANONICAL_BYTES = 2493
 ELEMENT_CLICK_MAX_CANONICAL_BYTES = 2491
+DEVICE_BACK_MAX_CANONICAL_BYTES = 2490
 ERROR_MAX_CANONICAL_BYTES = 6835
 ERROR_WIRE_BYTES = {
     TOOL_NAMES[0]: 6852,
@@ -66,6 +68,7 @@ ERROR_WIRE_BYTES = {
     TOOL_NAMES[6]: 6885,
     TOOL_NAMES[7]: 6888,
     TOOL_NAMES[8]: 6887,
+    TOOL_NAMES[9]: 6886,
 }
 
 
@@ -229,6 +232,21 @@ def maximum_text_result() -> ElementTextResult:
             "warnings": tuple(maximum_codes("w", 16)),
             "automation_module_status": AUTOMATION_STATUS,
             "data": {"intent": "replace", "session_state": "active", "busy": False},
+        }
+    )
+
+
+def maximum_back_result() -> DeviceBackResult:
+    return DeviceBackResult.model_validate(
+        {
+            "schema_version": 1,
+            "call_id": "c_" + ("a" * 22),
+            "execution": "completed",
+            "operation_id": None,
+            "request_state": None,
+            "warnings": tuple(maximum_codes("w", 16)),
+            "automation_module_status": AUTOMATION_STATUS,
+            "data": {"action": "back", "session_state": "active", "busy": False},
         }
     )
 
@@ -411,9 +429,10 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                 },
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "native_observation_single_click_and_element_text",
+                    "native_observation_single_click_element_text_and_device_back",
                     "no_automatic_post_action_observation",
                     "no_automatic_focus_submit_or_verify",
+                    "no_automatic_navigation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
                     "single_session_capacity",
@@ -1257,11 +1276,16 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         async def text_tool() -> ElementTextResult:
             return cast(ElementTextResult, product_result(maximum_text_result()))
 
+        @server.tool(name=TOOL_NAMES[9], structured_output=True)
+        async def back_tool() -> DeviceBackResult:
+            return cast(DeviceBackResult, product_result(maximum_back_result()))
+
         async with Client(server) as client:
             return [
                 *[await client.call_tool(name, {}) for name in TOOL_NAMES[:6]],
                 await client.call_tool(TOOL_NAMES[7], {}),
                 await client.call_tool(TOOL_NAMES[8], {}),
+                await client.call_tool(TOOL_NAMES[9], {}),
             ]
 
     wire_results = anyio.run(send_models)
@@ -1273,6 +1297,7 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         *session_models,
         maximum_click_result(),
         maximum_text_result(),
+        maximum_back_result(),
     )
     expected_sizes: tuple[int | None, ...] = (
         CAPABILITY_MAX_CANONICAL_BYTES,
@@ -1283,6 +1308,7 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         SESSION_CLOSE_MAX_CANONICAL_BYTES,
         ELEMENT_CLICK_MAX_CANONICAL_BYTES,
         ELEMENT_TEXT_MAX_CANONICAL_BYTES,
+        DEVICE_BACK_MAX_CANONICAL_BYTES,
     )
     for model, result, expected_size in zip(
         models, wire_results, expected_sizes, strict=True

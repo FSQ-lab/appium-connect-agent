@@ -22,7 +22,7 @@
 
 ## Current Status
 
-INT-MCP-01、INT-MCP-02、INT-MCP-03与INT-MCP-04均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04已由Issue #5在本地提交`baae8d5`完成限定验收但尚未push。INT-MCP-05精确合同已确认并达到Issue Ready的SPEC条件，但尚未获得产品实现、设备操作、提交、push或发布授权。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
+INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04与INT-MCP-05分别由Issue #5和#11完成限定验收并进入`master`。INT-MCP-06精确合同已经确认；其授权与交付状态以Issue #2为准，SPEC本身不派生产品实现、设备操作、提交、push或发布授权。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -262,3 +262,37 @@ INT-MCP-01、INT-MCP-02、INT-MCP-03与INT-MCP-04均在各自feature限定范围
 - 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖每个intent恰好一次对应公开调用、精确send/clear/replace route与payload、合法None、非法返回/有效错误/response_unknown、部分副作用事实、0→出现、displayed/enabled变化、每层0/1/多、pre-action stale、raw-ID Settings恢复、总预算与条件预算、cancel/late、并发竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
 - Feature Done另需用户单独授权固定真实组合、明确无账号/网络/提交副作用且无敏感内容的普通文本字段、精确Locator、允许使用的非敏感marker及内存比较/证据保留方式。正式安装wheel＋官方Client须完成`open→status active→observe baseline→send→observe→clear→observe→replace baseline→observe→status active→close→status closed→Runtime释放→stdio自然exit0`；四次observe均为客户端显式独立调用，text工具不自动读回。每个文本调用一次、retry/replay/rollback为0，最终恢复初始基线且无unknown、uncertain、non-closed entry或文本复制到持久证据。页面、Locator、基线或权限不成立即`device-validation-blocked`，不得换目标/文本拼接通过。
 - 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得按模型、Adapter、测试或文档等技术层拆开同一三意图文本行为。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-05限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进back/gesture或具体Host兼容。
+
+## INT-MCP-06 Device Back
+
+本节是Issue #2经用户确认的精确合同；合同确认及Issue Ready不授权产品实现、依赖变更、设备操作、提交、push、发布或后续feature。
+
+### Scope, Dependencies And Reuse Gate
+
+- 当前组合继续固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；本feature只在现有本地stdio MCP追加一个绑定Session的显式Device back工具。不交付任意keycode、Home、hide keyboard、弹窗、手势、自动导航/观测/恢复、Host资格、HTTP、CLI/SDK或多Session能力。
+- 精确依赖为限定Done且无开放finding的INT-MCP-05，以及Automation AIF-07公开`Session.device`、`Device.back`、`Session.session_info`、公开错误与生命周期Interface。Automation继续`device-validation-blocked-known-clean`、module non-Done；INT-MCP-06不得提升其状态或补做AIF-07其他真实设备矩阵。
+- 无新增、替换或升级依赖。继续在已批准版本和用途内复用`mcp==2.3.0`高层MCPServer/stdio/schema/lifespan/cancellation、`pydantic==2.14.1` strict DTO、Python3.11标准库及既有bridge、Registry、预算和错误映射；Configuration、Runtime、Contracts、Automation及根SPEC no-delta。
+- 禁止Automation私有入口、raw WebDriver/Appium sessionId/elementId/HTTP/ADB/script、第二Session gate、第二错误状态机、fallback、队列、自动observe/status探活/quit/recovery、重试、重放或追加导航。若公开Automation Interface不足以无损实现，立即停止并返回Automation SPEC gate，不用Adapter私有访问、自研协议或其他Device动作补洞。
+
+### Tool Surface, Strict Request And Success Result
+
+- 固定工具顺序clean cutover为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe, appium.element.click, appium.element.text, appium.device.back]`。`appium.device.back`的annotations固定为`readOnly=false, destructive=true, idempotent=false, openWorld=true`；返回可能导航、关闭页面或丢弃未保存状态，该保守声明不授权Host自动调用或重放。
+- capabilities limitations将`native_observation_single_click_and_element_text`替换为`native_observation_single_click_element_text_and_device_back`，保留`no_automatic_post_action_observation`与`no_automatic_focus_submit_or_verify`并追加`no_automatic_navigation`；其余opaque handle、单Session、无attach/recovery、无HTTP/CLI/SDK、无clear-app、下层模块与Host未整体验收等限制保持。server instructions同步加入一次调用方明确请求的Device back，不暗示自动动作链、导航或后观测。
+- 工具仍只有一个必填顶层`request`；`DeviceBackRequest`为strict/frozen object且JSON Schema2020-12 `additionalProperties=false`。required字段为`schema_version=1`和现有`session_handle`；optional总预算`timeout_seconds=90.0`只接受actual finite int/float、排除bool且`0 < value <= 120.0`。不接受Locator、keycode、intent或其他参数。
+- `timeout_seconds`从handler进入起覆盖Registry准入、取得绑定Device、一次back、公开Session快照和本地收尾；不重置或延长deadline。成功只表示公开`Device.back`取得合法成功响应且随后公开Session snapshot为`active`/idle；不保证页面变化、到达特定页面、键盘收起或业务结果。
+- `DeviceBackResult`沿共同success envelope返回`operation_id=null`、`request_state=null`、`warnings=[]`及typed `data={action: back, session_state: active, busy: false}`；Automation成功Interface只返回`None`，Adapter不得伪造operation_id或读取私有状态。
+
+### Dispatch, Errors And Lifecycle
+
+- 仅published active live handle可进入back；unknown、closed、uncertain、closing、busy、provisional与tombstone沿INT-MCP-05既有Registry准入和`ToolErrorData`资源语义。取得Session引用后只读取其公开零I/O `device`属性，不建立Device Registry或跨调用引用。
+- 每个handler只创建一个absolute总deadline和Event，只调用一次既有`WorkerRegistry.run_budget`。worker只调用一次`session.device.back(control=budget.control())`；这使Automation只沿AIF-07固定公开`driver.back()`路径发送一次项目请求。MCP不得追加hide-keyboard、keycode、observe、status、back、quit或任何fallback。
+- worker在成功或失败后都用公开`session_info()`同步同一Registry entry。成功必须确认最终state active且busy=false；不满足已确认不变量属于未知程序缺陷。`AutomationError`逐字段保留真实code、operation_id、request_state、completed_steps、cleanup count/status和最终Session状态；response_unknown或下层uncertain继续进入既有quarantine，后续UI/click/text/back/close/open/runtime.check零下层拒绝且只允许status。
+- pre-start timeout/cancel、in-flight cancel、late success/known error、EOF/broken pipe、同Session observe/click/text/back/close竞态和shutdown继续复用既有bridge与Automation唯一非阻塞gate。不得因错误自动观测、探活、恢复、重建、换动作、retry或replay。shutdown等待真实worker结束；已知active沿既有一次quit/Runtime clean路径，uncertain或资源未决零补设备命令并degraded exit4。
+
+### Privacy, Verification And Done Gate
+
+- handle、device/app标识、返回前后页面、Automation ID及异常输入均按敏感数据处理，只允许用于发起且获准的当前MCP client调用。stdout只含MCP framing；stderr、telemetry、Registry、manifest及默认测试、审查和真机证据不得记录这些原文、UI内容、异常message/repr/traceback。日志只允许既有tool/action/code/call_id/operation_id/phase/duration/request_state/state/count allowlist。
+- 永久合同测试必须覆盖十工具顺序、完整limitations/instructions、back annotation、strict input/output schema与digest、对象/JSON-object字符串request、extra/strict数字/handle边界，以及所有schema拒绝零Registry/下层请求。
+- 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖一次公开`Device.back`调用、精确单次`POST /session/{sid}/back`与空body、合法None、有效错误/response_unknown、总预算与cancel/late、同Session并发竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
+- Feature Done另需用户单独授权固定真实组合、明确无敏感安全页面、back前后允许观测的范围、预期导航和恢复方式。正式安装wheel＋官方Client须完成`open→status active→显式observe baseline→back一次→显式observe after→status active→close→status closed→Runtime释放→stdio自然exit0`；两次observe均为客户端独立调用，back工具不自动观测。back调用一次、retry/replay/fallback为0且无unknown、uncertain、non-closed entry或敏感证据复制；观察结果不作为back工具成功条件。页面、安全性、恢复方式或权限不成立即`device-validation-blocked`，不得换页面拼接通过。
+- 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得按模型、Adapter、测试或文档等技术层拆开同一back纵向行为。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-06限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进gesture、整体链或具体Host兼容。
