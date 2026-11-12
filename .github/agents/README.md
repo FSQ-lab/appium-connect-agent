@@ -20,75 +20,54 @@
 
 ## 使用方式
 
-1. 在支持项目级自定义 Agent 的 VS Code Copilot 环境中打开本项目。
-2. 在聊天的 Agent 选择器中选择 `tech-lead` 作为日常入口，也可以手动选择其他角色。
-3. 先明确一个目标，例如：“先梳理目标用户和首个使用场景，不开始编码；需要关键决定时让我确认。”
-4. Tech Lead 只在有必要时委派专家，汇总结果后交由用户确认关键决策；产品负责人负责需求而非实现调度。
+Herdr 负责 OMP Session 的运行时拓扑，Git worktree 提供写入隔离，GitHub Issue 维护工作和状态；三者不能互相替代。
 
-这些配置位于 `.github/agents/`，不固定模型，使用宿主的模型配置。自定义角色发现和子 Agent 调用取决于宿主版本与功能支持；文件存在不等于当前对话已加载角色。若看不到角色，检查 VS Code 的自定义 Agent 加载状态；必要时重开聊天或重载窗口。若宿主不支持委派，可手动切换角色并传递已确认的任务和上下文。
+1. 在项目主 worktree 保留一个 commander OMP Session，负责 Ready、SPEC、分派、集成、共享验证和最终 Done。
+2. 仅当第二个 Ready Issue 满足并行准入时，创建最多两个 Issue worktree；每个写入 Worker 只进入自己的 worktree。
+3. Worker 使用稳定 Herdr 名称 `issue-<N>`，完成一个 Issue 的实现、聚焦验证、直接文档和交接，不自判 Done。
+4. 每个普通 Issue Owner Session 可以按需调用 OMP subagent；专业叶角色只执行限定任务，不递归委派。
 
-## 协作流程
+从 commander 所在仓库创建 Worker 的参考命令：
 
-GitHub Issue → 需求澄清与必要研究 → Ready 与 SPEC 门槛 → 按依赖分配实现 → 验证 → 独立差异审查 → 必要的修复复审 → Tech Lead 汇总验收并关闭 Issue。
+```bash
+herdr worktree create --cwd "$PWD" \
+  --branch issue/<N>-<slug> \
+  --base <accepted-base> \
+  --path <absolute-worktree-path> \
+  --label "Issue #<N>" --no-focus
 
-工作流依据见根 [AGENTS.md](../../AGENTS.md)，当前产品事实见根 [SPEC.md](../../SPEC.md)。
+herdr agent start issue-<N> --kind omp --pane <returned-pane-id>
+```
 
-### Issue 驱动入口
+从 `worktree create` 的 JSON 读取 `pane_id`，不要推测；仓库尚未被 Herdr 信任时先由用户核实，不把 `--trust-repository` 当作常规重试。现有普通 OMP Session 即可承担 commander 或 Issue Owner，不额外创建浅层 `tech-lead`/`issue-owner` 适配器。
 
-- 所有仓库写入关联 open Issue；新产品 feature 没有 Issue 不启动。
-- `status:backlog` 只表示登记；目标、依赖、验收、SPEC 判定、权限和停止条件齐备后才能标记 `status:ready`。
-- 用户或维护者要求处理 Ready Issue，或将其分配给当前执行者，即授权在 Issue 范围内实施；开始后标记 `status:in-progress`。不再要求任何工作流 skill 命令。
-- 设计可写在 Issue 或链接设计文档；需要 SPEC delta 时在 Issue 固定变更并确认后先更新 SPEC。真实设备、依赖、提交、推送、合并和发布等权限仍须单独明确。
-- 阻塞 Issue 保持 open 并标记 `status:blocked`。PR 完整交付时使用 `Closes #N`；只提供部分证据或前置变更时使用 `Refs #N`。只有验收、验证和适用审查通过后才能关闭。
+## 运行拓扑
 
-独立只读审查仍使用未参与实现或测试编写的新上下文；首次覆盖完整差异，后续仅复核问题与修复增量，最多自动修复两轮。审查由 Tech Lead 在已授权 Issue 内委派，不要求用户输入技能命令。
+| Session | 工作目录 | 责任 | 交付状态 |
+| --- | --- | --- | --- |
+| `commander` | 主 worktree | 并行准入、任务包、集成、共享验证、独立审查、Issue 状态与 Done | 最终判定 |
+| `issue-<N>` | 独立 Issue worktree | 单一 Issue 的实现、聚焦验证、直接文档与交接 | `pending-review` 或 `blocked` |
+| 叶 subagent | 继承所属 Issue 的限定范围 | 研究、独立实现切片、测试或只读审查 | 返回所属 Session，不再委派 |
 
-这套配置保留 SPEC 所有权、任务包和完整 Git 差异审查门槛；GitHub Issue 是项目状态与实施授权记录，历史设计和任务材料只提供细节及证据。跨角色共同规则集中在根 AGENTS，避免多份常驻指令相互漂移。
+最多两条写入链。两个 Issue 只有同时满足以下条件才能并行：
 
-- MVP 范围、目标平台、接入形式、技术栈、公共接口和有实际影响的操作先由用户确认。
-- 专家不创建下级团队；简单任务不要求所有角色参与。
-- Appium 专家研究“Appium 及其生态如何工作、哪些能力能复用”；架构师决定推荐“本项目如何组织这些能力”；Appium 工程师负责“在已确认方案下实现并验证”。关键决策仍由用户确认。
-- 涉及 Appium 架构或生态选择时，由 Tech Lead 按需安排专家研究，再将有来源和版本依据的结论交给架构师、工程师与质量工程师。不能将未执行的示例或未经核实的生态信息当作已验证事实。
-- 并行任务必须具有独立的文件所有权；接口未确认前不并行推进依赖它的实现。
-- 每次交接应包含目标、已确认约束、输入、负责文件、验收标准、验证结果和阻塞项。
+- 都是 Ready 且属于当前已确认的平台/模块批次；
+- 没有未确认的共享 Interface、重叠文件或对方尚未验收的依赖；
+- 各自有唯一文件负责人和可独立执行、可归因失败的聚焦验证；
+- commander 不参与 Worker 文件的并行编辑，并且能够按依赖顺序逐个集成。
+
+条件不成立时只运行一个写入 Worker；另一个 Session 做只读研究、独立审查或保持 idle，不为占满并发扩大范围。
+
+## Issue 驱动交付
+
+GitHub Issue → Ready 与 SPEC gate → commander 判定串行/并行 → 独立 worktree 实现与聚焦验证 → Worker 交接 → commander 逐个集成本批交付 → 最终组合共享验证一次 → 独立差异审查 → 必要的 repair-only → 最终 Done。
+
+- 所有仓库写入关联 open Issue；`status:backlog`、创建 worktree 或启动 Session 都不构成实施授权。
+- 真实设备、依赖、敏感数据、commit、push、PR、merge 和 release 继续使用 Issue 或当前会话中的精确授权；Ready 不自动扩大权限。
+- Worker 交接必须给出 Issue、branch/base commit、worktree、文件清单、验证结果、阻塞和任务外改动；完成交接后停止写入。
+- commander 是唯一集成负责人。它按依赖顺序逐个集成本批获准交付，全部预定集成完成后只对最终组合状态运行一次必要共享构建/项目级测试；继续集成前需要的检查属于单个交付的聚焦或集成前检查，不替代最终共享验证。
+- 独立审查必须来自未参与该批实现或测试编写的新上下文；首次审查完整差异，修复后只做 repair-only，最多自动修复两轮。
+- 公共 Interface、依赖、文件所有权或授权发生变化时停止受影响 Worker，返回 Issue/SPEC gate；不能在集成阶段临时扩大任务。
 - 真实设备、Appium 服务或目标 Agent 不可用时明确报告，不将模拟测试通过描述为端到端通过。
 
-## EXPERT-USABLE-01 CLI 叶角色适配（pending-review）
-
-原生专家出现协作空转时，由主会话调用 [tools/run_leaf_agent.py](../../tools/run_leaf_agent.py)。它仅支持 appium-expert、agent-integration-engineer、quality-engineer：读取角色 TOML 的 `developer_instructions` 并附上源角色全文，交给现有 `codex exec`。这是指令适配的独立 CLI 上下文，不表示加载了原生角色。叶角色不能用此入口再委派。
-
-需要 Python **>=3.11**（标准库 `tomllib`）和现有 Codex CLI；本机核对版本为 Python 3.11.16、Codex 0.163.0。默认 `python3` 为 3.9，应明确选择 `python3.11`；若 PATH 未提供，可使用已核验的 `/Users/qunmi/.local/share/uv/python/cpython-3.11.16-macos-aarch64-none/bin/python3.11`。无需安装依赖。
-
-主会话准备完整 JSON 任务包，至少含非空 `root`、`authorization_original`、`goal`、`ownership`、`fixed`、`stop`；仍须满足 AGENTS 的完整任务包要求。`root` 为脚本所在 worktree 的绝对根路径，`ownership` 为对象，`fixed` 为固定证据清单。下面路径、哈希及线程 ID 均需替换为本轮固定材料，从仓库根执行：
-
-```bash
-shasum -a 256 /absolute/path/expert-task.json
-python3.11 tools/run_leaf_agent.py --role appium-expert \
-  --task-package /absolute/path/expert-task.json --sha256 SHA256_FROM_ABOVE
-```
-
-启动 CLI 前检查任务文件、JSON、必需字段、64 位 SHA256、worktree root 及角色文件；无效输入返回 2，不启动 CLI。cwd 固定为脚本所在仓库，不取任务包中的任意目录。适配器按任务包与全部 `fixed.path`，加上任务指定的 `manifest.path`、`full_diff.path` 生成首读清单，并补齐根 AGENTS、SPEC、源角色和角色 TOML。证据路径必须为非空字符串且文件存在；相对路径从 root 解析，允许任务明确指定的绝对证据路径。
-
-首读命令由标准库 `shlex.join` 分别编码 cat 和 shasum 的 argv，形成 `cat <全部文件> && shasum -a 256 <全部文件>` 并嵌入 prompt。叶角色首个工具调用必须选用其真实 exec schema 完整执行，保留全部原文及哈希并独立核验。适配器只生成命令，不代读证据替代子角色，不增加执行层或协议；缺入口一次报告阻塞并停止。
-
-每次专家调用使用全新持久 `codex exec`，不使用 `--ephemeral` 或父会话历史，禁止专家 `--resume`。工程/审查后续工作可显式恢复同角色、同任务的已有线程；调用方负责核实线程身份，不能将参与实现或测试的线程恢复为独审：
-
-```bash
-python3.11 tools/run_leaf_agent.py --role agent-integration-engineer \
-  --task-package /absolute/path/engineer-followup.json --sha256 SHA256_FROM_ABOVE \
-  --resume SAME_ENGINEER_THREAD_ID
-```
-
-CLI 调用保留 `--enable code_mode_host`，通过 `--disable multi_agent -c agents.enabled=false` 关闭叶角色协作入口，并以 `--disable sleep_tool` 关闭叶会话等待工具；保留文件/命令及网页入口，根会话协调继续启用。此修正来自真实专家仅调用 sleep、零读取的失败验收，该次已中断且不计通过；不新增重试或协议。主会话随后只进行一次新工具表验证，失败即停止，不重建专家。不覆盖模型、提供方、沙箱、审批或认证，不读取凭据；角色 TOML 仅提供 developer 文本，不应用其中的权限字段。源角色和任务包仍约束行为，注入指令不能充当权限隔离。`.codex/.agents/.git/.aws` 配置保持原样。
-
-原生专家仅在实际工具状态改变后重新预检；缺入口、哈希不符或无实际读取的协作声明应一次报告阻塞并停止，不重复重建。独立审查仍须新建未参与实现或测试编写的上下文，证据不足报告 `audit-blocked`。
-
-参数通过 argv 且 `shell=False` 传递，developer 文本用 `json.dumps(ensure_ascii=True)` 编码为 TOML 字符串，任务提示经 stdin 输入。stdout/stderr 继承调用方，CLI stdout 为 `--json` 事件；证据由主会话外部捕获。适配器不写日志、不自动重试；传递 CLI 退出码，信号退出按 128+信号号映射，Ctrl+C 返回 130。
-
-本轮读取/哈希及授权临时 marker 写回读预检已实际通过。真实专家已完成全部原文/哈希和 UiAutomator2 v8.7.0 官方查询，可用性已有实证；独立 full 审查 F01 指出其首调用漏读配置、后续补读不满足严格首读验收。本轮第 1 次修复通过按证据清单自动生成完整首读命令补齐入口，交付仍为 `pending-review`。主会话须完成一次新专家验证及原独立上下文的 repair-only 复审，通过后才可判定 Done。产品和测试改动为 0，根 SPEC 保持原哈希，源工作区已有改动不在本 worktree 修改。
-
-复用依据（2026-10-22）：Python 3.11 官方 [subprocess.run](https://docs.python.org/3.11/library/subprocess.html#subprocess.run) 的 argv、stdin、继承输出、退出码与取消处理，[tomllib.loads](https://docs.python.org/3.11/library/tomllib.html#tomllib.loads) 与 TOMLDecodeError，[argparse](https://docs.python.org/3.11/library/argparse.html#the-parse-args-method) 的参数校验及错误退出；已核对本机 3.11.16 签名/源码。Codex 参数以本机 0.163.0 的 `codex exec --help`、`codex exec resume --help` 为版本依据，官方 [CLI 参考](https://developers.openai.com/codex/cli/reference) 和 [配置参考](https://developers.openai.com/codex/config-reference) 为补充。
-
-## 当前未决定
-
-目标用户、首个场景、首批 Agent 与设备平台、接入形式、技术栈和 MVP 验收标准。团队建立后再逐项确认。
+角色职责由本目录文件定义；OMP 发现适配位于 [`.omp/agents/`](../../.omp/agents/)，公共流程只在根 [AGENTS.md](../../AGENTS.md) 维护，当前产品事实由根 [SPEC.md](../../SPEC.md) 及模块 SPEC 维护。

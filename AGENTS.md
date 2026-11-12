@@ -21,14 +21,14 @@ Issue Form 位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)，角色�
 - 开发顺序为：Issue intake → 需求澄清 → 必要设计与 feature 拆分 → 关键决定及 SPEC gate 在 Issue 中确认 → 实现 → 验证 → 按风险选择的独立审查 → 当前模块/平台整体验收。一次批量询问 2–5 个相互独立的关键问题；只有后一个问题依赖前一个答案时才逐个询问。已确认事项不重复询问。只展开近期实现细节，后续范围保留边界。
 - 按可验证行为拆分子 feature，允许依赖已验收的前序 feature，不要求从零独立运行；不能仅按数据类、工具函数等技术层切片。每个 feature 有独立目标、非目标、依赖、验收和验证入口，不能把整模块一次实现后再补验收。
 - 每个 feature 的产品代码变更接近或超过 **约 1200 行 churn** 时，必须复查是否包含多个可独立验收行为；该数字不是强制拆分点或完成目标。若仍是一个不可再分的纵向行为，保留完整 feature 并在 Issue 或任务材料说明原因；禁止为控制行数按数据类型、Parser、Runtime、Adapter、测试或文档等技术层拆成无法独立运行和验收的任务。测试、文档分别统计，不为控制规模省略测试、错误处理或必要验证。
-- 同时只推进一个实现中的 feature。前序 feature 完成所需验证及适用审查后，再推进下一个已满足依赖的 Ready Issue；验证或必需审查阻塞时不绕过它开发后续 feature。Issue 原范围覆盖的后续步骤不重复索要入口授权；新平台、模块、行为或外部权限必须更新 Issue 并重新满足 Ready。
+- 默认只保持一个主要产品目标或依赖链；同一已确认平台/模块批次内最多同时推进两个实现中的 Ready Issue。并行 Issue 必须无未确认的共享 Interface、无文件所有权重叠、无对方尚未验收的依赖，并能分别运行聚焦验证且独立归因失败；任一条件不满足时只保留一条写入链，其他 Session 只读研究、独立审查或 idle。验证或必需审查阻塞时不得用无关实现绕过。Issue 原范围覆盖的后续步骤不重复索要入口授权；新平台、模块、行为或外部权限必须更新 Issue 并重新满足 Ready。
 - feature 清单、顺序、状态和验收结果放在 Issue；规模预算、详细设计、执行记录和证据可放链接材料。SPEC 只维护已确认契约，不作待办或实现日志。验证可通过独立调用脚本跨现有模块接缝完成，不要求提前实现下一个完整模块。
 - 纯流程、文档和工程基础任务不强造设备平台或设备端到端场景；Issue 明确标记不适用项，执行实际适用的验证与审查。小型直接变更仍须关联 Ready Issue，但无需强制造设计文档。
 
 - 只有 Issue 中已确认的设计明确授权开发顺序重基线时，外层 Adapter feature 才可在下层模块整体 non-Done 时依赖精确、已验收的下层 feature 前进。Issue 或任务包必须逐项列出所用公开 Interface；每项依赖须已有可读取的限定 Done、适用验证和独立审查，且无开放产品 finding。不得用“依赖整个模块”替代清单。
 - 外层 feature 只消费公开 Interface并完成自身协议/Adapter/资源/隐私/适用真实链及独立审查；下层模块级 blocker和限制继续在 Issue、设计、任务、验收及发布说明中显式保留，外层 Done不得提升下层模块状态。
 - 需要下层未验收行为、私有入口、raw协议/设备命令、fallback、隐式导航、自动重试或新契约时立即停止并返回下层 Issue 与 SPEC gate。若外层必要场景正好依赖下层未通过路径，该feature保持blocked，不得换场景拼接通过。
-- 该例外不改变一次只推进一个实现中 feature、约 1200 行触发行为粒度复查、SPEC gate、设备授权、完整验证和适用独立审查要求，也不自动适用于其他模块、平台或接入形式。
+- 该例外不改变上述并行准入、约 1200 行触发行为粒度复查、SPEC gate、设备授权、完整验证和适用独立审查要求，也不自动适用于其他模块、平台或接入形式。
 
 ## Authority and SPEC ownership
 
@@ -50,20 +50,29 @@ Issue Form 位于 [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)，角色�
 
 ## Team and gates
 
-- `tech-lead` 是 Issue 驱动交付的总协调入口，负责 Ready 核对、SPEC 决策、任务包、集成和最终 Done；关键决策仍由用户确认。
+- `tech-lead` 由 Herdr 中的 commander OMP Session 承担，是 Issue 驱动交付的总协调入口，负责 Ready 核对、SPEC 决策、任务包、并行准入、集成和最终 Done；关键决策仍由用户确认。
 - `product-lead` 负责需求、范围和验收标准，可建议 Ready，不再调度实现团队。
 - `architect` 负责本项目技术方案；`appium-expert` 负责 Appium 内部架构和生态研究；两者只读研究。
-- `appium-engineer` 与 `agent-integration-engineer` 执行限定范围的实现，不得自我批准；交付给 Tech Lead 集成、验证和判定。
-- 审查按风险选择。公共 Interface、安全或隐私边界、新增或扩大依赖用途、并发与资源生命周期、设备恢复、跨仓契约及发布边界必须独立审查；普通局部、低风险且有聚焦行为验证的变更可由 Tech Lead 直接复核。
+- `appium-engineer` 与 `agent-integration-engineer` 执行限定范围的实现，不得自我批准；交付给 commander 集成、验证和判定。
+- 审查按风险选择。公共 Interface、安全或隐私边界、新增或扩大依赖用途、并发与资源生命周期、设备恢复、跨仓契约及发布边界必须独立审查；普通局部、低风险且有聚焦行为验证的变更可由 commander 直接复核。
 - 独立审查可由未参与该批实现或测试编写的 `quality-engineer` 或其他只读审查角色承担；同名角色不自动意味着独立。一次审查应合并适用的正确性与安全关注，除非风险边界确实需要不同专业角色。审查模式禁止编辑。
-- Tech Lead 只有在授权、范围、验收标准、依赖和文件所有权明确后才能判定 Ready；完成验证及适用审查后才能判定 Done。必需独立审查不可用时报告 `audit-blocked`，不以自审替代；不需要独立审查时记录风险判定和直接复核结果。
-- 子角色不再委派；简单任务不要求所有角色参与。只对文件所有权互不冲突、依赖已满足的任务并行。
+- commander 只有在授权、范围、验收标准、依赖和文件所有权明确后才能判定 Ready；完成验证及适用审查后才能判定 Done。必需独立审查不可用时报告 `audit-blocked`，不以自审替代；不需要独立审查时记录风险判定和直接复核结果。
+- 普通 OMP Issue Owner Session 可以在自己的 Issue 内按需调用 subagent；只有存在至少两个独立可运行切片时才并行委派。专业叶角色不得再次委派、不得成为第二协调层；简单任务不要求组队。
+
+### Herdr + OMP session topology
+
+- commander 独占主 worktree，不与 Worker 同时修改其负责文件；它是唯一集成负责人，统一执行共享构建/测试、安排独立审查并更新最终状态。
+- 每个写入 Worker 使用唯一 Herdr 名称 `issue-<N>`，只负责一个关联 Issue，并独占独立 Git worktree、`issue/<N>-<slug>` 分支和文件清单。不得让多个 OMP Session 在同一工作目录写入。
+- Worker 负责 Issue 范围内的实现、聚焦验证、直接文档和交付证据，只能报告 `pending-review`、`blocked` 或等价中间状态，不得自判 Done。
+- Worker 完成交接后停止写入；commander 按依赖顺序逐个集成本批获准交付，完成本批预定集成后对最终组合状态统一运行一次必要共享构建/项目级测试。若某交付在继续集成前必须检查，只运行该交付的聚焦或集成前检查，不得把它计为或用于替代最终共享验证。冲突由 commander 归属到原 Issue，不在集成时顺带重设计公共 Interface。
+- Ready 不自动授权 commit、push、PR、merge 或 release。需要本地提交来跨 worktree 集成时，Issue 或当前会话必须明确授权；外部交付权限继续分别确认。
+- Herdr 的 pane、tab、workspace 和 agent 状态只表示运行时拓扑，不替代 Issue 状态、Git 身份、验证证据或 Done gate。
 
 ## Required task package
 
 每个委派任务必须包含：
 
-- 目标与非目标、关联 Issue、允许和禁止修改的文件、唯一文件负责人。
+- 目标与非目标、关联 Issue、Herdr Session 名称、worktree、branch、base commit、允许和禁止修改的文件及唯一文件负责人。
 - 适用的 SPEC/设计依据及 delta 或 no-delta 判定。
 - 依赖、验收标准、实际可用的聚焦验证入口、环境或设备授权。
 - 停止条件、待决问题和决策负责人。
