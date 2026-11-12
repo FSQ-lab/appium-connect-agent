@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
 from threading import Event, Lock
-from typing import Any, Literal, Never, cast
+from typing import Any, Literal, Never, TypeVar, cast
 
 import anyio
 from mcp.server.mcpserver.exceptions import ToolError
@@ -52,6 +54,9 @@ from ._models import (
     DeviceData,
     DeviceListData,
     DeviceListResult,
+    ElementClickData,
+    ElementClickRequest,
+    ElementClickResult,
     LocatorV1,
     ObservationData,
     ObservationDocument,
@@ -74,6 +79,7 @@ from ._models import (
 )
 
 SessionState = Literal["active", "uncertain", "closing", "closed"]
+_ResultT = TypeVar("_ResultT")
 _LOGGER = logging.getLogger("appium_connect_agent.integrations")
 
 
@@ -198,9 +204,11 @@ class McpApplication:
                     "appium.session.status",
                     "appium.session.close",
                     "appium.ui.observe",
+                    "appium.element.click",
                 ),
                 limitations=(
-                    "ui_observation_only",
+                    "native_observation_and_single_click",
+                    "no_automatic_post_action_observation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
                     "single_session_capacity",
@@ -315,7 +323,7 @@ class McpApplication:
             data=DeviceListData(count=len(devices), devices=devices),
         )
 
-    def _prepare_observation(
+    def _prepare_ui_operation(
         self, handle: str, call_id: str
     ) -> tuple[_SessionEntry, Session]:
         with self._registry_lock:
@@ -371,7 +379,7 @@ class McpApplication:
             raise RuntimeError("locator chain unexpectedly produced no Element")
         return parent
 
-    def _sync_observation_entry(self, entry: _SessionEntry, session: Session) -> None:
+    def _sync_session_entry(self, entry: _SessionEntry, session: Session) -> None:
         info = session.session_info()
         state = self._handle_state(info.state)
         with self._registry_lock:
@@ -399,9 +407,34 @@ class McpApplication:
             raise RuntimeError("Automation observation violated its public invariants")
         return cast(ObservationDocument, parsed)
 
+    async def _run_ui_worker(
+        self,
+        budget: OperationBudget,
+        function: Callable[[OperationBudget], _ResultT],
+        call_id: str,
+        entry: _SessionEntry,
+    ) -> _ResultT:
+        try:
+            budget.control()
+            return await self._workers.run_budget(budget, function)
+        except ApplicationDrainingError:
+            self._raise_not_sent(call_id, "server_draining", entry=entry)
+        except BridgeOperationTimeoutError:
+            self._raise_not_sent(call_id, "operation_timeout", entry=entry)
+        except BridgeOperationCancelledError:
+            self._raise_not_sent(call_id, "operation_cancelled", entry=entry)
+        except ElementValidationError as error:
+            self._raise_not_sent(call_id, error.code, entry=entry)
+        except AutomationError as error:
+            self._raise_automation_error(call_id, error, entry=entry)
+
     async def observe(self, request: ObserveRequest) -> ObservationResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
         call_id = self._call_id()
-        entry, session = self._prepare_observation(request.session_handle, call_id)
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
 
         def observe_once(budget: OperationBudget) -> ObservationResult:
             try:
@@ -442,20 +475,58 @@ class McpApplication:
                     data=ObservationData(mode=request.mode, document=document),
                 )
             finally:
-                self._sync_observation_entry(entry, session)
+                self._sync_session_entry(entry, session)
 
-        try:
-            return await self._workers.run_budget(request.timeout_seconds, observe_once)
-        except ApplicationDrainingError:
-            self._raise_not_sent(call_id, "server_draining", entry=entry)
-        except BridgeOperationTimeoutError:
-            self._raise_not_sent(call_id, "operation_timeout", entry=entry)
-        except BridgeOperationCancelledError:
-            self._raise_not_sent(call_id, "operation_cancelled", entry=entry)
-        except ElementValidationError as error:
-            self._raise_not_sent(call_id, error.code, entry=entry)
-        except AutomationError as error:
-            self._raise_automation_error(call_id, error, entry=entry)
+        return await self._run_ui_worker(
+            budget,
+            observe_once,
+            call_id,
+            entry,
+        )
+
+    async def click(self, request: ElementClickRequest) -> ElementClickResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def click_once(budget: OperationBudget) -> ElementClickResult:
+            try:
+                element = self._element(session, request.locator)
+                element.click(
+                    wait_timeout_seconds=request.wait_timeout_seconds,
+                    control=budget.control(),
+                )
+                info = session.session_info()
+                if info.state != "active" or info.busy:
+                    raise RuntimeError(
+                        "successful click did not leave Session active and idle"
+                    )
+                return ElementClickResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=ElementClickData(
+                        action="click",
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(
+            budget,
+            click_once,
+            call_id,
+            entry,
+        )
 
     def _reserve_open(self, request: SessionOpenRequest, call_id: str) -> _SessionEntry:
         if not self._runtime_gate.acquire(blocking=False):
@@ -511,6 +582,10 @@ class McpApplication:
         return failure
 
     async def session_open(self, request: SessionOpenRequest) -> SessionOpenResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
         call_id = self._call_id()
         entry = self._reserve_open(request, call_id)
 
@@ -571,7 +646,8 @@ class McpApplication:
                 raise
 
         try:
-            data = await self._workers.run_budget(request.timeout_seconds, open_session)
+            budget.control()
+            data = await self._workers.run_budget(budget, open_session)
         except ApplicationDrainingError:
             self._drop_provisional(entry)
             self._raise_draining(call_id)

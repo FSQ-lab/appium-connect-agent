@@ -149,9 +149,11 @@ class CapabilityData(_StrictModel):
         Literal["appium.session.status"],
         Literal["appium.session.close"],
         Literal["appium.ui.observe"],
+        Literal["appium.element.click"],
     ]
     limitations: tuple[
-        Literal["ui_observation_only"],
+        Literal["native_observation_and_single_click"],
+        Literal["no_automatic_post_action_observation"],
         Literal["no_node_cache"],
         Literal["observation_document_65536_bytes"],
         Literal["single_session_capacity"],
@@ -472,6 +474,19 @@ ObserveRequest: TypeAlias = Annotated[
     TreeObserveRequest | AttributesObserveRequest | StructureObserveRequest,
     Field(discriminator="mode"),
 ]
+
+
+class ElementClickRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    locator: LocatorV1
+    wait_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("wait_timeout_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
 
 
 class AutomationLocatorDocument(_StrictModel):
@@ -852,6 +867,32 @@ class ObservationResult(_StrictModel):
         return value
 
     pass
+
+
+class ElementClickData(_StrictModel):
+    action: Literal["click"]
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class ElementClickResult(_StrictModel):
+    schema_version: Literal[1]
+    call_id: CallId
+    execution: Literal["completed"]
+    operation_id: None
+    request_state: None
+    warnings: tuple[StableCode, ...] = Field(
+        max_length=16, json_schema_extra={"uniqueItems": True}
+    )
+    automation_module_status: AutomationModuleStatus
+    data: ElementClickData
+
+    @field_validator("warnings")
+    @classmethod
+    def _unique_warnings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("warnings must be unique")
+        return value
 
 
 class SessionOpenRequest(_StrictModel):

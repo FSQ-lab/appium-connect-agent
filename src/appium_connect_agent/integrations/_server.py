@@ -24,6 +24,8 @@ from ._models import (
     CapabilityResult,
     DeviceListRequest,
     DeviceListResult,
+    ElementClickRequest,
+    ElementClickResult,
     ObservationResult,
     ObserveRequest,
     RuntimeCheckRequest,
@@ -135,8 +137,9 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local readiness, explicit Session lifecycle, and Native read-only "
-            "observation; no UI actions, retry, attach, recovery, or HTTP tools."
+            "Local readiness, explicit Session lifecycle, Native observation, "
+            "and one caller-requested Element click; no automatic action chain, "
+            "retry, attach, recovery, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,
@@ -281,6 +284,24 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
     ) -> ObservationResult:
         result = await ctx.request_context.lifespan_context.observe(request)
         return cast(ObservationResult, _success(result))
+
+    @server.tool(
+        name="appium.element.click",
+        description="Click one explicitly located Native Element once.",
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+        structured_output=True,
+    )
+    async def element_click(
+        request: ElementClickRequest,
+        ctx: Context[McpApplication],
+    ) -> ElementClickResult:
+        result = await ctx.request_context.lifespan_context.click(request)
+        return cast(ElementClickResult, _success(result))
 
     return server
 

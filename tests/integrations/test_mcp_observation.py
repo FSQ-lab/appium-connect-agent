@@ -1064,8 +1064,9 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
             )
             initialized = receive(1)
             assert initialized["result"]["instructions"] == (
-                "Local readiness, explicit Session lifecycle, and Native read-only "
-                "observation; no UI actions, retry, attach, recovery, or HTTP tools."
+                "Local readiness, explicit Session lifecycle, Native observation, "
+                "and one caller-requested Element click; no automatic action chain, "
+                "retry, attach, recovery, or HTTP tools."
             )
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send(

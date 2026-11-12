@@ -22,7 +22,7 @@
 
 ## Current Status
 
-INT-MCP-01与INT-MCP-02均在各自feature限定范围Done且无开放finding；INT-MCP-03产品、永久测试、完整non-device验证/发行、安装wheel受控consumer及独立full＋Repair-01审查已pass且无开放finding，但真实UI读取未授权，当前`device-validation-blocked`/non-Done。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
+INT-MCP-01、INT-MCP-02与INT-MCP-03均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收。INT-MCP-04尚未实现或验收。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -191,3 +191,38 @@ INT-MCP-01与INT-MCP-02均在各自feature限定范围Done且无开放finding；
 - 使用锁定真实Appium/Selenium/defusedxml client到受控HTTP服务覆盖root/scoped tree、attributes、structure两scope、每mode恰好一次公开调用、ElementValidationError、全部known/unknown/cleanup资源矩阵、65,536 document成功与下层超限、full→visible、ValueState/target_path/operation_id保持、同Session并发busy、close竞态、总预算/cancel/late/EOF/broken pipe/shutdown、一次下层/no-replay/no-cache和隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio三mode、schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
 - Feature Done另需用户单独授权固定真实组合、明确设备、无敏感应用/页面、允许读取的locator/属性/结构范围及证据保留方式。正式安装wheel＋官方Client须完成`open→status active→tree→attributes→structure target/declared_parent的获准组合→status active→close→status closed→Runtime释放→stdio自然exit0`，retries=0且无动作、unknown、uncertain、non-closed entry或敏感证据复制。固定页面/locator不成立即`device-validation-blocked`，不得换场景/locator拼接通过；当前`/spec-driven`不授权该真实UI链。
 - 产品churn目标700..1100，测试/文档另计；预计明显超过则先重拆，不删错误、资源、隐私或验证合同。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判MCP-03限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进MCP-04，也不声明Copilot/Codex等具体Host兼容。
+
+## INT-MCP-04 Element Click
+
+本节精确合同已由用户确认，并授权本feature实现、聚焦非设备验证、必要独立审查及一次固定Calculator安全页面真实click；未授权提交、推送、发布或后续动作feature。
+
+### Scope, Dependencies And Reuse Gate
+
+- 当前组合继续固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；本feature只在现有本地stdio MCP追加一个显式Element single-click工具，不交付double/long click、坐标、文本、手势、自动观测、导航、业务结果判断、Host资格、HTTP、CLI/SDK或多Session能力。
+- 精确依赖为限定Done且无开放finding的INT-MCP-03，以及Automation AIF-04公开`Session.element`、`Element.click`、`Session.session_info`、公开错误与AIF-ED生命周期Interface。Automation继续`device-validation-blocked-known-clean`、module non-Done；INT-MCP-04不得提升其状态或补做AIF-04其他真实设备矩阵。
+- 无新增、替换或升级依赖。继续在已批准用途内复用`mcp==2.3.0`高层MCPServer/stdio/schema/lifespan/cancellation、`pydantic==2.14.1` strict DTO、Python3.11标准库及既有bridge、Registry、LocatorV1与错误映射；Configuration、Runtime、Contracts、Automation no-delta。
+- 禁止Automation私有入口、raw WebDriver/Appium sessionId/elementId/HTTP/ADB/script、节点缓存、第二Session gate、第二错误状态机、fallback、队列、自动滚动/focus/back、重试、重放或click后的隐式观测。若公开Automation Interface不足以无损实现，立即停止并返回Automation SPEC gate，不用Adapter私有访问补洞。
+
+### Tool Surface, Request And Success Result
+
+- 固定工具顺序clean cutover为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe, appium.element.click]`。`appium.element.click`的annotations固定为`readOnly=false, destructive=true, idempotent=false, openWorld=true`；destructive是保守安全声明，因为目标应用可把一次点击解释为提交、删除或其他不可逆操作，不表示项目会自动选择此类目标。
+- capabilities limitations将`ui_observation_only`替换为`native_observation_and_single_click`，追加`no_automatic_post_action_observation`；其余opaque handle、单Session、无attach/recovery、无HTTP/CLI/SDK、无clear-app、下层模块与Host未整体验收等限制保持。server instructions同步为显式Session生命周期、Native观测和一次调用方明确请求的Element click，不暗示自动动作链。
+- 工具仍只有一个必填顶层`request`；`ElementClickRequest`为strict/frozen object且JSON Schema2020-12 `additionalProperties=false`。required字段为`schema_version=1`、现有`session_handle`与现有`LocatorV1 locator`；optional `wait_timeout_seconds=15.0`和总预算`timeout_seconds=90.0`都只接受actual finite int/float、排除bool且`0 < value <= 120.0`。
+- `wait_timeout_seconds`只限制目标成为唯一、displayed且enabled的等待阶段；`timeout_seconds`从handler进入起覆盖Element构造、定位/状态请求、等待、一次click、必要Settings恢复和本地收尾。总预算天然截断目标等待，不要求`wait_timeout_seconds <= timeout_seconds`；动作请求开始后只受剩余总预算，不重新开始或延长deadline。
+- 成功只表示公开`Element.click`取得合法成功响应且随后公开Session snapshot为`active`/idle；不保证事件命中、页面变化或业务任务完成。`ElementClickResult`沿共同success envelope返回`schema_version=1`、新`call_id`、`execution=completed`、`operation_id=null`、`request_state=null`、`warnings=[]`、既有automation module status及typed `data={action: click, session_state: active, busy: false}`。Automation成功Interface只返回`None`，Adapter不得伪造或从私有状态取得operation_id。
+
+### Dispatch, Errors And Lifecycle
+
+- 仅published active live handle可进入click；unknown、closed、uncertain、closing、busy、provisional与tombstone沿INT-MCP-03既有Registry准入和`ToolErrorData`资源语义，锁内不构造Element、不等待且不做设备I/O。Locator从最老parent到leaf只调用既有`Session.element`，只转换`accessibility_id`公开拼写，不trim、补package、解析ID、换strategy或选首个匹配。
+- 每个handler只创建一个absolute总deadline和Event，只调用一次既有`WorkerRegistry.run_budget`。worker只构造一次项目Element，并只调用一次公开`Element.click(wait_timeout_seconds=request.wait_timeout_seconds, control=budget.control())`；这不限制Automation内部按AIF-04合同执行有界目标等待与重新定位，但MCP不得再次调用click。
+- worker在成功或失败后都用公开`session_info()`同步同一Registry entry。成功必须确认最终state active且busy=false；不满足已确认不变量属于未知程序缺陷，不伪装成成功或已知业务错误。
+- `ElementValidationError`保留原code并映射`operation_id=null/request_state=not_sent`；`AutomationError`逐字段保留真实code、operation_id、request_state、completed_steps及cleanup count/status，并在返回前同步匹配handle与最终state。response_unknown、Settings恢复不明或下层uncertain继续进入既有quarantine；后续UI/click/close/open/runtime.check零下层拒绝且只允许status。
+- pre-start timeout/cancel、in-flight cancel、late success/known error、EOF/broken pipe、同Session observe/click/close竞态和shutdown继续复用既有bridge与Automation唯一非阻塞gate。不得因错误自动observe、status探活、quit、restore、重建、换Locator、retry或replay。shutdown等待真实worker结束；已知active沿既有一次quit/Runtime clean路径，uncertain或资源未决零补设备命令并degraded exit4。
+
+### Privacy, Verification And Done Gate
+
+- Locator、handle、device/app标识、应用点击目标、Automation ID及异常输入均按敏感数据处理，只允许返回或使用于发起且获准的当前MCP client。stdout只含MCP framing；stderr、telemetry、Registry、manifest及默认测试/审查证据不得记录这些原文、异常message/repr/traceback或点击后UI。日志只允许既有tool/code/call_id/operation_id/phase/duration/request_state/state/count allowlist。
+- 永久合同测试必须覆盖八工具顺序、完整limitations/instructions、click annotation、strict input/output schema与digest、对象/JSON-object字符串request、extra/strict数字/Locator深度与拼写拒绝、双超时默认/边界/独立关系，以及所有schema拒绝零Registry/下层请求。
+- 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖0→出现、displayed/enabled变化、每层0/1/多、pre-action stale、一次公开click调用、精确`mobile: clickGesture`与elementId-only payload、合法None、非None/有效错误/response_unknown、raw-ID Settings恢复、总预算与条件预算、cancel/late、observe/click/close竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
+- Feature Done另需用户单独授权固定真实组合、明确无敏感页面与精确Locator的一次真实single click。正式安装wheel＋官方Client须完成`open→status active→element.click→status active→close→status closed→Runtime释放→stdio自然exit0`，MCP click调用一次、replay/retry为0且无unknown、uncertain、non-closed entry或敏感证据复制；成功不要求或宣称业务页面变化。目标不安全、Locator不成立或点击权限缺失即`device-validation-blocked`，不得换目标/Locator拼接通过。
+- 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得为控制规模把同一click纵向行为拆成模型、Adapter、测试或文档等不可运行技术层任务。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-04限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进text/back/gesture或具体Host兼容。

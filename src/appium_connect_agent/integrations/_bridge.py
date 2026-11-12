@@ -152,18 +152,18 @@ class WorkerRegistry:
         timeout_seconds: float,
         function: Callable[[OperationControl], _ResultT],
     ) -> _ResultT:
+        budget = OperationBudget(time.monotonic() + timeout_seconds, Event())
         return await self.run_budget(
-            timeout_seconds,
-            lambda budget: function(budget.control()),
+            budget,
+            lambda active_budget: function(active_budget.control()),
         )
 
     async def run_budget(
         self,
-        timeout_seconds: float,
+        budget: OperationBudget,
         function: Callable[[OperationBudget], _ResultT],
     ) -> _ResultT:
-        """Run one sync handler with one absolute deadline and cancellation Event."""
-        budget = OperationBudget(time.monotonic() + timeout_seconds, Event())
+        """Run one sync handler with the caller's deadline and cancellation Event."""
         worker = self._open(budget.cancellation)
         outcome: list[_ResultT | BaseException] = []
         completed = Event()

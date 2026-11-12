@@ -23,6 +23,7 @@ from appium_connect_agent.integrations._application import McpApplication
 from appium_connect_agent.integrations._models import (
     CapabilityResult,
     DeviceListResult,
+    ElementClickResult,
     RuntimeCheckResult,
     SessionCloseResult,
     SessionData,
@@ -43,14 +44,15 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "1d5aa8f34bbedb3f83ea81a45d426b11a6cfd1b094a5bebe26ff5718c60dfdb6"
+    "134030de86dab3ab9a0f77faabbc78e366a825c152303a9c0a78ea568956e9f7"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3116
+CAPABILITY_MAX_CANONICAL_BYTES = 3194
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
 SESSION_STATUS_MAX_CANONICAL_BYTES = 5604
 SESSION_CLOSE_MAX_CANONICAL_BYTES = 5601
+ELEMENT_CLICK_MAX_CANONICAL_BYTES = 2491
 ERROR_MAX_CANONICAL_BYTES = 6835
 ERROR_WIRE_BYTES = {
     TOOL_NAMES[0]: 6852,
@@ -60,6 +62,7 @@ ERROR_WIRE_BYTES = {
     TOOL_NAMES[4]: 6889,
     TOOL_NAMES[5]: 6888,
     TOOL_NAMES[6]: 6885,
+    TOOL_NAMES[7]: 6888,
 }
 
 
@@ -194,6 +197,21 @@ def maximum_session_results() -> tuple[
         SessionOpenResult.model_validate({**common, "data": data("active")}),
         SessionStatusResult.model_validate({**common, "data": data("uncertain")}),
         SessionCloseResult.model_validate({**common, "data": data("closed")}),
+    )
+
+
+def maximum_click_result() -> ElementClickResult:
+    return ElementClickResult.model_validate(
+        {
+            "schema_version": 1,
+            "call_id": "c_" + ("a" * 22),
+            "execution": "completed",
+            "operation_id": None,
+            "request_state": None,
+            "warnings": tuple(maximum_codes("w", 16)),
+            "automation_module_status": AUTOMATION_STATUS,
+            "data": {"action": "click", "session_state": "active", "busy": False},
+        }
     )
 
 
@@ -375,7 +393,8 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                 },
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "ui_observation_only",
+                    "native_observation_and_single_click",
+                    "no_automatic_post_action_observation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
                     "single_session_capacity",
@@ -1211,8 +1230,15 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         async def close_tool() -> SessionCloseResult:
             return cast(SessionCloseResult, product_result(close_value))
 
+        @server.tool(name=TOOL_NAMES[7], structured_output=True)
+        async def click_tool() -> ElementClickResult:
+            return cast(ElementClickResult, product_result(maximum_click_result()))
+
         async with Client(server) as client:
-            return [await client.call_tool(name, {}) for name in TOOL_NAMES[:6]]
+            return [
+                *[await client.call_tool(name, {}) for name in TOOL_NAMES[:6]],
+                await client.call_tool(TOOL_NAMES[7], {}),
+            ]
 
     wire_results = anyio.run(send_models)
     session_models = maximum_session_results()
@@ -1221,6 +1247,7 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         runtime,
         devices,
         *session_models,
+        maximum_click_result(),
     )
     expected_sizes: tuple[int | None, ...] = (
         CAPABILITY_MAX_CANONICAL_BYTES,
@@ -1229,6 +1256,7 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         SESSION_OPEN_MAX_CANONICAL_BYTES,
         SESSION_STATUS_MAX_CANONICAL_BYTES,
         SESSION_CLOSE_MAX_CANONICAL_BYTES,
+        ELEMENT_CLICK_MAX_CANONICAL_BYTES,
     )
     for model, result, expected_size in zip(
         models, wire_results, expected_sizes, strict=True

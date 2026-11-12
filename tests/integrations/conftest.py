@@ -20,6 +20,7 @@ TOOL_NAMES = (
     "appium.session.status",
     "appium.session.close",
     "appium.ui.observe",
+    "appium.element.click",
 )
 AUTOMATION_STATUS = {
     "feature_qualification": "aif_01_to_10_individually_done",
