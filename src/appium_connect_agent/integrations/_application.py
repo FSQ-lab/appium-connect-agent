@@ -57,6 +57,12 @@ from ._models import (
     ElementClickData,
     ElementClickRequest,
     ElementClickResult,
+    ElementTextClearRequest,
+    ElementTextData,
+    ElementTextReplaceRequest,
+    ElementTextRequest,
+    ElementTextResult,
+    ElementTextSendRequest,
     LocatorV1,
     ObservationData,
     ObservationDocument,
@@ -205,10 +211,12 @@ class McpApplication:
                     "appium.session.close",
                     "appium.ui.observe",
                     "appium.element.click",
+                    "appium.element.text",
                 ),
                 limitations=(
-                    "native_observation_and_single_click",
+                    "native_observation_single_click_and_element_text",
                     "no_automatic_post_action_observation",
+                    "no_automatic_focus_submit_or_verify",
                     "no_node_cache",
                     "observation_document_65536_bytes",
                     "single_session_capacity",
@@ -524,6 +532,66 @@ class McpApplication:
         return await self._run_ui_worker(
             budget,
             click_once,
+            call_id,
+            entry,
+        )
+
+    async def text(self, request: ElementTextRequest) -> ElementTextResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def text_once(budget: OperationBudget) -> ElementTextResult:
+            try:
+                element = self._element(session, request.locator)
+                control = budget.control()
+                if isinstance(request, ElementTextSendRequest):
+                    element.send_keys(
+                        request.text,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                elif isinstance(request, ElementTextReplaceRequest):
+                    element.replace_element_value(
+                        request.text,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                elif isinstance(request, ElementTextClearRequest):
+                    element.clear(
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                else:
+                    raise AssertionError("unsupported Element text request")
+                info = session.session_info()
+                if info.state != "active" or info.busy:
+                    raise RuntimeError(
+                        "successful text action did not leave Session active and idle"
+                    )
+                return ElementTextResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=ElementTextData(
+                        intent=request.intent,
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(
+            budget,
+            text_once,
             call_id,
             entry,
         )

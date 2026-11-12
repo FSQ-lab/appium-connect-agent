@@ -22,7 +22,7 @@
 
 ## Current Status
 
-INT-MCP-01、INT-MCP-02与INT-MCP-03均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收。INT-MCP-04尚未实现或验收。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
+INT-MCP-01、INT-MCP-02、INT-MCP-03与INT-MCP-04均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04已由Issue #5在本地提交`baae8d5`完成限定验收但尚未push。INT-MCP-05精确合同已确认并达到Issue Ready的SPEC条件，但尚未获得产品实现、设备操作、提交、push或发布授权。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -226,3 +226,39 @@ INT-MCP-01、INT-MCP-02与INT-MCP-03均在各自feature限定范围Done且无开
 - 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖0→出现、displayed/enabled变化、每层0/1/多、pre-action stale、一次公开click调用、精确`mobile: clickGesture`与elementId-only payload、合法None、非None/有效错误/response_unknown、raw-ID Settings恢复、总预算与条件预算、cancel/late、observe/click/close竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
 - Feature Done另需用户单独授权固定真实组合、明确无敏感页面与精确Locator的一次真实single click。正式安装wheel＋官方Client须完成`open→status active→element.click→status active→close→status closed→Runtime释放→stdio自然exit0`，MCP click调用一次、replay/retry为0且无unknown、uncertain、non-closed entry或敏感证据复制；成功不要求或宣称业务页面变化。目标不安全、Locator不成立或点击权限缺失即`device-validation-blocked`，不得换目标/Locator拼接通过。
 - 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得为控制规模把同一click纵向行为拆成模型、Adapter、测试或文档等不可运行技术层任务。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-04限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进text/back/gesture或具体Host兼容。
+
+## INT-MCP-05 Element Text
+
+本节是Issue #11经用户确认的精确合同；合同确认及Issue Ready不授权产品实现、依赖变更、设备操作、提交、push、发布或后续feature。
+
+### Scope, Dependencies And Reuse Gate
+
+- 当前组合继续固定为macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11；本feature只在现有本地stdio MCP追加一个显式Element文本工具，提供send、clear、replace三个不可互换的意图。不交付当前焦点输入、IME/提交、键盘/剪贴板、自动聚焦、滚动、读回、业务校验、回滚、Host资格、HTTP、CLI/SDK或多Session能力。
+- 精确依赖为限定Done且无开放finding的INT-MCP-04，以及Automation AIF-05公开`Session.element`、`Element.send_keys`、`Element.clear`、`Element.replace_element_value`、`Session.session_info`、公开错误与AIF-ED生命周期Interface。Automation继续`device-validation-blocked-known-clean`、module non-Done；INT-MCP-05不得提升其状态或补做AIF-05其他真实设备矩阵。
+- 无新增、替换或升级依赖。继续在已批准版本和用途内复用`mcp==2.3.0`高层MCPServer/stdio/schema/lifespan/cancellation、`pydantic==2.14.1` strict DTO与判别union、Python3.11标准库及既有bridge、Registry、LocatorV1、预算和错误映射；Configuration、Runtime、Contracts、Automation及根SPEC no-delta。
+- 禁止Automation私有入口、raw WebDriver/Appium sessionId/elementId/HTTP/ADB/script、节点缓存、第二Session gate、第二错误状态机、fallback、队列、自动focus/submit/hide-keyboard/observe/verify、重试、重放或回滚。若公开Automation Interface不足以无损实现，立即停止并返回Automation SPEC gate，不用Adapter私有访问、clear+send组合或自研协议补洞。
+
+### Tool Surface, Strict Request And Success Result
+
+- 固定工具顺序clean cutover为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe, appium.element.click, appium.element.text]`。`appium.element.text`的annotations固定为`readOnly=false, destructive=true, idempotent=false, openWorld=true`；这是三个分支的保守共同声明，不授权Host自动调用或重放。
+- capabilities limitations将`native_observation_and_single_click`替换为`native_observation_single_click_and_element_text`，保留`no_automatic_post_action_observation`并追加`no_automatic_focus_submit_or_verify`；其余opaque handle、单Session、无attach/recovery、无HTTP/CLI/SDK、无clear-app、下层模块与Host未整体验收等限制保持。server instructions同步加入调用方明确请求的三个Element文本意图，不暗示动作组合或自动读回。
+- 工具仍只有一个必填顶层`request`；`ElementTextRequest`是按required `intent`判别的三个strict/frozen object联合，每个分支使用JSON Schema2020-12且`additionalProperties=false`。共同required字段为`schema_version=1`、现有`session_handle`、现有`LocatorV1 locator`和`intent=send|clear|replace`；optional `wait_timeout_seconds=15.0`与总预算`timeout_seconds=90.0`都只接受actual finite int/float、排除bool且`0 < value <= 120.0`。
+- `intent=send`分支required `text`且不允许空串；`intent=replace`分支required `text`且允许空串；`intent=clear`分支不接受`text`。send/replace文本必须为未经strip、normalize、escape、换行转换、截断或替换的strict UTF-8字符串，编码后恰好65,536 bytes允许；NUL、不可编码孤立surrogate及末尾U+005C/U+006E字面反斜线+n在handler和任何Registry/设备请求前拒绝。内部相同序列、实际LF/CR/TAB、其他Unicode control与普通Unicode原样传递，但不保证控件保留。
+- `wait_timeout_seconds`只限制目标成为唯一、displayed且enabled的等待阶段；`timeout_seconds`从handler进入起覆盖Element构造、定位/状态请求、等待、一次文本动作、必要Settings恢复和本地收尾。总预算天然截断目标等待，不要求`wait_timeout_seconds <= timeout_seconds`；final动作开始后只受剩余总预算，不重新开始或延长deadline。
+- 成功只表示对应Automation公开方法取得合法成功响应、必要恢复完成且公开Session snapshot为`active`/idle；不保证最终文本、追加位置、清空效果、光标、selection、焦点、键盘、页面或业务结果。`ElementTextResult`沿共同success envelope返回`operation_id=null`、`request_state=null`、`warnings=[]`及typed `data={intent: send|clear|replace, session_state: active, busy: false}`；不得回显输入文本、伪造operation_id或读取私有状态。
+
+### Dispatch, Partial Side Effects, Errors And Lifecycle
+
+- 仅published active live handle可进入text；unknown、closed、uncertain、closing、busy、provisional与tombstone沿INT-MCP-04既有Registry准入和`ToolErrorData`资源语义。Locator从最老parent到leaf只调用既有`Session.element`，只转换`accessibility_id`公开拼写，不trim、补package、解析ID、换strategy或选首个匹配。
+- 每个handler只创建一个absolute总deadline和Event，只调用一次既有`WorkerRegistry.run_budget`。worker只构造一次项目Element，并按intent只调用一次对应公开方法：send→`Element.send_keys(text, wait_timeout_seconds, control)`、clear→`Element.clear(wait_timeout_seconds, control)`、replace→`Element.replace_element_value(text, wait_timeout_seconds, control)`；不得组合、补发或调用另一个文本方法。
+- 普通send的上游单命令可能内部清除并重写旧值；任一final动作的有效错误也可能已部分改变字段。Adapter必须无损保留Automation的真实`operation_id`、`request_state`、`completed_steps`、cleanup count/status和最终Session状态，不把`response_received`解释为无副作用，不自动读回、回滚、重试或重放。
+- worker在成功或失败后都用公开`session_info()`同步同一Registry entry。成功必须确认最终state active且busy=false；不满足已确认不变量属于未知程序缺陷。`ElementValidationError`保留原code并映射`operation_id=null/request_state=not_sent`；`AutomationError`逐字段映射。response_unknown、Settings恢复不明或下层uncertain继续进入既有quarantine，后续UI/click/text/close/open/runtime.check零下层拒绝且只允许status。
+- pre-start timeout/cancel、in-flight cancel、late success/known error、EOF/broken pipe、同Session observe/click/text/close竞态和shutdown继续复用既有bridge与Automation唯一非阻塞gate。shutdown等待真实worker结束；已知active沿既有一次quit/Runtime clean路径，uncertain或资源未决零补设备命令并degraded exit4。
+
+### Privacy, Verification And Done Gate
+
+- 文本、Locator、handle、device/app标识、目标控件、Automation ID及异常输入均按敏感数据处理，只允许用于发起且获准的当前MCP client调用；结果和已知错误不返回text。stdout只含MCP framing；stderr、telemetry、Registry、manifest及默认测试、审查和真机证据不得记录文本或上述敏感原文、异常message/repr/traceback。日志只允许既有tool/intent/code/call_id/operation_id/phase/duration/request_state/state/count allowlist；不以redaction后文本或hash替代原文落盘。
+- 永久合同测试必须覆盖九工具顺序、完整limitations/instructions、text annotation、三个分支的strict input/output schema与digest、对象/JSON-object字符串request、分支无关字段拒绝、text全部字符/UTF-8边界、双超时默认/边界/独立关系、Locator边界，以及所有schema拒绝零Registry/下层请求。
+- 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖每个intent恰好一次对应公开调用、精确send/clear/replace route与payload、合法None、非法返回/有效错误/response_unknown、部分副作用事实、0→出现、displayed/enabled变化、每层0/1/多、pre-action stale、raw-ID Settings恢复、总预算与条件预算、cancel/late、并发竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
+- Feature Done另需用户单独授权固定真实组合、明确无账号/网络/提交副作用且无敏感内容的普通文本字段、精确Locator、允许使用的非敏感marker及内存比较/证据保留方式。正式安装wheel＋官方Client须完成`open→status active→observe baseline→send→observe→clear→observe→replace baseline→observe→status active→close→status closed→Runtime释放→stdio自然exit0`；四次observe均为客户端显式独立调用，text工具不自动读回。每个文本调用一次、retry/replay/rollback为0，最终恢复初始基线且无unknown、uncertain、non-closed entry或文本复制到持久证据。页面、Locator、基线或权限不成立即`device-validation-blocked`，不得换目标/文本拼接通过。
+- 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得按模型、Adapter、测试或文档等技术层拆开同一三意图文本行为。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-05限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进back/gesture或具体Host兼容。

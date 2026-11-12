@@ -26,6 +26,8 @@ from ._models import (
     DeviceListResult,
     ElementClickRequest,
     ElementClickResult,
+    ElementTextRequest,
+    ElementTextResult,
     ObservationResult,
     ObserveRequest,
     RuntimeCheckRequest,
@@ -137,9 +139,10 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local readiness, explicit Session lifecycle, Native observation, "
-            "and one caller-requested Element click; no automatic action chain, "
-            "retry, attach, recovery, or HTTP tools."
+            "Local readiness, explicit Session lifecycle, Native observation, one "
+            "caller-requested Element click, and caller-requested Element text send, "
+            "clear, or replace; no automatic focus, submit, observation, verification, "
+            "action chain, retry, replay, rollback, attach, recovery, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,
@@ -302,6 +305,24 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
     ) -> ElementClickResult:
         result = await ctx.request_context.lifespan_context.click(request)
         return cast(ElementClickResult, _success(result))
+
+    @server.tool(
+        name="appium.element.text",
+        description="Send, clear, or replace text on one explicitly located Element.",
+        annotations=ToolAnnotations(
+            read_only_hint=False,
+            destructive_hint=True,
+            idempotent_hint=False,
+            open_world_hint=True,
+        ),
+        structured_output=True,
+    )
+    async def element_text(
+        request: ElementTextRequest,
+        ctx: Context[McpApplication],
+    ) -> ElementTextResult:
+        result = await ctx.request_context.lifespan_context.text(request)
+        return cast(ElementTextResult, _success(result))
 
     return server
 
