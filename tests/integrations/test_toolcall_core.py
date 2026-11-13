@@ -452,8 +452,7 @@ def test_tool_bindings_execute_capability_and_use_surface_truth(tmp_path: Path) 
         assert result["data"]["transport"] == "in_process"
         assert result["data"]["protocol_target"] is None
         assert tuple(result["data"]["tools"]) == _TOOL_NAMES
-        assert "no_cli_product" in result["data"]["limitations"]
-        assert "no_cli_sdk_product" not in result["data"]["limitations"]
+        assert "no_cli_product" not in result["data"]["limitations"]
         await application.aclose()
         await application.aclose()
 
@@ -565,7 +564,7 @@ def test_surface_guards_prevent_registry_cross_use(tmp_path: Path) -> None:
         toolcall = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
         with pytest.raises(ValueError, match="ToolCall bindings require"):
             mcp.tool_bindings()
-        with pytest.raises(ValueError, match="ToolCall dispatch requires"):
+        with pytest.raises(ValueError, match="dispatch requires"):
             await mcp.dispatch("appium_capabilities_get", {"schema_version": 1})
         with pytest.raises(ValueError, match="MCP server requires"):
             create_server(toolcall)
@@ -950,7 +949,7 @@ def test_real_toolcall_lifecycle_runs_all_ten_state_machines(
         )
         assert capability["data"]["integration_form"] == "toolcall"
         assert capability["data"]["transport"] == "in_process"
-        assert "no_cli_product" in capability["data"]["limitations"]
+        assert "no_cli_product" not in capability["data"]["limitations"]
 
         for mode in ("static", "external_connection"):
             runtime = await _invoke_binding(

@@ -4,7 +4,7 @@
 
 本文件记录项目级已确认事实及模块索引，模块细节由对应模块 SPEC 维护。开发流程由 [AGENTS.md](AGENTS.md) 和相关技能定义，不在此重复。
 
-本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断、已有本地 Appium 连接和受管 Appium 启动/usage/自然清理契约；实现与兼容性以实际验收证据为准。当前 Integrations 产品接入包含本地 stdio MCP 与面向 FSQ 的进程内 Python ToolCall 表面；这不自动承诺其他 Agent、CLI、HTTP、设备平台或具体 Host 兼容。
+本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断、已有本地 Appium 连接、受管初始安装、scope-managed Appium 生命周期、受管官方 driver ensure 与显式 Driver Doctor 契约；实现与兼容性以实际验收证据为准。当前 Integrations 产品接入包含本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面，以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI；这不自动承诺其他 Agent、HTTP、设备平台或具体 Host 兼容。
 
 ## Module Table
 
@@ -22,13 +22,13 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根安装，以及 scope-managed Appium 启动、usage 保护与自然/显式清理；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放；后续组件维护、显式服务 stop/restart 与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放。显式服务 stop/restart 与其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
 - Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。当前首要目标 Agent 为 FSQ，接入形式为既有本地 stdio MCP 与进程内 Python ToolCall；其他 Agent 和产品接入形式尚未确定。
 - 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8、selenium==4.51.0 与 defusedxml==0.7.1。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及其传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi；defusedxml 仅用于 Automation AIF-03 page-source XML 安全解析。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
-- Runtime、Contracts、Configuration及Automation的当前公开契约由对应模块SPEC维护；Integrations当前公开契约包含Host中立的本地stdio MCP，以及与其同源、前期只面向FSQ的进程内Python ToolCall表面。契约确认或feature限定Done均不等于模块、平台、FSQ Host资格或设备链路已验收。
+- Runtime、Contracts、Configuration及Automation的当前公开契约由对应模块SPEC维护；Runtime 的受管初始安装清单与后续官方 driver maintenance/Doctor 是不同资格层，均不自动声明服务、设备、Session或三平台验收。Integrations当前公开契约包含Host中立的本地stdio MCP、前期只面向FSQ的进程内Python ToolCall表面，以及与其同源的本地Unix socket正式产品CLI。契约确认或feature限定Done均不等于模块、平台、FSQ Host资格或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
 ## Python Architecture
@@ -138,7 +138,7 @@
 本节定义已确认的 RT-LOCAL-04 增量；依据为[受管启动详细设计](docs/superpowers/specs/2026-11-13-runtime-local-04-managed-startup-design.md)。契约确认不表示实现、真实服务/设备链或 Runtime 模块已经验收。
 
 - Runtime 增加显式同步 managed scope，只从当前账号固定 `~/.appium-connect-agent/` 中经验证的受管 Appium 启动本次 owned 服务；调用方必须给出 numeric loopback `127.0.0.1` 或 `::1`、明确端口和合法 base path。不扫描、自动换端口、共享未知实例、读取用户全局安装或接入远程服务。
-- RT-LOCAL-03 的 `supported_combinations()` 与 `Runtime.install()` 继续拥有精确初始安装清单，当前仍为 Appium 3.7.0 + UiAutomator2 8.7.0；RT-LOCAL-04 不改变其组件版本 installed/reused/conflict 语义。记录命名空间仅做窄兼容 delta：`records/` 精确允许 `installation.json` 与可选 `service.json`，任何其他文件继续 recovery；service 不存在或合法 `stopped` 时 install 放行，非终态/非法时 install/start 均零写入阻断。
+- RT-LOCAL-03 的 `supported_combinations()` 与 `Runtime.install()` 继续拥有精确初始安装清单，当前仍为 Appium 3.7.0 + UiAutomator2 8.7.0；RT-LOCAL-04/05 不改变其初始组件版本 installed/reused/conflict 语义。记录命名空间仅做窄兼容 delta：`records/` 精确允许必需 `installation.json`、可选 `service.json` 与可选 `maintenance.json`，任何其他文件继续 recovery；service 不存在或合法 `stopped`，且 maintenance 不存在或合法 terminal `complete | failed` 时 install 才可继续原资格核对；service/maintenance 非终态、recovery 或非法 schema 时 install/start/maintenance 均在各自写入或组件命令前阻断。
 - managed lifecycle 独立按实际 owned 服务的可靠 SemVer Appium `3.x` 判断启动资格，不维护 Appium minor/patch 与 driver 版本矩阵。启动必须持有本次真实 `Popen`/进程组句柄，并以固定 macOS `/usr/sbin/lsof -F` 对内核 socket 表核验本次 owned PID 自身持有目标 numeric loopback/port 的 TCP LISTEN FD，之后才可轮询 `/status`；status 成功后必须再次核验同一 FD ownership 和 child 存活。只有两次 ownership proof、`ready=true`、可靠 SemVer `3.x` 和 child 存活同时成立才进入 active。外部服务在 bind 竞态中抢占端口时 owned PID 无该 LISTEN FD，不能借外部 ready 假阳性通过；证明不依赖 Appium 日志文案或 extension 输出。工具缺失、不可信、超时或结果异常保守失败 `service_ownership_unverified`。
 - managed connection 复用 `RuntimeConnection`，将 ownership 扩展为 `external | managed`。Automation 在 managed Session 创建前取得 Runtime usage lease；只有已证明未创建，或 Session 已确认删除且本地清理完成后纯内存释放。创建/quit 结果 unknown 或清理失败时保留 usage；有效 `release()` 不执行进程/网络/文件 I/O，不发送信号或抛 Runtime 清理异常，`Session.quit()` 契约保持。
 - 任一 usage 存在时 scope exit 零 TERM/KILL，进入 close-requested/cleanup_pending并保留本实例真实句柄与账号锁；无主体异常抛 `service_in_use`，有主体异常在 `runtime_managed_cleanup_error` 独立保留。后续 quit 只令 usage 归零，调用方必须显式 `cleanup_managed()`；该入口在 usage>0 时零信号拒绝，usage=0 后才有界 TERM→必要 KILL、流排空、wait、管道关闭和监督线程 join。
@@ -146,6 +146,16 @@
 - 普通 managed startup 不执行 Doctor、driver install/update、npm、ADB 或 Session。Driver Doctor 属于 #13 RT-LOCAL-05 的显式、另行授权环境准备，固定 driver 名仅 `uiautomator2 | xcuitest | mac2`；Appium 3.7.0 Doctor 的 autofix 副作用不能由 `--json` 关闭。active 服务的显式 stop/restart 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
 - 复用 CPython 3.11 标准库进程、信号、selector、socket、线程和 monotonic 能力，macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及已批准 HTTPX 0.28.1、AnyIO 4.15.1、HTTPcore 1.0.9、node-semver 0.9.1 的现有用途；不新增或升级产品/开发依赖，不改变模块导入方向。
 
+
+## Local Managed Driver Maintenance And Official Driver Doctor
+
+- Runtime 在已验收固定受管根上新增两个显式同步准备入口：`ensure_managed_driver()` 只确保一个允许的官方 driver 已安装，`run_driver_doctor()` 只运行该已安装 driver 的公开 Doctor；唯一 short name 为 `uiautomator2 | xcuitest | mac2`，并分别固定映射官方 npm package `appium-uiautomator2-driver | appium-xcuitest-driver | appium-mac2-driver`。不接受第三方名、版本、source/package/path 或任意附加 CLI 参数。
+- RT-LOCAL-03 的 Appium 3.7.0 + UiAutomator2 8.7.0 仍是精确初始安装清单；维护资格要求 `installation.json` 合法 complete、受管 Appium identity/entrypoint 可靠且实际 SemVer 为 `3.x`、service absent 或合法 stopped、maintenance absent 或合法 terminal complete/failed。`incomplete | cleanup_pending | recovery_required` 或任一非法记录在 install/start/ensure/Doctor 的写入和目标 CLI 前保守阻断。
+- 缺失 driver 只通过受管 Appium 公开 `driver install <short-name> --json` 无版本委托一次；Runtime 不维护 Appium minor/patch 与 driver 版本矩阵，不搜索兼容旧版、不更新 Appium、不 retry/fallback/update/uninstall。安装前后均以 `driver list --installed --json` 白名单复查官方 package identity、可靠版本和受管路径；非零或最终事实不符明确失败。
+- Driver Doctor 是显式、可能修改当前账号环境的准备操作，不属于静态 `diagnose()` 或普通 `start_managed()`。Appium 3.7.0 的 `--json` 不关闭 autofix，成功 stdout 仅为整数 check count，且无-autofix optional finding 仍可能 exit 0；因此产品成功语义仅为保守 `accepted`，子进程一旦启动固定报告 `may_have_modified_environment=true`，任何非零统一 Doctor 错误，不声称 zero findings、平台 ready 或设备/Session qualified。
+- 两入口默认共享 600 秒总预算，失败/取消/超时后最多额外 30 秒进程组与双流收尾；持续排空、非结构化流内部最多 64 KiB，结构化 stdout 最大 1 MiB且必须完整解析。结果、记录、progress 和受控错误只允许固定 driver、已验证 SemVer、稳定代码/count/布尔事实，不泄漏路径、环境、npmrc、凭据或 stdout/stderr 原文。
+- 复用 CPython 3.11 标准库、现有 Runtime 账号锁/安全根/进程组/原子记录，以及既有批准的 `node-semver==0.9.1` 和受管 Appium 3.x 公开 extension CLI；零新增或升级产品/开发依赖。`Runtime.cleanup_installation()` 返回 `InstallationResult | DriverMaintenanceResult | DriverDoctorResult`，按同实例唯一 installation/ensure/Doctor cleanup-pending owner 返回同形结果；无 pending 保留既有幂等 InstallationResult，且不按磁盘 PID/PGID 接管崩溃遗留。
+- 本契约不授权真实 npm 网络、受管根写入或 Doctor autofix；每个 driver/平台的真实 install 与 Doctor 都需单独明确环境、允许副作用、数据保留和恢复授权。Android 证据不替代 iOS/macOS；CLI accepted 不等于服务、设备、Session、平台或 Runtime 模块整体验收。
 
 ## Automation Structure Observation
 
@@ -305,3 +315,20 @@
 - 完成门槛包括十项MCP input hash零漂移、FSQ双后端schema实测、ToolCall strict/error/cancel/lifecycle合同、既有MCP聚焦回归、Ruff/mypy/import-linter与独立审查。Issue #22不要求或授权真实设备链；缺少FSQ真实模型调用只限制具体Host资格，不得冒充已通过。
 
 详细接口、投射算法和手工FSQ wiring见[已确认设计](docs/superpowers/specs/2026-11-13-integrations-fsq-toolcall-core-design.md)，模块级合同见Integrations SPEC的INT-CORE-01章节。
+
+## INT-CLI-01 Local Unix Socket Session Bridge And Product CLI Delta
+
+本节为 Issue #23 经用户 SPEC Gate 明确确认的合同；该合同不自动替代独立审查或未获准的真实设备/服务/外部交付操作。
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。Integrations新增正式产品CLI `appium-connect-agent`和当前登录账号私有Unix domain socket daemon；既有`appium-connect-agent-mcp`继续共存。CLI不新增Automation能力、设备/平台或具体Host资格，Integrations、Automation、当前平台与项目整体仍non-Done。
+- daemon持有唯一`Application(settings, adb_executable, surface="cli")`并只通过`TOOL_CATALOG.tool_names`十个无点号名调用同一strict model、Registry、Runtime/Session生命周期、错误映射和canonical JSON。`Application.surface`、mandatory capability result union及Session ownership clean-cutover为`mcp|toolcall|cli`；CLI固定`cli/unix_socket/null`，三表面共同limitations移除`no_cli_product`。session open/close description clean-cutover为`Application-owned`；十项MCP request annotation/包装/顺序及`inputSchema` SHA-256保持100%零漂移。
+- 正式命令固定为`daemon start --config <abs> --adb-executable <abs> [--socket <abs>] [--idle-timeout-seconds <finite-positive-default-900>]`、`daemon status [--socket <abs>]`、`daemon stop [--socket <abs>]`、`catalog`及`call <TOOL_CATALOG.tool_name> --json-args <json_object> [--socket <abs>] [--timeout-seconds <finite-positive>]`。不读环境/PATH/SDK root、不搜索或隐式启动；catalog零I/O；点号/未知名exit2零daemon请求。
+- 默认endpoint为`/private/tmp/appium-connect-agent-<uid>/bridge.sock`；路径绝对strict UTF-8最多103 bytes，父目录current UID真实非symlink精确0700，socket精确0600。固定账号级`/private/tmp/appium-connect-agent-<uid>/daemon.lock`保证不同显式endpoint仍只有一个daemon；显式endpoint目录另持同名0600 endpoint lock（默认时同一文件），两者固定顺序`flock(LOCK_EX|LOCK_NB)`。只有双锁owner可复核并删除明确`ECONNREFUSED`且inode/owner/type/mode未变的合规stale socket。
+- `daemon start`通过16KiB strict framed bootstrap pipe与readiness pipe双阶段ready/ACK转移ownership；ACK前timeout/Ctrl+C/EOF使child在accept前清理并由parent回收，长驻child argv不含路径/JSON。短生命周期调用CLI argv含用户显式option是已披露OS事实，不得被产品再次输出或持久化。
+- IPC固定4-byte big-endian length加strict UTF-8 JSON，一连接一请求；request最多1MiB、完整response envelope最多4MiB，读/写各固定10秒。每次accept立即登记connection cancel scope；partial/invalid/pre-dispatch连接也可由stop/idle/signal取消。声明长度是请求边界；其后extra byte属于post-dispatch violation，可能已有一次下层调用，只 cooperative cancel且不重放。
+- strict request union为`tool.call|daemon.status|daemon.stop`；strict response union为`tool_result(canonical_json,is_error)|daemon_status|daemon_stopped|bridge_error`，全部字段required/extra-forbid。call stdout原样输出同源canonical string；start/status/stop/catalog文档、ready状态、bridge code、stdout/stderr与退出码具有模块SPEC列明的唯一golden bytes，不使用任意message。
+- daemon并发accept但不排队业务调用。stop、默认900秒idle、SIGINT、SIGTERM及fatal listener统一once-only coordinator：停止accept，取消所有accepted scope（已读stop连接除外），等待transport/Application worker，最多一次`Application.aclose()`，关闭/删除自有listener node，释放endpoint/account locks，再有界回复stop。Session quit与Runtime清理由Application唯一拥有，active Session最多尝试quit一次；unknown/uncertain/busy/cleanup failure保持degraded。
+- CLI退出码固定0成功、1 canonical Application/tool错误、2参数/JSON/bootstrap/endpoint/工具名、3不可达/IPC/bridge失败、4显式shutdown degraded、130 ACK前client Ctrl+C。stderr/status/control/daemon日志/长驻child argv不得回显路径、参数、handle、device/app/UI或异常原文；tool stdout按确认合同可含当前调用所需敏感结果。
+- 无新增、替换或升级依赖；复用Python3.11标准库、AnyIO4.15.1 tag、Pydantic2.14.1 tag及现有serializer。Feature Done需三表面truth、描述delta、十schema零漂移、双锁/握手/framing/partial连接/cancel/shutdown/privacy矩阵、wheel/sdist双入口、静态质量及独立full审查；真实设备链仍须另行授权且不提升模块/平台Done。
+
+详细Interface、安全边界、库依据、验证矩阵与deferred范围见[已确认详细设计](docs/superpowers/specs/2026-11-13-integrations-cli-bridge-design.md)及Integrations模块SPEC的INT-CLI-01章节。

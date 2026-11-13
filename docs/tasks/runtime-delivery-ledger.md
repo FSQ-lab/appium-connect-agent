@@ -2,10 +2,10 @@
 
 本页是 Runtime 的唯一当前进度来源。设计维护需求、方案及 feature 拆分，SPEC 维护已确认契约；代码、测试存在和历史聊天中的“完成”都不能单独替代验收证据。
 
-- 更新日期：2026-11-12。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
+- 更新日期：2026-11-13。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
 - 本轮验收恢复基线：`master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始工作区干净；台账初建时的核对基线为 `4a3640eef5be3704874b22f0d1a1a91015258287`。
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
-- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03A和RT-LOCAL-03B均已在各自feature范围通过验证与独审；RT-LOCAL-03的A+B功能和整体验收/独审已通过，Tech Lead判定03 Done。Runtime首批、Runtime/M01及04–06仍未整体验收，不宣称Runtime、项目或其他平台Done。**
+- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03（03A+03B）与 RT-LOCAL-04（Issue #10 @ `564384a`）均已在各自限定范围完成验证、真实链验收与独立审查 Done；RT-LOCAL-05（Issue #13，05A 官方 driver ensure + 05B 显式官方 Driver Doctor）已完成实现、受控测试与独立审查，正执行获准 Android `uiautomator2` 真实受管验证（`mac2`/`xcuitest` 真实联网安装与 Doctor 未授权、保留明确平台验证缺口）。RT-LOCAL-06（#4）与 Runtime/M01（#6）仍待推进，不宣称 Runtime、项目或其他平台 Done。**
 
 ## RT-LOCAL-03A 独立安装准备
 
@@ -158,8 +158,8 @@
 | RT-LOCAL-01 | 同步静态报告、设置、操作控制和协调锁**已验收**；full 后两轮 repair-only/pass，F01–F03/Q01 均关闭。见能力分项及 E01–E08 | 不执行组件命令/HTTP，不安装、启停或创建 Session；这些不是该静态 feature 的遗漏实现 | 工程基础依赖已满足，G01 已关闭。产品原 767 行加两轮修复保守累计 810 行；测试 967 行，文档另计，见 E08 |
 | RT-LOCAL-02 | **已验收 / Done**；397 项测试、真实公开连接范围及服务保留通过，full 后四项修复经 repair-only/pass 全部关闭，见 E10 | 不做自管启动、组件修改、远程或 Session 管理；连接检查不保证设备/Session 可用 | 01 已验收，G02/G03 已关闭；产品保守累计 575 行、测试 1157 行，文档单列，产品目标 500–800 行 |
 | RT-LOCAL-03 | **已验收 / Done**；03A 独立安装准备、03B 正常失败部分状态继续及 03 整体验证/独审均已闭合，见本页对应章节 | 不更新、降级或卸载已有组件，不隐式安装；不交付 Appium 自管服务、Session 或 04–06 生命周期能力 | 02 已验收，G04/G05 已关闭；03A 保守累计产品 1698 行、03B 产品 236 行，规模与证据边界见对应章节 |
-| RT-LOCAL-04 | **未实现** | 待做：自管启动及就绪、占用保护、退出清理和失败恢复；不先交付无占用保护的启动路径、不共享多实例 | 依赖 03、G06；需真实 Android Session 验证；1000–1200 行，超预算先重拆 |
-| RT-LOCAL-05 | **未实现** | 待做：维护独立组件、为可识别已有环境补装缺失 driver、在用/未知空闲时拒绝；不迁移任意 npm 环境或升级已有组件 | 依赖 04；组件请求、权限及恢复行为仍须对应设计/SPEC gate；800–1100 行 |
+| RT-LOCAL-04 | **已验收 / Done（Issue #10 @ `564384a`）**；50 项受控生命周期测试、双重 `/usr/sbin/lsof -F` 内核 LISTEN FD 归属证明、usage lease、正式 wheel + Pixel 6 真机安全 Session 链、全仓 2526 passed 及独立实现/证据审查全部 PASS | 不启动未受管安装、不共享未知实例、不自动执行 Doctor、不含 active 服务显式 stop/restart | 03 已验收，G06 在 Android 单机范围满足；产品代码及测试见 Issue #10 与受管启动设计 |
+| RT-LOCAL-05 | **已实现并通过受控验证与独审（Issue #13）**；72 项维护与 Doctor 测试覆盖三大官方 allowlist（`uiautomator2 | xcuitest | mac2`）、`maintenance.json` 四入口门禁、无版本 CLI 委托与粗粒度 Doctor `accepted` 语义；正执行获准 Android `uiautomator2` 真实验证，`mac2`/`xcuitest` 真实安装与 Doctor 保持未授权缺口 | 不升级/降级/卸载已有组件，不搜索兼容旧版或 fallback，不在 `diagnose`/`start_managed` 静默运行 Doctor，不维护外部 npm 环境 | 04 已验收；产品 churn 1257 行（05A+05B 共享单一锁/记录/进程组状态机） |
 | RT-LOCAL-06 | **未实现** | 待做：仅对自有且无占用进程显式 stop/restart、更新连接视图；不自动重启或恢复旧 Session | 依赖 04、05；生命周期控制契约仍须对应 gate；400–700 行 |
 
 ### RT-LOCAL-01 能力分项

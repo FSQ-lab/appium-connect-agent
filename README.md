@@ -1,10 +1,10 @@
 # Appium Connect Agent
 
-当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/usage 保护与清理、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP 与面向 FSQ 的进程内 Python ToolCall 表面（覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、调用方显式请求的单次 Element click、文本 send/clear/replace 与 Device back）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/usage 保护与清理、三大目标官方 driver（`uiautomator2 | xcuitest | mac2`）的显式受管维护与显式 Doctor 环境准备、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、调用方显式请求的单次 Element click、文本 send/clear/replace 与 Device back）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP 与前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），覆盖一个进程内显式 Session 的 open/status/close、tree/attributes/structure 三种 Native 只读观测、单次 Element click、显式 send/clear/replace 文本意图与一次调用方显式请求的 Device back；不提供其他 UI 动作、自动动作链、动作后观测、自动导航、聚焦/提交/校验、重试、fallback、回滚、正式产品 CLI、HTTP、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、tree/attributes/structure 三种 Native 只读观测、单次 Element click、显式 send/clear/replace 文本意图与一次调用方显式请求的 Device back；不提供其他 UI 动作、自动动作链、动作后观测、自动导航、聚焦/提交/校验、重试、fallback、回滚、HTTP、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入设备操作实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -31,12 +31,15 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 不提供临时清除，显式 `None` 或空字符串报错；参数不写回文件。
 通过 `loaded.sources` 查询 `file`、`override` 或 `default` 来源。
 
-## 本地 stdio MCP readiness/discovery、Session lifecycle、Native observation、Element 与 Device 动作
+## 本地 stdio MCP、进程内 ToolCall 与正式产品 CLI（同源 10 工具）
 
-安装制品只提供一个 MCP transport bootstrap，不是通用 CLI：
+安装制品同时提供本地 stdio MCP 启动入口与基于当前账号私有 Unix domain socket（默认 `/private/tmp/appium-connect-agent-<uid>/bridge.sock`）的正式产品 CLI：
 
 ```text
 appium-connect-agent-mcp --config /absolute/path/project.toml --adb-executable /absolute/path/adb
+appium-connect-agent daemon start --config /absolute/path/project.toml --adb-executable /absolute/path/adb
+appium-connect-agent call appium_capabilities_get --json-args '{"schema_version":1}'
+appium-connect-agent daemon stop
 ```
 
 两个长 option 都必须且只能提供一次；不支持短名、位置参数、默认路径或环境变量、PATH、TOML、SDK root 回退。`--config` 只加载一次不可变 Configuration 快照；ADB 路径由 Integrations 独立持有，每次设备列举仍由 Automation 公开入口重新校验。stdout 专用于 MCP framing，运维错误写入脱敏 stderr。

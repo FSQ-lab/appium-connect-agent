@@ -19,3 +19,14 @@ def test_mcp_console_entrypoint_is_unique_and_loadable() -> None:
     assert len(matches) == 1
     assert matches[0].value == "appium_connect_agent.integrations._server:main"
     assert callable(matches[0].load())
+
+
+def test_cli_console_entrypoint_is_unique_and_loadable() -> None:
+    matches = [
+        entry
+        for entry in entry_points(group="console_scripts")
+        if entry.name == "appium-connect-agent"
+    ]
+    assert len(matches) == 1
+    assert matches[0].value == "appium_connect_agent.integrations.cli:main"
+    assert callable(matches[0].load())

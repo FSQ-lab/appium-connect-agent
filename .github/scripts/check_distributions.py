@@ -49,17 +49,27 @@ assert set(metadata.get_all('Requires-Dist')) == {
     'appium-python-client==6.0.8', 'selenium==4.51.0', 'defusedxml==0.7.1',
     'mcp==2.3.0', 'pydantic==2.14.1'
 }
-scripts = [
-    entry for entry in distribution('appium-connect-agent').entry_points
-    if entry.group == 'console_scripts' and entry.name == 'appium-connect-agent-mcp'
-]
-assert len(scripts) == 1
-assert scripts[0].value == 'appium_connect_agent.integrations._server:main'
+scripts = {
+    entry.name: entry.value
+    for entry in distribution('appium-connect-agent').entry_points
+    if entry.group == 'console_scripts'
+}
+assert scripts == {
+    'appium-connect-agent': 'appium_connect_agent.integrations.cli:main',
+    'appium-connect-agent-mcp': 'appium_connect_agent.integrations._server:main',
+}
 if sys.platform == 'darwin':
     from appium_connect_agent.integrations import Application, SyncApplication, TOOL_CATALOG
+    from appium_connect_agent.integrations.cli import main as cli_main
     from appium_connect_agent.runtime import (
+        DriverComponent,
+        DriverDoctorError,
+        DriverDoctorResult,
+        DriverMaintenanceError,
+        DriverMaintenanceResult,
         InstallRequest,
         LocalSettings as RuntimeSettings,
+        OfficialDriver,
         Runtime,
         RuntimeUsage,
         ServiceLifecycleError,
@@ -68,10 +78,13 @@ if sys.platform == 'darwin':
     from appium_connect_agent.automation import Device, Element, Session
     assert RuntimeSettings is LocalSettings
     assert callable(Runtime) and hasattr(Runtime, 'start_managed') and hasattr(Runtime, 'cleanup_managed')
+    assert hasattr(Runtime, 'ensure_managed_driver') and hasattr(Runtime, 'run_driver_doctor')
     assert RuntimeUsage is not None and issubclass(ServiceLifecycleError, Exception)
+    assert DriverComponent is not None and DriverMaintenanceResult is not None and DriverDoctorResult is not None
+    assert OfficialDriver is not None
+    assert issubclass(DriverMaintenanceError, Exception) and issubclass(DriverDoctorError, Exception)
     assert len(TOOL_CATALOG.specs) == 10
-    assert callable(Application) and callable(SyncApplication)
-    assert InstallRequest().combination_id is None
+    assert callable(Application) and callable(SyncApplication) and callable(cli_main)
     combinations = supported_combinations()
     assert len(combinations) == 1
     assert combinations[0].combination_id == 'macos-android-uiautomator2'

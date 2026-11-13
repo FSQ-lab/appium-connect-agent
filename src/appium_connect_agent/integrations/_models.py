@@ -175,7 +175,6 @@ CapabilityLimitations: TypeAlias = tuple[
     Literal["single_session_capacity"],
     Literal["opaque_handle_process_local"],
     Literal["no_session_attach_recovery"],
-    Literal["no_cli_product"],
     Literal["no_http_transport"],
     Literal["no_clear_app"],
     Literal["automation_module_e2e_unqualified"],
@@ -205,8 +204,19 @@ class ToolCallCapabilityData(_StrictModel):
     limitations: CapabilityLimitations
 
 
+class CliCapabilityData(_StrictModel):
+    integration_form: Literal["cli"]
+    transport: Literal["unix_socket"]
+    protocol_target: None
+    host_compatibility: Literal["unqualified"]
+    adb_configured: Literal[True]
+    platform: PlatformData
+    tools: ToolCallToolNames
+    limitations: CapabilityLimitations
+
+
 CapabilityData: TypeAlias = Annotated[
-    McpCapabilityData | ToolCallCapabilityData,
+    McpCapabilityData | ToolCallCapabilityData | CliCapabilityData,
     Field(discriminator="integration_form"),
 ]
 
@@ -237,6 +247,10 @@ class McpCapabilityResult(CapabilityResult):
 
 class ToolCallCapabilityResult(CapabilityResult):
     data: ToolCallCapabilityData
+
+
+class CliCapabilityResult(CapabilityResult):
+    data: CliCapabilityData
 
 
 class RuntimeCheck(_StrictModel):
@@ -1111,7 +1125,7 @@ class SessionCloseRequest(_StrictModel):
 
 
 class SessionData(_StrictModel):
-    ownership: Literal["mcp", "toolcall"]
+    ownership: Literal["mcp", "toolcall", "cli"]
     session_handle: SessionHandle
     session_state: Literal["active", "uncertain", "closing", "closed"]
     device_id: Annotated[

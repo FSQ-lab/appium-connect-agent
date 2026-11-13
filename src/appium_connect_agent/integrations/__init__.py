@@ -1,4 +1,4 @@
-"""MCP and in-process ToolCall surfaces over one Integrations application."""
+"""MCP, in-process ToolCall, and CLI surfaces over one Integrations application."""
 
 from ._application import Application, ApplicationError
 from ._catalog import (

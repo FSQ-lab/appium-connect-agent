@@ -22,6 +22,7 @@ dependencies = [
 
 [project.scripts]
 appium-connect-agent-mcp = "appium_connect_agent.integrations._server:main"
+appium-connect-agent = "appium_connect_agent.integrations.cli:main"
 
 [dependency-groups]
 dev = [
