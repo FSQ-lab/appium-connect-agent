@@ -5,7 +5,7 @@
 - 更新日期：2026-11-13。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
 - 本轮验收恢复基线：`master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始工作区干净；台账初建时的核对基线为 `4a3640eef5be3704874b22f0d1a1a91015258287`。
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
-- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03（03A+03B）与 RT-LOCAL-04（Issue #10 @ `564384a`）均已在各自限定范围完成验证、真实链验收与独立审查 Done；RT-LOCAL-05（Issue #13，05A 官方 driver ensure + 05B 显式官方 Driver Doctor）已完成实现、受控测试与独立审查，正执行获准 Android `uiautomator2` 真实受管验证（`mac2`/`xcuitest` 真实联网安装与 Doctor 未授权、保留明确平台验证缺口）。RT-LOCAL-06（#4）与 Runtime/M01（#6）仍待推进，不宣称 Runtime、项目或其他平台 Done。**
+- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03（03A+03B）与 RT-LOCAL-04（Issue #10 @ `564384a`）均已在各自限定范围完成验证、真实链验收与独立审查 Done；RT-LOCAL-05（Issue #13，05A 官方 driver ensure + 05B 显式官方 Driver Doctor）已完成实现、72 项受控测试、正式 wheel 隔离环境下的 Android `uiautomator2` 真实受管 `reused` + `run_driver_doctor`（7 checks `accepted`）验收及独立审查（Android 单平台范围满足，而 `mac2`/`xcuitest` 真实联网无版本 install 与 Doctor 因未授权保持明确平台验证缺口，故 #13 整体保持 open / `device-validation-blocked`）。RT-LOCAL-06（#4）与 Runtime/M01（#6）仍待推进，不宣称 Runtime、项目或其他平台 Done。**
 
 ## RT-LOCAL-03A 独立安装准备
 
@@ -159,7 +159,7 @@
 | RT-LOCAL-02 | **已验收 / Done**；397 项测试、真实公开连接范围及服务保留通过，full 后四项修复经 repair-only/pass 全部关闭，见 E10 | 不做自管启动、组件修改、远程或 Session 管理；连接检查不保证设备/Session 可用 | 01 已验收，G02/G03 已关闭；产品保守累计 575 行、测试 1157 行，文档单列，产品目标 500–800 行 |
 | RT-LOCAL-03 | **已验收 / Done**；03A 独立安装准备、03B 正常失败部分状态继续及 03 整体验证/独审均已闭合，见本页对应章节 | 不更新、降级或卸载已有组件，不隐式安装；不交付 Appium 自管服务、Session 或 04–06 生命周期能力 | 02 已验收，G04/G05 已关闭；03A 保守累计产品 1698 行、03B 产品 236 行，规模与证据边界见对应章节 |
 | RT-LOCAL-04 | **已验收 / Done（Issue #10 @ `564384a`）**；50 项受控生命周期测试、双重 `/usr/sbin/lsof -F` 内核 LISTEN FD 归属证明、usage lease、正式 wheel + Pixel 6 真机安全 Session 链、全仓 2526 passed 及独立实现/证据审查全部 PASS | 不启动未受管安装、不共享未知实例、不自动执行 Doctor、不含 active 服务显式 stop/restart | 03 已验收，G06 在 Android 单机范围满足；产品代码及测试见 Issue #10 与受管启动设计 |
-| RT-LOCAL-05 | **已实现并通过受控验证与独审（Issue #13）**；72 项维护与 Doctor 测试覆盖三大官方 allowlist（`uiautomator2 | xcuitest | mac2`）、`maintenance.json` 四入口门禁、无版本 CLI 委托与粗粒度 Doctor `accepted` 语义；正执行获准 Android `uiautomator2` 真实验证，`mac2`/`xcuitest` 真实安装与 Doctor 保持未授权缺口 | 不升级/降级/卸载已有组件，不搜索兼容旧版或 fallback，不在 `diagnose`/`start_managed` 静默运行 Doctor，不维护外部 npm 环境 | 04 已验收；产品 churn 1257 行（05A+05B 共享单一锁/记录/进程组状态机） |
+| RT-LOCAL-05 | **Android 限定真实验证通过，三平台整体 blocked（Issue #13）**；72 项维护与 Doctor 受控测试、正式 wheel 隔离环境对真实 `~/.appium-connect-agent` 的 `ensure_managed_driver("uiautomator2")`（`reused`/`8.7.0`）与 `run_driver_doctor("uiautomator2")`（`accepted`/`executed_check_count=7`/`maintenance.json=complete`）及独立审查全部 PASS；`mac2`/`xcuitest` 真实联网 install 与 Doctor 未获授权、保持明确平台验证缺口 | 不升级/降级/卸载已有组件，不搜索兼容旧版或 fallback，不在 `diagnose`/`start_managed` 静默运行 Doctor，不维护外部 npm 环境 | 04 已验收；产品 churn 1257 行（05A+05B 共享单一锁/记录/进程组状态机） |
 | RT-LOCAL-06 | **未实现** | 待做：仅对自有且无占用进程显式 stop/restart、更新连接视图；不自动重启或恢复旧 Session | 依赖 04、05；生命周期控制契约仍须对应 gate；400–700 行 |
 
 ### RT-LOCAL-01 能力分项
