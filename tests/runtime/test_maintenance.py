@@ -66,7 +66,7 @@ if args and Path(args[0]).name == "npm":
             "before": "null",
             "min-release-age-exclude": "",
             "omit": "",
-            "include": "",
+            "include": "dev,optional",
             "node-options": "null",
             "only": "null",
             "production": "null",

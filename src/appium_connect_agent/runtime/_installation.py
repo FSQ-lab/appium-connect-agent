@@ -177,7 +177,7 @@ _NPM_EFFECTIVE_POLICY: dict[str, frozenset[str]] = {
     "min-release-age-exclude": frozenset({""}),
     "ignore-scripts": frozenset({"false"}),
     "omit": frozenset({""}),
-    "include": frozenset({""}),
+    "include": frozenset({"", "dev,optional"}),
     "only": frozenset({"null"}),
     "production": frozenset({"false"}),
     "optional": frozenset({"true"}),
