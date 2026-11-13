@@ -139,6 +139,7 @@ class RuntimeOperationError(Exception):
         self.installation_result = installation_result
         self.runtime_http_cleanup_error: BaseException | None = None
         self.runtime_installation_cleanup_error: BaseException | None = None
+        self.runtime_managed_cleanup_error: BaseException | None = None
 
 
 class EnvironmentBusyError(RuntimeOperationError):
@@ -155,6 +156,10 @@ class OperationCancelledError(RuntimeOperationError):
 
 class ServiceConnectionError(RuntimeOperationError):
     """The explicitly configured service could not be reused."""
+
+
+class ServiceLifecycleError(RuntimeOperationError):
+    """An owned Appium service could not start or clean up safely."""
 
 
 class UnsupportedVersionError(RuntimeOperationError):

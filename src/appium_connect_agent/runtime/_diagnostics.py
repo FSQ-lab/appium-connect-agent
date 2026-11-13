@@ -9,8 +9,8 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import get_ident
-from typing import TYPE_CHECKING
+from threading import Lock, get_ident
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from appium_connect_agent.contracts import LocalSettings
@@ -41,6 +41,7 @@ from ._semver import constraint, satisfies
 if TYPE_CHECKING:
     from ._connection import RuntimeConnection
     from ._installation import _Installer
+    from ._managed import _ManagedScope
 
 
 class _Operation:
@@ -291,7 +292,7 @@ def _diagnostic_lock(operation: _Operation, reuse: bool) -> Iterator[None]:
 
 
 class Runtime:
-    """Diagnose local metadata or reuse an explicitly configured external service."""
+    """Diagnose, connect to, install, or own one local Appium runtime."""
 
     def __init__(
         self,
@@ -309,6 +310,9 @@ class Runtime:
         self._diagnosing = False
         self._installing = False
         self._installation_cleanup: _Installer | None = None
+        self._managed_scope: _ManagedScope | None = None
+        self._managed_cleanup: _ManagedScope | None = None
+        self._managed_guard = Lock()
 
     def connect(
         self, *, control: OperationControl | None = None
@@ -318,6 +322,33 @@ class Runtime:
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
         return _ConnectionScope(self, control or OperationControl())
+
+    def start_managed(
+        self,
+        *,
+        host: Literal["127.0.0.1", "::1"],
+        port: int,
+        base_path: str = "",
+        control: OperationControl | None = None,
+    ) -> AbstractContextManager[RuntimeConnection]:
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        from ._managed import _ManagedScope
+
+        return _ManagedScope(
+            self,
+            host,
+            port,
+            base_path,
+            control or OperationControl(timeout_seconds=60.0),
+        )
+
+    def cleanup_managed(self, *, control: OperationControl | None = None) -> None:
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        from ._managed import cleanup_managed
+
+        cleanup_managed(self, control or OperationControl(timeout_seconds=30.0))
 
     def install(
         self,
@@ -358,7 +389,11 @@ class Runtime:
             raise ValueError("control must be OperationControl or None")
         operation = _Operation(control or OperationControl(), self._on_progress)
         operation.checkpoint()
-        if self._diagnosing or self._active_thread not in (None, get_ident()):
+        if (
+            self._diagnosing
+            or self._managed_scope is not None
+            or self._active_thread not in (None, get_ident())
+        ):
             raise operation.error(EnvironmentBusyError, "environment_busy")
         self._diagnosing = True
         try:

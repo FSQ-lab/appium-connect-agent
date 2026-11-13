@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from appium_connect_agent.contracts import LocalSettings
+from appium_connect_agent.contracts._url import normalize_server_url
 
 from . import _coordination
 from ._diagnostics import _diagnostic_lock, _Operation
@@ -60,6 +61,17 @@ _METADATA_LIMIT = 1024 * 1024
 _ALLOWED_ROOT = frozenset(
     {"managed.json", "appium", "driver-home", "records", "cache", "tmp"},
 )
+_SERVICE_STATES = frozenset(
+    {
+        "starting",
+        "active",
+        "stopping",
+        "cleanup_pending",
+        "recovery_required",
+        "stopped",
+    }
+)
+
 _CONTROL_ENV = (
     "node_options",
     "node_path",
@@ -668,6 +680,63 @@ def _validate_root(root: Path) -> bool:
     return True
 
 
+def _service_record_state(root: Path) -> str:
+    record = root / "records" / "service.json"
+    try:
+        info = record.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        raise _StateFailure("installation_recovery_required") from None
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or info.st_size > _RECORD_LIMIT
+        or info.st_mode & 0o077
+    ):
+        raise _StateFailure("installation_recovery_required")
+    try:
+        value = json.loads(record.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise _StateFailure("installation_recovery_required") from None
+    fields = {"schema", "state", "operation_id", "host", "port", "base_path"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise _StateFailure("installation_recovery_required")
+    state = value["state"]
+    operation_id = value["operation_id"]
+    host_value = value["host"]
+    port_value = value["port"]
+    base_path = value["base_path"]
+    if (
+        type(value["schema"]) is not int
+        or value["schema"] != 1
+        or not isinstance(state, str)
+        or state not in _SERVICE_STATES
+        or not isinstance(operation_id, str)
+        or not 1 <= len(operation_id) <= 128
+        or any(
+            ord(character) <= 32 or ord(character) >= 127 for character in operation_id
+        )
+        or host_value not in ("127.0.0.1", "::1")
+        or not isinstance(host_value, str)
+        or type(port_value) is not int
+        or not 1 <= port_value <= 65535
+        or not isinstance(base_path, str)
+    ):
+        raise _StateFailure("installation_recovery_required")
+    host = f"[{host_value}]" if host_value == "::1" else host_value
+    expected = f"http://{host}:{port_value}{base_path}"
+    try:
+        normalized = normalize_server_url(expected)
+    except ValueError:
+        raise _StateFailure("installation_recovery_required") from None
+    if normalized != expected:
+        raise _StateFailure("installation_recovery_required")
+    return state
+
+
 def _record_state(
     root: Path, components: tuple[InstallationComponent, ...]
 ) -> Literal["complete", "failed"]:
@@ -679,7 +748,12 @@ def _record_state(
         entries = {entry.name for entry in records.iterdir()}
     except OSError:
         raise _StateFailure("installation_recovery_required") from None
-    if entries != {"installation.json"}:
+    if "installation.json" not in entries or entries - {
+        "installation.json",
+        "service.json",
+    }:
+        raise _StateFailure("installation_recovery_required")
+    if _service_record_state(root) not in ("absent", "stopped"):
         raise _StateFailure("installation_recovery_required")
     try:
         value = _json_file(record, _RECORD_LIMIT)

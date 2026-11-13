@@ -1360,5 +1360,111 @@ def test_started_component_writer_keeps_changed_true_on_uncertainty(
     assert result is not None and result.changed is True
 
 
+def write_service_record(root: Path, state: str, *, malformed: bool = False) -> None:
+    value: dict[str, object] = {
+        "schema": 1,
+        "state": state,
+        "operation_id": "managed-operation",
+        "host": "127.0.0.1",
+        "port": 4723,
+        "base_path": "",
+    }
+    if malformed:
+        value["unexpected"] = True
+    record = root / "records" / "service.json"
+    record.write_text(json.dumps(value))
+    record.chmod(0o600)
+
+
+def test_stopped_service_record_allows_installation_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = fake_tools(tmp_path, monkeypatch)
+    first = Runtime(settings).install(InstallRequest())
+    write_service_record(first.root, "stopped")
+
+    reused = Runtime(settings).install(InstallRequest())
+
+    assert reused.outcome == "reused"
+    assert (
+        json.loads((first.root / "records" / "service.json").read_text())["state"]
+        == "stopped"
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "malformed"),
+    [
+        ("starting", False),
+        ("active", False),
+        ("cleanup_pending", False),
+        ("stopped", True),
+    ],
+)
+def test_nonterminal_or_invalid_service_record_blocks_install_before_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    malformed: bool,
+) -> None:
+    settings = fake_tools(tmp_path, monkeypatch)
+    first = Runtime(settings).install(InstallRequest())
+    write_service_record(first.root, state, malformed=malformed)
+    before_commands = command_log(tmp_path)
+    before_tree = tree_snapshot(first.root)
+
+    with pytest.raises(InstallationError) as caught:
+        Runtime(settings).install(InstallRequest())
+
+    assert caught.value.code == "installation_recovery_required"
+    assert command_log(tmp_path) == before_commands
+    assert tree_snapshot(first.root) == before_tree
+
+
+@pytest.mark.parametrize(
+    "case", ["permission", "symlink", "oversized", "truncated", "illegal-field"]
+)
+def test_unsafe_service_record_blocks_install_without_commands_or_overwrite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+) -> None:
+    settings = fake_tools(tmp_path, monkeypatch)
+    first = Runtime(settings).install(InstallRequest())
+    record = first.root / "records" / "service.json"
+    value: dict[str, object] = {
+        "schema": 1,
+        "state": "stopped",
+        "operation_id": "managed-operation",
+        "host": "127.0.0.1",
+        "port": 4723,
+        "base_path": "",
+    }
+    if case == "permission":
+        record.write_text(json.dumps(value))
+        record.chmod(0o644)
+    elif case == "symlink":
+        record.symlink_to("installation.json")
+    elif case == "oversized":
+        record.write_bytes(b"x" * (64 * 1024 + 1))
+        record.chmod(0o600)
+    elif case == "truncated":
+        record.write_bytes(b'{"schema":')
+        record.chmod(0o600)
+    else:
+        value["unexpected"] = True
+        record.write_text(json.dumps(value))
+        record.chmod(0o600)
+    before_commands = command_log(tmp_path)
+    before_tree = tree_snapshot(first.root)
+
+    with pytest.raises(InstallationError) as caught:
+        Runtime(settings).install(InstallRequest())
+
+    assert caught.value.code == "installation_recovery_required"
+    assert command_log(tmp_path) == before_commands
+    assert tree_snapshot(first.root) == before_tree
+
+
 def stat_mode(path: Path) -> int:
     return path.stat().st_mode & 0o777

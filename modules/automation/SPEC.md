@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款。其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
+只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -107,6 +107,18 @@
 - 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/closing/closed、同 Session 立即忙、closed quit 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
 - 获准真实验收使用固定Appium3.7.0 / UiAutomator2 8.7.0和一个明确Android目标，覆盖实际Session创建、500秒协商、正常quit及确认释放后的replacement Session。四种应用输入、不同device ID独立资源、同设备拒绝、systemPort、状态机、known/unknown和分别quit继续由锁定真实Client/Selenium到临时HTTP服务的受控永久测试守护。当前资格不声明两个真实设备同时active或真实多设备隔离；未来增加该资格须独立设计、SPEC和资源授权。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
+
+### RT-LOCAL-04 Managed Runtime Usage Delta
+
+本节只为 managed `RuntimeConnection` 增加 AIF-02 的 usage lease 接缝；现有 external connection、公开 `create_session`/`Session.quit` 签名、Session 状态、请求事实、错误层级和 device/systemPort 规则不变。
+
+- `create_session(connection, ...)` 完成全部纯值校验及 active `server_url` 读取后、取得 device/systemPort reservation 或发送任何 Session 创建请求前，调用公开 `connection.acquire_usage()`。`InvalidStateError/connection_closing` 或 `connection_closed` 在发送前映射为既有 `InvalidSessionStateError/session_invalid/not_sent`，不暴露 Runtime 私有状态机。
+- 请求可证明未发送，或 Appium 有效终态明确证明未创建，且 client/transport 本地清理完成时，同步调用 `usage.release()`；清理错误存在时不得释放。成功创建时 lease 由 Session 唯一持有；`session_create_unknown`、response_unknown、无可靠成功形状或任何保留 Session/device/systemPort 的清理错误都通过现有公开 retained Session 保持同一 lease 可达。
+- `Session.quit()` 只有在远端 Session 删除响应确认、client/transport 清理完成、Session 状态置为 `closed` 且 device/systemPort reservation 已释放后，才同步调用 `usage.release()`。quit 结果 unknown、删除未确认或任何必要清理错误均保留 lease。
+- 有效未释放 lease 的 `RuntimeUsage.release()` 是 O(1) 纯内存操作：只原子递减 Runtime usage 并标记 released；不执行进程信号、服务终止、网络或文件 I/O，不抛 Runtime cleanup 异常。只有重复 release 抛 `InvalidStateError/usage_released`，且产品实现必须避免重复调用。
+- 因此 managed Session 的 create/quit 仍只产生既有 Automation 成功或错误；`Session.quit()` 不负责、也不会触发 Appium 服务清理。scope 已提前 close-requested 时，成功 quit 仅令 usage 归零，调用方另行调用同一 Runtime 的 `cleanup_managed()`。Integrations 当前 external connection 行为不变；切换 managed 不属于 #10。
+- 永久受控测试必须覆盖 acquire 在 reservation/request 前、closing/closed 错误映射、not-created+clean release、active/unknown/cleanup-error 保留、retained Session lease 身份、confirmed quit 的 reservation→release 顺序、release 零 I/O/零 Runtime 异常、重复 release 防护及全部 external AIF-02 回归；无需真实设备即可验证该窄接缝。
+
 
 ### Retained Session Error Reachability
 

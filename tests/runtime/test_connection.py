@@ -113,7 +113,7 @@ def test_external_scope_and_static_diagnosis(monkeypatch: pytest.MonkeyPatch) ->
             ]
             assert connection.report.checks[-1].status == "unknown"
             with pytest.raises(AttributeError):
-                connection.ownership = "managed"  # type: ignore[misc,assignment]
+                connection.ownership = "managed"  # type: ignore[misc]
             for _ in range(2):
                 report = runtime.diagnose()
                 assert report.operation_id != connection.report.operation_id

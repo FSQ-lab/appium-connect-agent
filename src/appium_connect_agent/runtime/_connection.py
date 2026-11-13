@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import platform
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from threading import Lock, get_ident
 from types import TracebackType
-from typing import Literal
+from typing import Literal, Protocol
 
 import httpcore
 import httpx
@@ -66,22 +67,61 @@ def _http_cleanup(result: HTTPResult, operation: _Operation) -> BaseException | 
     return group
 
 
+class RuntimeUsage:
+    """One opaque, one-shot in-memory lease against a Runtime connection."""
+
+    __slots__ = ("_lock", "_operation_id", "_release", "_released", "_report")
+
+    def __init__(
+        self,
+        release: Callable[[], None],
+        operation_id: str,
+        report: DiagnosticReport,
+    ) -> None:
+        self._release = release
+        self._operation_id = operation_id
+        self._report = report
+        self._released = False
+        self._lock = Lock()
+
+    def release(self) -> None:
+        """Release this lease once without process, network, or filesystem I/O."""
+        with self._lock:
+            if self._released:
+                raise InvalidStateError(
+                    "usage_released", self._operation_id, self._report
+                )
+            self._released = True
+            self._release()
+
+
+class _ConnectionOwner(Protocol):
+    @property
+    def connection_active(self) -> bool: ...
+
+    def acquire_usage(self) -> RuntimeUsage: ...
+
+
 @dataclass(frozen=True)
 class RuntimeConnection:
-    _scope: _ConnectionScope = field(repr=False)
+    _scope: _ConnectionOwner = field(repr=False)
     _url: str = field(repr=False)
     appium_version: str | None
     compatibility: Compatibility
     report: DiagnosticReport
-    ownership: Literal["external"] = field(default="external", init=False)
+    ownership: Literal["external", "managed"] = "external"
 
     @property
     def server_url(self) -> str:
-        if not self._scope.active:
+        if not self._scope.connection_active:
             raise InvalidStateError(
                 "connection_closed", self.report.operation_id, self.report
             )
         return self._url
+
+    def acquire_usage(self) -> RuntimeUsage:
+        """Acquire one opaque lease while this connection accepts new work."""
+        return self._scope.acquire_usage()
 
 
 class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
@@ -91,6 +131,19 @@ class _ConnectionScope(AbstractContextManager[RuntimeConnection]):
         self._entry = Lock()
         self.operation: _Operation | None = None
         self.lock: AbstractContextManager[None] | None = None
+
+    @property
+    def connection_active(self) -> bool:
+        return self.active
+
+    def acquire_usage(self) -> RuntimeUsage:
+        operation = self.operation
+        if not self.active or operation is None:
+            if operation is None:
+                operation = _Operation(self.control, None)
+            raise operation.error(InvalidStateError, "connection_closed")
+        report = operation.report()
+        return RuntimeUsage(lambda: None, operation.operation_id, report)
 
     def __enter__(self) -> RuntimeConnection:
         # A permanently acquired token makes consumption atomic across threads.

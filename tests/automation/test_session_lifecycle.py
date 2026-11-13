@@ -34,7 +34,14 @@ from appium_connect_agent.automation._session_client import (
     _RequestTimedOut,
 )
 from appium_connect_agent.contracts import LocalSettings
-from appium_connect_agent.runtime import OperationControl, Runtime, RuntimeConnection
+from appium_connect_agent.runtime import (
+    InvalidStateError,
+    OperationControl,
+    Runtime,
+    RuntimeConnection,
+    RuntimeUsage,
+    _coordination,
+)
 
 
 @dataclass(frozen=True)
@@ -201,6 +208,13 @@ class ProtocolService:
             return [request for request in self.requests if request.method != "GET"]
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path.resolve() / "runtime-account"
+    home.mkdir()
+    monkeypatch.setattr(_coordination, "_account_home", lambda: home)
+
+
 @pytest.fixture
 def service() -> Iterator[ProtocolService]:
     with ProtocolService() as current:
@@ -212,6 +226,53 @@ def connected(service: ProtocolService) -> Iterator[RuntimeConnection]:
     runtime = Runtime(LocalSettings(server_url=service.url))
     with runtime.connect() as connection:
         yield connection
+
+
+class UsageOwner:
+    def __init__(self, connection: RuntimeConnection) -> None:
+        self.connection = connection
+        self.connection_active = True
+        self.accepting = True
+        self.count = 0
+        self.events: list[str] = []
+
+    def acquire_usage(self) -> RuntimeUsage:
+        if not self.accepting:
+            raise InvalidStateError(
+                "connection_closing",
+                self.connection.report.operation_id,
+                self.connection.report,
+            )
+        self.count += 1
+        self.events.append("acquire")
+
+        def release() -> None:
+            self.count -= 1
+            self.events.append("release")
+
+        return RuntimeUsage(
+            release,
+            self.connection.report.operation_id,
+            self.connection.report,
+        )
+
+
+@contextmanager
+def managed_connection(
+    service: ProtocolService,
+) -> Iterator[tuple[RuntimeConnection, UsageOwner]]:
+    with connected(service) as external:
+        managed = RuntimeConnection(
+            cast(Any, None),
+            external.server_url,
+            external.appium_version,
+            external.compatibility,
+            external.report,
+            "managed",
+        )
+        owner = UsageOwner(managed)
+        object.__setattr__(managed, "_scope", owner)
+        yield managed, owner
 
 
 def create_response(
@@ -1399,6 +1460,156 @@ def test_direct_connection_response_never_switches_runtime_endpoint(
         "/wd/hub/session",
         "/wd/hub/session/appium-session",
     ]
+
+
+def test_managed_usage_is_acquired_before_reservation_and_released_after_quit(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with managed_connection(service) as (connection, owner):
+        original = cast(Any, session_module)._reserve
+
+        def reserve(device_id: str) -> Any:
+            assert owner.count == 1
+            owner.events.append("reserve")
+            return original(device_id)
+
+        monkeypatch.setattr(session_module, "_reserve", reserve)
+        session = create_session(connection, "managed-device")
+        assert owner.count == 1
+        session.quit()
+        assert owner.count == 0
+        assert owner.events == ["acquire", "reserve", "release"]
+
+
+@pytest.mark.parametrize(
+    ("stage", "failure"),
+    [
+        ("creating", RuntimeError("identity construction failed")),
+        ("creating", KeyboardInterrupt()),
+        ("reservation", RuntimeError("reservation initialization failed")),
+    ],
+    ids=("creating-error", "creating-keyboard-interrupt", "reservation-error"),
+)
+def test_managed_zero_request_create_failures_release_usage(
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    failure: BaseException,
+) -> None:
+    if stage == "creating":
+
+        def fail_creating(*args: object, **kwargs: object) -> Session:
+            del args, kwargs
+            raise failure
+
+        monkeypatch.setattr(Session, "_creating", classmethod(fail_creating))
+    else:
+
+        def fail_reservation(device_id: str) -> Any:
+            del device_id
+            raise failure
+
+        monkeypatch.setattr(session_module, "_reserve", fail_reservation)
+
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(type(failure)) as caught:
+            create_session(connection, "managed-zero-request-failure")
+        assert caught.value is failure
+        assert owner.count == 0
+        assert owner.events == ["acquire", "release"]
+        assert service.lifecycle_requests() == []
+
+
+@pytest.mark.parametrize("preflight", ["cancel", "timeout"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_managed_preflight_failure_usage_count(
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    preflight: str,
+    cleanup_fails: bool,
+) -> None:
+    cleanup = OSError("pool close failed")
+    patch_create_client(
+        monkeypatch,
+        cancel=preflight == "cancel",
+        timeout=preflight == "timeout",
+        cleanup_error=cleanup if cleanup_fails else None,
+    )
+    expected = (
+        OperationCancelledError if preflight == "cancel" else OperationTimeoutError
+    )
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(expected) as caught:
+            create_session(connection, f"managed-{preflight}")
+        assert owner.count == (1 if cleanup_fails else 0)
+        assert (caught.value.session is not None) is cleanup_fails
+        assert service.lifecycle_requests() == []
+
+
+def test_managed_terminal_not_created_cleanup_failure_retains_usage(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleanup = OSError("pool close failed")
+    service.create_plans.append(
+        ResponsePlan(status=500, payload=error_response("terminal"))
+    )
+    patch_create_client(monkeypatch, cleanup_error=cleanup)
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(CommandError) as caught:
+            create_session(connection, "managed-terminal-cleanup")
+        assert caught.value.request_state == "response_received"
+        assert caught.value.cleanup_errors == (cleanup,)
+        assert caught.value.session is not None
+        assert owner.count == 1
+
+
+def test_managed_terminal_create_releases_but_unknown_retains_usage(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.extend(
+        [
+            ResponsePlan(status=500, payload=error_response("terminal")),
+            ResponsePlan(disconnect=True),
+        ]
+    )
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(CommandError):
+            create_session(connection, "managed-terminal")
+        assert owner.count == 0
+
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-unknown")
+        assert unknown.value.code == "session_create_unknown"
+        assert unknown.value.session is not None
+        assert owner.count == 1
+
+
+def test_managed_cleanup_failure_and_closing_mapping_retain_usage(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleanup = OSError("pool close failed")
+    with managed_connection(service) as (connection, owner):
+        session = create_session(connection, "managed-cleanup")
+        client = cast(Any, session)._client
+
+        def fail_clear() -> None:
+            raise cleanup
+
+        monkeypatch.setattr(client._conn, "clear", fail_clear)
+        with pytest.raises(ResourceStateError) as failed:
+            session.quit()
+        assert failed.value.code == "cleanup_failed"
+        assert owner.count == 1
+
+        owner.accepting = False
+        with pytest.raises(InvalidSessionStateError) as closing:
+            create_session(connection, "managed-closing")
+        assert closing.value.code == "session_invalid"
+        assert closing.value.request_state == "not_sent"
+        assert owner.count == 1
+        assert [request.method for request in service.lifecycle_requests()].count(
+            "POST"
+        ) == 1
 
 
 def test_session_constructor_is_not_a_public_creation_path() -> None:

@@ -1,8 +1,9 @@
-"""Public synchronous local diagnostics and external connection scopes."""
+"""Public synchronous local diagnostics, connections, and managed scopes."""
 
 from appium_connect_agent.contracts import LocalSettings as LocalSettings
 
 from ._connection import RuntimeConnection as RuntimeConnection
+from ._connection import RuntimeUsage as RuntimeUsage
 from ._diagnostics import Runtime as Runtime
 from ._installation import supported_combinations as supported_combinations
 from ._models import (
@@ -49,6 +50,9 @@ from ._models import (
 )
 from ._models import (
     ServiceConnectionError as ServiceConnectionError,
+)
+from ._models import (
+    ServiceLifecycleError as ServiceLifecycleError,
 )
 from ._models import (
     UnsupportedVersionError as UnsupportedVersionError,

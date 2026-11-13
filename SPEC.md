@@ -4,7 +4,7 @@
 
 本文件记录项目级已确认事实及模块索引，模块细节由对应模块 SPEC 维护。开发流程由 [AGENTS.md](AGENTS.md) 和相关技能定义，不在此重复。
 
-本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断和已有本地 Appium 连接契约；实现与兼容性以实际验收证据为准。项目目标是让 Appium 以更方便、友好的形式接入主流 AI Agent；这不表示已经支持任何具体接入方式或设备平台。
+本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断、已有本地 Appium 连接和受管 Appium 启动/usage/自然清理契约；实现与兼容性以实际验收证据为准。项目目标是让 Appium 以更方便、友好的形式接入主流 AI Agent；这不表示已经支持任何具体接入方式或设备平台。
 
 ## Module Table
 
@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断与已有本地 Appium 的同步连接范围；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放；自管服务、组件生命周期与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根安装，以及 scope-managed Appium 启动、usage 保护与自然/显式清理；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放；后续组件维护、显式服务 stop/restart 与其他 Automation 设备动作仍须逐 feature 确认。团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -132,6 +132,20 @@
 - 完整同版本组合若仍带正常失败终态记录，须通过公开CLI完整复查后原子更新为complete并返回reused；成功继续driver后同样完整复查、记录complete并返回installed。重复调用保持完整复用，不自动下载或覆盖组件。
 - cleanup_pending、recovery_required、截断/非法记录、归属或空闲证据不足仍保持阻断；空闲锁、旧PID/PGID、目录内容或组件看似完整不能单独清除崩溃遗留。03B不跨进程杀旧进程、不自动删除记录、不修复损坏或切换版本。
 - 复用03A已批准的标准库、node-semver和固定公开npm/Appium CLI，无新增产品依赖。预算、进程组、npm网络配置、错误身份、有界证据及sharp warning保持；不新增平台、服务、设备或Session行为。
+
+## Local Managed Appium Startup And Scope Lifecycle
+
+本节定义已确认的 RT-LOCAL-04 增量；依据为[受管启动详细设计](docs/superpowers/specs/2026-11-13-runtime-local-04-managed-startup-design.md)。契约确认不表示实现、真实服务/设备链或 Runtime 模块已经验收。
+
+- Runtime 增加显式同步 managed scope，只从当前账号固定 `~/.appium-connect-agent/` 中经验证的受管 Appium 启动本次 owned 服务；调用方必须给出 numeric loopback `127.0.0.1` 或 `::1`、明确端口和合法 base path。不扫描、自动换端口、共享未知实例、读取用户全局安装或接入远程服务。
+- RT-LOCAL-03 的 `supported_combinations()` 与 `Runtime.install()` 继续拥有精确初始安装清单，当前仍为 Appium 3.7.0 + UiAutomator2 8.7.0；RT-LOCAL-04 不改变其组件版本 installed/reused/conflict 语义。记录命名空间仅做窄兼容 delta：`records/` 精确允许 `installation.json` 与可选 `service.json`，任何其他文件继续 recovery；service 不存在或合法 `stopped` 时 install 放行，非终态/非法时 install/start 均零写入阻断。
+- managed lifecycle 独立按实际 owned 服务的可靠 SemVer Appium `3.x` 判断启动资格，不维护 Appium minor/patch 与 driver 版本矩阵。启动必须持有本次真实 `Popen`/进程组句柄，并以固定 macOS `/usr/sbin/lsof -F` 对内核 socket 表核验本次 owned PID 自身持有目标 numeric loopback/port 的 TCP LISTEN FD，之后才可轮询 `/status`；status 成功后必须再次核验同一 FD ownership 和 child 存活。只有两次 ownership proof、`ready=true`、可靠 SemVer `3.x` 和 child 存活同时成立才进入 active。外部服务在 bind 竞态中抢占端口时 owned PID 无该 LISTEN FD，不能借外部 ready 假阳性通过；证明不依赖 Appium 日志文案或 extension 输出。工具缺失、不可信、超时或结果异常保守失败 `service_ownership_unverified`。
+- managed connection 复用 `RuntimeConnection`，将 ownership 扩展为 `external | managed`。Automation 在 managed Session 创建前取得 Runtime usage lease；只有已证明未创建，或 Session 已确认删除且本地清理完成后纯内存释放。创建/quit 结果 unknown 或清理失败时保留 usage；有效 `release()` 不执行进程/网络/文件 I/O，不发送信号或抛 Runtime 清理异常，`Session.quit()` 契约保持。
+- 任一 usage 存在时 scope exit 零 TERM/KILL，进入 close-requested/cleanup_pending并保留本实例真实句柄与账号锁；无主体异常抛 `service_in_use`，有主体异常在 `runtime_managed_cleanup_error` 独立保留。后续 quit 只令 usage 归零，调用方必须显式 `cleanup_managed()`；该入口在 usage>0 时零信号拒绝，usage=0 后才有界 TERM→必要 KILL、流排空、wait、管道关闭和监督线程 join。
+- 唯一服务记录固定为 `~/.appium-connect-agent/records/service.json`；父进程崩溃、非终态/非法记录或 ownership 事实不足时为 recovery_required。磁盘 PID/PGID、端口、进程名、目录、EOF 或空闲锁都不授予接管或 kill 权限；不自动重启。
+- 普通 managed startup 不执行 Doctor、driver install/update、npm、ADB 或 Session。Driver Doctor 属于 #13 RT-LOCAL-05 的显式、另行授权环境准备，固定 driver 名仅 `uiautomator2 | xcuitest | mac2`；Appium 3.7.0 Doctor 的 autofix 副作用不能由 `--json` 关闭。active 服务的显式 stop/restart 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
+- 复用 CPython 3.11 标准库进程、信号、selector、socket、线程和 monotonic 能力，macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及已批准 HTTPX 0.28.1、AnyIO 4.15.1、HTTPcore 1.0.9、node-semver 0.9.1 的现有用途；不新增或升级产品/开发依赖，不改变模块导入方向。
+
 
 ## Automation Structure Observation
 

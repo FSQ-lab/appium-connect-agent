@@ -21,7 +21,11 @@ from selenium.common.exceptions import (
     StaleElementReferenceException,
 )
 
-from appium_connect_agent.runtime import OperationControl, RuntimeConnection
+from appium_connect_agent.runtime import (
+    OperationControl,
+    RuntimeConnection,
+    RuntimeUsage,
+)
 
 from ._actions import _perform_action, _validate_duration
 from ._device import Device, _create_device
@@ -139,6 +143,21 @@ def _active_server_url(connection: object, operation_id: str) -> str:
         return connection.server_url
     except Exception as cause:
         if getattr(cause, "code", None) != "connection_closed":
+            raise
+        error = InvalidSessionStateError("session_invalid", operation_id, "not_sent")
+        raise error from cause
+
+
+def _acquire_runtime_usage(
+    connection: RuntimeConnection, operation_id: str
+) -> RuntimeUsage:
+    try:
+        return connection.acquire_usage()
+    except Exception as cause:
+        if getattr(cause, "code", None) not in (
+            "connection_closing",
+            "connection_closed",
+        ):
             raise
         error = InvalidSessionStateError("session_invalid", operation_id, "not_sent")
         raise error from cause
@@ -556,6 +575,7 @@ class Session:
     _operation_gate: Lock
     _reservation: _Reservation
     _runtime_connection: RuntimeConnection
+    _runtime_usage: RuntimeUsage
     _state: SessionState
     _state_lock: Lock
     _target_app_id: str | None
@@ -570,6 +590,7 @@ class Session:
         "_operation_gate",
         "_reservation",
         "_runtime_connection",
+        "_runtime_usage",
         "_state",
         "_state_lock",
         "_target_app_id",
@@ -584,6 +605,7 @@ class Session:
         device_id: str,
         app_id: str | None,
         runtime_connection: RuntimeConnection,
+        runtime_usage: RuntimeUsage,
     ) -> Session:
         instance = object.__new__(cls)
         instance._id = uuid4().hex
@@ -592,6 +614,7 @@ class Session:
         instance._target_app_id = app_id
         instance._state = "creating"
         instance._runtime_connection = runtime_connection
+        instance._runtime_usage = runtime_usage
         instance._driver = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
@@ -1152,6 +1175,7 @@ class Session:
                 )
             self._set_state("closed")
             self._reservation.release()
+            self._runtime_usage.release()
         finally:
             self._operation_gate.release()
 
@@ -1165,6 +1189,8 @@ def _raise_create_preflight(
 ) -> Never:
     cleanup_errors = _close_client(client)
     _release_if_clean(reservation, cleanup_errors)
+    if not cleanup_errors:
+        session._runtime_usage.release()
     session._set_state("closed" if not cleanup_errors else "uncertain")
     error_type: type[OperationCancelledError] | type[OperationTimeoutError]
     code: str
@@ -1192,6 +1218,8 @@ def _raise_create_failure(
     cleanup_errors = _close_client(client)
     if client.terminal_not_created:
         _release_if_clean(reservation, cleanup_errors)
+        if not cleanup_errors:
+            session._runtime_usage.release()
         session._set_state("closed" if not cleanup_errors else "uncertain")
         command_error = CommandError(
             "command_failed",
@@ -1255,22 +1283,33 @@ def create_session(
     )
     server_url = _active_server_url(connection, operation_id)
     _checkpoint(control, deadline, operation_id)
-    session = Session._creating(valid_device_id, valid_app_id, connection)
+    usage = _acquire_runtime_usage(connection, operation_id)
+    try:
+        session = Session._creating(valid_device_id, valid_app_id, connection, usage)
+    except BaseException:
+        usage.release()
+        raise
     try:
         reservation = _reserve(valid_device_id)
     except _DeviceBusy:
+        usage.release()
         raise ResourceStateError("device_busy", operation_id, "not_sent") from None
     except _SystemPortUnavailable:
+        usage.release()
         raise ResourceStateError(
             "system_port_unavailable", operation_id, "not_sent"
         ) from None
+    except BaseException:
+        usage.release()
+        raise
     session._reservation = reservation
 
     try:
         client = _new_connection(server_url)
         session._client = client
-    except Exception:
+    except BaseException:
         reservation.release()
+        usage.release()
         raise
     try:
         session._device = _create_device(session)
@@ -1297,6 +1336,8 @@ def create_session(
         if not client.request_started:
             cleanup_errors = _close_client(client)
             _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
             session._set_state("closed" if not cleanup_errors else "uncertain")
             if cleanup_errors:
                 cause.__dict__["automation_cleanup_errors"] = cleanup_errors
@@ -1316,6 +1357,8 @@ def create_session(
         else:
             cleanup_errors = _close_client(client)
             _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
             session._set_state("closed" if not cleanup_errors else "uncertain")
             if cleanup_errors:
                 cause.__dict__["automation_cleanup_errors"] = cleanup_errors
