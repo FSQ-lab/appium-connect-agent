@@ -4,7 +4,7 @@
 
 本模块维护 Appium 运行环境相关职责的边界。
 
-当前确认本地静态诊断、已有本地 Appium 连接、固定受管根安装，以及 scope-managed Appium 启动、usage 保护与自然/显式清理 Interface；设备发现和 Session 创建/使用/关闭由 Automation 或调用方负责，driver 维护与显式服务 stop/restart 按后续 feature 确认。
+当前已确认本地静态诊断、已有本地 Appium 连接、固定受管根初始安装、scope-managed Appium 启动与 usage/清理，以及官方 driver ensure 与显式 Driver Doctor Interface。设备发现和 Session 创建/使用/关闭由 Automation 或调用方负责，显式服务 stop/restart 仍按后续 feature 确认。
 
 ## Responsibilities
 
@@ -22,11 +22,11 @@
 
 ## Current Status
 
-静态诊断、本地连接、固定受管根安装和 managed lifecycle 契约已确认；实现与非设备聚焦验证以交付证据为准，Feature Done 仍需真实受管服务/设备链、质量/发行物和独立审查。本模块首批整体验收仍需后续服务/组件能力与真实 Android 链路。
+静态诊断、本地连接、固定受管根初始安装、managed lifecycle 及官方 driver ensure/Doctor 契约已确认；各 feature 的实现与聚焦验证以交付证据为准。RT-LOCAL-05 的真实三平台安装/Doctor、副作用恢复、质量/发行物和独立审查仍是其 Done gate；本模块整体验收不由单个平台或非设备证据提升。
 
 ## Static Local Diagnostics
 
-以下为已确认的静态诊断 Interface 与约束；已有本地连接、安装和 managed lifecycle 见后文。
+以下为已确认的静态诊断 Interface 与约束；已有本地连接、初始安装、managed lifecycle 和官方 driver maintenance/Doctor 合同见后文。
 
 ### Python Architecture And Dependencies
 
@@ -152,7 +152,7 @@
 | `supported_combinations() -> tuple[InstallationCombination, ...]` | 只返回随包不可变清单，零I/O；InstallationCombination含combination_id、host、target、driver、appium_version、driver_version、node_range、npm_range、is_default、limitations（稳定原因码tuple）。仅当前指定条目，查询不下载/解析latest。 |
 | `InstallRequest(*, combination_id: str | None = None)` | 不可变纯值；None选择当前唯一默认，显式值只可选清单条目。无任意版本、根、shell或源参数；未知条目/错误类型在修改前ValueError。 |
 | `Runtime.install(request: InstallRequest, *, control: OperationControl | None = None) -> InstallationResult` | 同步显式准备或复查整组，只有完整验证成功才正常返回。control=None默认600秒；传OperationControl尊重其timeout_seconds，包括显式构造默认10秒，不改变diagnose/connect默认值。 |
-| `Runtime.cleanup_installation(*, control: OperationControl | None = None) -> InstallationResult` | 只重试本实例仍持有且可证明归属的安装清理及状态复查；默认30秒，无资源时幂等成功。不再安装、不管理外部/服务进程，不凭旧PID接管崩溃遗留。 |
+| `Runtime.cleanup_installation(*, control: OperationControl | None = None) -> InstallationResult | DriverMaintenanceResult | DriverDoctorResult` | 唯一 installation/maintenance cleanup 入口；installation、ensure、Doctor pending 分别返回同形结果，无 pending 保留既有幂等 InstallationResult 复查。只重试本实例仍持有且可证明归属的句柄，默认30秒；不再安装、不运行Doctor、不管理外部/服务进程，不凭旧PID接管崩溃遗留。 |
 | `InstallationComponent` | 不可变快照：name、requested_version、observed_version（str或None）、status（missing/verified/conflict/damaged/unknown）、reason_code、evidence（有界字符串tuple）。tuple中组件顺序固定Appium再UiAutomator2。 |
 | `InstallationResult` | 不可变：operation_id、UTC observed_at、combination_id、root、node_version/npm_version（str或None）、before/after（组件tuple）、outcome（installed/reused/failed/cancelled/timed_out/cleanup_pending/recovery_required/cleanup_completed）、changed（本次是否实际写组件）、warnings、observer_errors、settings（LocalSettings或None）。只有完整安装/复查成功时settings非None，给出实际本体/driver路径及选定Node/npm供后续诊断；不保证服务/设备可用。 |
 
@@ -182,7 +182,7 @@
 
 ### Eligible Terminal State
 
-- 继续资格必须同时满足：固定受管根/marker/record均为当前账号拥有的普通受管对象；唯一记录schema和combination_id有效且state为`failed`；该failed只由03A/03B在本次可证明进程组结束、流关闭、最终组件状态可读取且记录原子持久化成功后写入。额外记录、incomplete/recovery_required、截断、非法或缺失记录均不补写/删除，报installation_recovery_required。
+- 继续资格必须同时满足：固定受管根/marker/record均为当前账号拥有的普通受管对象；`records/` 只含必需 `installation.json`、可选合法 `service.json` 与可选合法 `maintenance.json`；安装记录 schema 和 combination_id 有效且 state 为 `failed`。该 failed 只由03A/03B在本次可证明进程组结束、流关闭、最终组件状态可读取且记录原子持久化成功后写入。service 只允许 absent/stopped，maintenance 只允许 absent/terminal complete/failed；额外记录、任一非法记录、maintenance incomplete/cleanup_pending/recovery_required 或 installation incomplete/recovery_required 均不补写/删除，报 installation_recovery_required。
 - 在账号锁内重新读取事实。唯一可继续部分形状为Appium精确3.7.0 `verified`、UiAutomator2精确8.7.0 `missing`；反向部分、任一conflict/damaged/unknown、complete记录下缺组件、或driver CLI事实与包状态不一致均在组件写入前失败并保留现场。
 - failed记录下两组件均missing继续沿03A完整显式重试；两组件均verified只做完整公开CLI复查并将记录推进为complete。两者都不能跳过工具/配置/预算/协调检查。仍有同实例cleanup_pending时只允许cleanup_installation；其他安装请求保持busy。
 
@@ -210,11 +210,11 @@
 ### Version, Root And Adjacent Feature Boundaries
 
 - `supported_combinations()` 与 `Runtime.install()` 继续拥有精确初始安装清单，当前条目仍为 Appium 3.7.0 + UiAutomator2 8.7.0；安装调用继续按该精确请求执行 verified/reused/conflict/partial/recovery 语义，03A/03B 已验收组件版本行为不放宽为浮动安装。
-- 记录命名空间做一个必要窄 delta：唯一服务记录固定为 `~/.appium-connect-agent/records/service.json`，根目录 `_ALLOWED_ROOT` 六项不变；`records/` 只允许必需的 `installation.json` 与可选 `service.json`，任何其他项继续 `installation_recovery_required`。
+- 记录命名空间做必要窄 delta：唯一服务记录固定为 `~/.appium-connect-agent/records/service.json`，RT-LOCAL-05 唯一维护记录固定为同目录 `maintenance.json`，根目录 `_ALLOWED_ROOT` 六项不变；`records/` 只允许必需 `installation.json`、可选 `service.json` 与可选 `maintenance.json`，任何其他项继续 `installation_recovery_required`。
 - `service.json` 是最大 64 KiB、0600、当前账号拥有的普通非链接文件；schema=1，字段精确为 `schema/state/operation_id/host/port/base_path`。状态只取 `starting | active | stopping | cleanup_pending | recovery_required | stopped`。不存在或合法 `stopped` 是唯一 idle 形状，`Runtime.install()` 可正常 reuse/继续；任何非终态或非法 schema 使 install 在写入/组件命令前 `installation_recovery_required`，start 在 intent/spawn 前 `managed_recovery_required`，均不覆盖现场。
 - managed lifecycle 独立检查实际 owned 服务的可靠 Appium SemVer 主版本，当前只接受 `3.x`；不固定 minor/patch，不维护 Appium 与 driver 的 minor/patch 兼容矩阵，不把版本主号匹配解释为 driver、设备或 Session qualified。
-- 当前 #13 实现前，只有 RT-LOCAL-03 complete 初始组合能形成合格 managed-root 事实；后续 #13 可通过 Appium 公开 CLI 维护同一根内 Appium/driver并原子更新资格事实，但必须保持 service 互斥和记录原子性，#10 不猜测或改写其私有中间状态。
-- 普通 startup 不执行 Doctor、driver install/update、npm、ADB、Session 或设备命令。Driver Doctor 属于 #13 RT-LOCAL-05 的显式、另行授权准备，只接受 `uiautomator2 | xcuitest | mac2`；Appium 3.7.0 Doctor 即使 `--json` 也可能 autofix。active 服务显式 `stop/restart` 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
+- 已确认 RT-LOCAL-05 合同允许在合法 complete 初始安装身份之后，通过受管 Appium 公开 CLI 维护同一根内三个 allowlist 官方 driver；它不改写 `installation.json` 的初始精确组合语义。`maintenance.json` absent 或合法 terminal `complete | failed` 只表示没有活动维护；`incomplete | cleanup_pending | recovery_required` 或非法 schema 使 install/start/ensure/Doctor 在各自写入或目标命令前 recovery 阻断。managed startup 仍独立要求受管 Appium identity/entrypoint 可靠、实际 SemVer `3.x`，不凭 maintenance terminal 推断 driver、平台或设备 qualified。
+- 普通 startup 不执行 Doctor、driver install/update、npm、ADB、Session 或设备命令。Driver maintenance/Doctor 只接受 `uiautomator2 | xcuitest | mac2` 并由后文已确认 RT-LOCAL-05 合同定义；Appium 3.7.0 Doctor 即使 `--json` 也可能 autofix。active 服务显式 `stop/restart` 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
 
 ### Public Interface And Ownership
 
@@ -283,3 +283,57 @@ RuntimeUsage.release() -> None
 - 复用 CPython 3.11 subprocess/os.killpg/signal/selectors/socket/threading/time.monotonic、macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及既有 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1；不新增/升级产品或开发依赖，不使用日志匹配、psutil/AppiumService，不自研 HTTP/SemVer/Doctor。
 - 永久测试必须覆盖：03 records 白名单与 service 状态互操作；真实进程组/双流洪泛；真实临时 Python IPv4/IPv6 HTTP listener 下 `/usr/sbin/lsof -F` 精确 PID/FD/endpoint/LISTEN；工具缺失/不可信/超时/异常；已占端口及 bind 后 external 抢占、external ready + owned child 挂起不退出的反例；首次 proof 前零 HTTP、status 后第二次 proof；ready/version/child；usage create/unknown/quit；release 零 I/O/零清理异常；提前 exit + 显式 cleanup、usage>0 cleanup 零信号；TERM/KILL/错误字段；父崩溃不接管。默认只用临时根/fake Appium和受控 HTTP，不要求设备。
 - Feature Done 另需授权的真实受管组合完成 start→两次 owned LISTEN FD proof 包围 ready→安全 Session create→quit→usage=0→scope 自然清理→进程/管道终态→service stopped→锁复用，并完成质量、发行物和独立审查。缺少服务/设备授权时只能 implementation-and-non-device-pass、device-validation-blocked、Feature non-Done。
+
+## Local Managed Driver Maintenance And Official Driver Doctor
+
+本节是 Issue #13、TaskID `RT-LOCAL-05-DESIGN-SPEC-GATE-01` 的已确认合同。对应详细设计为[受管官方 Driver 维护与 Doctor](../../docs/superpowers/specs/2026-11-13-runtime-local-05-driver-maintenance-doctor-design.md)。合同确认与本地实现不授权真实 npm 网络、受管根、Doctor/autofix、服务、设备、提交、推送或发布操作。
+
+### Rebaseline, Scope And Public Interface
+
+- Issue #13 重基线为两个顺序行为：05A 显式 ensure 一个官方 driver，05B 对已安装官方 driver 显式运行 Doctor；05B 不自动调用 05A。单个行为通过不表示 #13、Runtime 模块或平台 Done。
+- 唯一公开名称类型是 `OfficialDriver = Literal["uiautomator2", "xcuitest", "mac2"]`，并精确映射 `appium-uiautomator2-driver`、`appium-xcuitest-driver`、`appium-mac2-driver`。拒绝大小写别名、平台名、AutomationName、第三方名、npm package 名、`@version`、tag、URL、本地路径、`--source`、`--package` 及任意附加 argv；不提供 update/unsafe/uninstall。
+- 新增同步 `Runtime.ensure_managed_driver(driver: OfficialDriver, *, control: OperationControl | None = None) -> DriverMaintenanceResult` 与 `Runtime.run_driver_doctor(driver: OfficialDriver, *, control: OperationControl | None = None) -> DriverDoctorResult`。Runtime 构造仍零 I/O；非法 driver/control 在锁、根读取、记录写入和子进程前 `ValueError`。
+- `Runtime.cleanup_installation(*, control=None) -> InstallationResult | DriverMaintenanceResult | DriverDoctorResult` 是唯一 installation/maintenance cleanup 入口：installation pending 返回 InstallationResult，ensure pending 返回 DriverMaintenanceResult，Doctor pending 返回 DriverDoctorResult，无 pending 保留既有幂等 InstallationResult；默认30秒。同一实例任何时刻最多一个 pending owner；私有 `_installation_cleanup` clean cutover 为带 operation-kind 的 installation/ensure/Doctor owner 联合，`_installing` 忙态覆盖整个 writer family。入口只处理该 owner 仍持有且可证明归属的真实句柄，不运行 install/Doctor、不停止 active service、不按磁盘 PID/PGID 接管崩溃遗留；不新增 cleanup_driver。
+- 不增加 DriverManager、Adapter registry、factory、任意 runner、版本 resolver、Configuration 字段或其他模块 Interface。Contracts、Configuration、Automation、Integrations、模块依赖方向和产品/开发依赖 no-delta。
+
+### Result And Error Semantics
+
+- `DriverComponent` 是不可变快照：`name`、`observed_version: str | None`、`status: missing | verified | damaged | unknown`、稳定 `reason_code` 与有界 evidence。verified 只表示公开 list 中目标官方 identity、可靠版本与受管路径一致。
+- `DriverMaintenanceResult` 是不可变纯值：`operation_id/observed_at/driver/appium_version/before/after/outcome/changed/warnings/observer_errors`；outcome 为 `installed | reused | failed | cancelled | timed_out | cleanup_pending | recovery_required | cleanup_completed`。installed/reused 不表示 Doctor、服务、设备、Session 或平台 qualified。
+- `DriverDoctorResult` 是不可变纯值：`operation_id/observed_at/driver/appium_version/outcome/executed_check_count/may_have_modified_environment/warnings/observer_errors`；outcome 为 `accepted | failed | cancelled | timed_out | cleanup_pending | recovery_required | cleanup_completed`。accepted 只表示公开 CLI exit 0 且 stdout 是排除 bool、非负、至多 1,000,000 的 JSON integer；不表示 zero findings 或平台 ready。
+- Doctor 子进程一旦成功 spawn，所有成功/非零/取消/超时结果的 `may_have_modified_environment=True`；spawn 前失败为 false。ensure 的 `changed` 只在 install 子进程成功 spawn 后为 true，且失败后不回写为 false。
+- 新增 `DriverMaintenanceError` 和 `DriverDoctorError`，均继承 RuntimeOperationError，分别附 `driver_result` 与 `doctor_result`。稳定 code 至少为 `managed_installation_not_ready`、`driver_not_installed`、`driver_state_unknown`、`driver_damaged`、`driver_install_failed`、`driver_verification_failed`、`driver_doctor_failed`、`driver_doctor_output_invalid`、`maintenance_recovery_required`、`maintenance_cleanup_pending`；继续复用既有 busy/timeout/cancel/coordination/tool/version code。
+- 所有公开 Doctor 非零统一 `DriverDoctorError/driver_doctor_failed`，不解析上游 error/human log 猜 required/optional/import/check 分类。未知 Python 缺陷保留原对象；主错误对象不被清理错误覆盖，进程清理继续独立附 `runtime_installation_cleanup_error`，协调锁清理附 `runtime_cleanup_error`。cleanup 正常返回及取消、超时、再次 pending、recovery、KeyboardInterrupt/未知缺陷均按 pending operation 更新同形 `installation_result`、`driver_result` 或 `doctor_result`；无 pending 路径不制造 maintenance result。
+
+### Preflight Gates And Maintenance Record
+
+- 两入口使用当前 macOS 账号同一非阻塞 `runtime.lock`，并与 diagnose/connect/install/start/managed cleanup/maintenance 全部互斥。一个 monotonic deadline 从入口覆盖 gate、CLI、解析、回调、记录和复查；锁持有至正常 terminal 或本实例保留 cleanup-pending 句柄。
+- 任何目标 CLI 前必须同时满足：固定受管根 owner/mode/marker/链接边界合法；`installation.json` schema 合法且 state=`complete`；受管 Appium package identity、entrypoint 和路径可靠，观测版本是既有 strict ASCII SemVer `3.x`；`service.json` absent 或合法 stopped；`maintenance.json` absent 或合法 terminal complete/failed。任一缺失的必要事实、非终态、recovery 或非法 schema 都零 maintenance 写入、零 target list/install/Doctor 阻断。
+- `installation.json` 继续证明 RT-LOCAL-03 精确初始 Appium 3.7.0 + UiAutomator2 8.7.0 清单身份；05 不修改它，也不放宽 `Runtime.install()` 的精确版本行为。maintenance 的 Appium `3.x` gate 是 managed 资格，不表示 Runtime 会更新 Appium，亦不建立 Appium minor/patch 与 driver 版本矩阵。
+- `maintenance.json` 最大 64 KiB、0600、当前 UID、普通非链接、link count 1；schema=1，字段精确为 `schema/state/operation_id/operation/driver/may_have_changed`。state 只取 `incomplete | complete | failed | cleanup_pending | recovery_required`；operation 只取 `driver_install | driver_doctor`；driver 只取 OfficialDriver；operation_id 为 1..128 非空白可打印 ASCII，may_have_changed 为保守风险 bool，不能单独用于状态晋级、恢复或资格判断。沿现有安全 `_atomic_json`。
+- install/Doctor spawn 前原子写 incomplete 且 `may_have_changed=true`，表示即将进入不可事务化外部 writer 的保守风险，不声称 Popen 已成功或环境实际改变。公开 ensure result 的 changed 仍只在 install 成功 spawn 后为 true；Doctor 的 may_have_modified_environment 仍按 spawn 前后区分。complete 只表示该次公开 CLI 合同完成；failed 只在进程组、流、最终事实和记录都可证明终态时使用。terminal 记录不替代 installation complete、service idle、Appium 3.x 或 driver list 事实。
+- cleanup_pending 仅表示同一实例仍持有真实句柄并保留账号锁，只允许 cleanup_installation；recovery_required 表示 ownership/终态或 schema 未知。磁盘 PID/PGID、进程名、目录、EOF、端口、空闲锁或 mtime 不授权接管、kill、删除、修复或晋级状态。
+
+### Official CLI Behavior
+
+- gate 后固定执行 `<node> <managed-appium-entry> driver list --installed --json`。未传 `--updates`，不得请求 update metadata。Runtime 允许 Appium 3.x 增加未知字段，但只读取目标 map key 的 `installed/pkgName/version/installType/appiumVersion/installPath`；Appium 3.7.0 installed manifest/list 不保留 `driverName`，不得要求该字段。short-name identity 由 map key 精确等于请求值证明；同时要求固定官方 package、installed is True、可靠 SemVer、可选 installType/appiumVersion 不矛盾，以及解析后的 installPath 位于已验证 driver home并指向官方 package identity。目标 key absent 才是 missing；必需字段缺失/类型错、identity/path 矛盾、非法版本、非零、非法 UTF-8/JSON 或超限是 damaged/unknown，不得当 missing 覆盖。若另核对 package 内 appium.driverName，只能安全有界读取受管 installPath/package.json，不得声称来自 list。
+- 05A 若 before verified，直接 reused/changed=false，不写 intent、不运行 install。若明确 missing，唯一写命令是 `<node> <entry> driver install <driver> --json`；short name 直接来自 Literal且不带版本。Appium/npm 选择默认版本并执行 peer compatibility；任何不兼容原样失败，不搜索旧版、不更新 Appium、不 retry/fallback。exit 0 后必须再次 list 并完整验证目标 identity/version/path，才写 complete、返回 installed。
+- 05B 要求 before verified；missing 以 driver_not_installed 失败且不自动 ensure。唯一命令是 `<node> <entry> driver doctor <driver> --json`。Appium 3.7.0 动态加载 manifest Doctor checks；`--json` 不关闭 `hasAutofix()` 的 fix，成功 stdout 仅为 integer check count；仅有无-autofix optional finding 时仍可能 exit 0。故 success 仅称 accepted；非零统一失败，不自动 rerun/rollback，不追加 SDK/Xcode/signing/Accessibility/ADB/设备命令。
+- 所有命令使用固定受管 Node/Appium/APPIUM_HOME/cwd/cache/tmp/PATH，`shell=False`、`stdin=DEVNULL`、双流 PIPE、`start_new_session=True`。可继承已批准的 npm registry/proxy/certificate/auth 行为但不读取、返回或修改其值；不修改 npmrc、shell、全局 PATH/prefix 或默认 `~/.appium`。
+
+### Budget, Cleanup And Data Boundary
+
+- 两入口 `control=None` 默认 600 秒总预算；显式 OperationControl 沿其有限正数预算/Event。失败、取消、超时或 KeyboardInterrupt 后停止新业务命令，使用一个额外最多 30 秒共享 cleanup deadline完成 TERM、最多2秒温和等待、必要 KILL、wait、双流排空、pipe/selector close、最终事实读取和 terminal record；各阶段不重置。
+- 深化并复用现有 `_installation._ProcessHandle`。双流持续排空，非结构化内部诊断每流最多保留64KiB，超限后继续排空并只保留 truncated 标记；list/install/Doctor 的结构化 stdout 使用唯一完整 buffer，最大1MiB，超限失败且不解析前缀，不另复制完整 stdout。只有进程组 gone、poll 非None、selector无注册、pipes关闭且句柄终态可证明才释放锁。
+- 公开 result/report/evidence/progress/record/受控错误 message 的严格 allowlist 只有固定 driver、已验证 Appium/driver SemVer、稳定 status/reason/error code、合法 check count 和 changed/may-have-modified/truncated 布尔事实。不得泄漏路径、用户名/home、环境、PATH/JAVA_HOME/ANDROID_HOME/Xcode、npmrc/registry/proxy/certificate/auth/token、package/manifest 全文、PID/PGID/端口、设备/UI/Session、stdout/stderr/Doctor/fix/error 原文或异常 repr/stack。
+- Doctor 动态执行当前 driver 代码，不是 OS sandbox；即使 allowlist driver，也可能修改当前账号可写环境或平台设置。一旦 spawn 就保守报告可能修改，不承诺事务、回滚、exactly-once 或仅写受管根。普通 diagnose 保持静态只读；普通 start_managed 不运行 maintenance/Doctor；external/default Appium 和用户全局 npm 永不成为写目标。
+
+### Reuse, Verification And Authorization
+
+- 零新增/升级依赖。复用 CPython 3.11 `subprocess/os.killpg/signal/selectors/json/pathlib/stat/os.replace/time.monotonic/threading.Event`、现有 Runtime lock/安全根/原子记录、既有批准 `node-semver==0.9.1` 公开 strict SemVer 入口，以及受管 Appium 3.x 公开 extension CLI；不引入 psutil、npm Python SDK、CLI framework，不使用私有 JS 或 human-log parser。
+- 永久测试必须覆盖三个 name/package allowlist、Appium 3.7.0 list 无 driverName 的合法 present/final-list/Doctor-before 路径、全部 gate 与 records 白名单、present/missing/damaged/unknown、无版本 peer incompatibility、二次 list、Doctor integer/非零/optional/autofix 保守语义、600s+30s、洪泛/1MiB上限、真实临时进程组/锁/记录、三种 cleanup 返回/异常附件、无 pending 幂等 InstallationResult、cleanup pending、crash不接管及全链脱敏。默认只用临时账号根和 fake Node/Appium，不触碰真实 npm/Doctor/服务/设备。
+- Feature Done 另需正式 wheel/sdist consumer 验证两个新入口、cleanup 返回联合及异常附件，完成质量验证、独立完整安全/正确性审查 0 open findings，以及分别授权的三个 driver 真实无版本 install/peer 结果和各平台 Doctor/autofix 环境/副作用/恢复证据。Android 证据不替代 iOS/macOS；缺少对应授权或环境时必须报告 blocked/non-Done。
+
+### Deferred By Design
+
+- Appium 更新/降级/选择；driver version/tag/update/unsafe/uninstall/rollback/compatibility resolver；第三方 driver/plugin/任意 package/source/path/argv；自动/startup Doctor、scheduler/cache/retry/fallback；Doctor per-check DTO或日志解析；sandbox/环境diff/事务回滚/平台工具自研修复；active service stop/restart；external或用户npm维护；跨进程PID接管；Session/ADB/设备/UI；持久原始日志/环境快照/遥测，均不在本 feature，也不预建占位 Interface。

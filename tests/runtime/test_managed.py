@@ -59,6 +59,7 @@ def _managed_root(tmp_path: Path, *, mode: str = "serve") -> tuple[Path, Path]:
         root / "tmp",
     ):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
     _write_json(root / "managed.json", {"owner": "appium-connect-agent", "schema": 1})
     _write_json(
         appium_package / "package.json",

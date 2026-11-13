@@ -26,9 +26,12 @@ from ._inspection import (
 from ._models import (
     DiagnosticCheck,
     DiagnosticReport,
+    DriverDoctorResult,
+    DriverMaintenanceResult,
     EnvironmentBusyError,
     InstallationResult,
     InstallRequest,
+    OfficialDriver,
     OperationCancelledError,
     OperationControl,
     OperationTimeoutError,
@@ -41,6 +44,7 @@ from ._semver import constraint, satisfies
 if TYPE_CHECKING:
     from ._connection import RuntimeConnection
     from ._installation import _Installer
+    from ._maintenance import _MaintenanceRunner
     from ._managed import _ManagedScope
 
 
@@ -309,7 +313,7 @@ class Runtime:
         self._active_thread: int | None = None
         self._diagnosing = False
         self._installing = False
-        self._installation_cleanup: _Installer | None = None
+        self._installation_cleanup: _Installer | _MaintenanceRunner | None = None
         self._managed_scope: _ManagedScope | None = None
         self._managed_cleanup: _ManagedScope | None = None
         self._managed_guard = Lock()
@@ -373,16 +377,54 @@ class Runtime:
             self, request, control or OperationControl(timeout_seconds=600.0)
         )
 
-    def cleanup_installation(
-        self, *, control: OperationControl | None = None
-    ) -> InstallationResult:
+    def ensure_managed_driver(
+        self,
+        driver: OfficialDriver,
+        *,
+        control: OperationControl | None = None,
+    ) -> DriverMaintenanceResult:
+        from ._maintenance import ensure_managed_driver, official_driver
+
+        selected = official_driver(driver)
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
+        return ensure_managed_driver(
+            self,
+            selected,
+            control or OperationControl(timeout_seconds=600.0),
+        )
+
+    def run_driver_doctor(
+        self,
+        driver: OfficialDriver,
+        *,
+        control: OperationControl | None = None,
+    ) -> DriverDoctorResult:
+        from ._maintenance import official_driver, run_driver_doctor
+
+        selected = official_driver(driver)
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        return run_driver_doctor(
+            self,
+            selected,
+            control or OperationControl(timeout_seconds=600.0),
+        )
+
+    def cleanup_installation(
+        self, *, control: OperationControl | None = None
+    ) -> InstallationResult | DriverMaintenanceResult | DriverDoctorResult:
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        selected = control or OperationControl(timeout_seconds=30.0)
+        from ._maintenance import cleanup_maintenance
+
+        maintenance = cleanup_maintenance(self, selected)
+        if maintenance is not None:
+            return maintenance
         from ._installation import cleanup_installation
 
-        return cleanup_installation(
-            self, control or OperationControl(timeout_seconds=30.0)
-        )
+        return cleanup_installation(self, selected)
 
     def diagnose(self, *, control: OperationControl | None = None) -> DiagnosticReport:
         if control is not None and not isinstance(control, OperationControl):

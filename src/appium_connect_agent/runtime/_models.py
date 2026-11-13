@@ -22,6 +22,28 @@ InstallationOutcome = Literal[
     "cleanup_completed",
 ]
 
+OfficialDriver = Literal["uiautomator2", "xcuitest", "mac2"]
+DriverStatus = Literal["missing", "verified", "damaged", "unknown"]
+DriverMaintenanceOutcome = Literal[
+    "installed",
+    "reused",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "cleanup_pending",
+    "recovery_required",
+    "cleanup_completed",
+]
+DriverDoctorOutcome = Literal[
+    "accepted",
+    "failed",
+    "cancelled",
+    "timed_out",
+    "cleanup_pending",
+    "recovery_required",
+    "cleanup_completed",
+]
+
 
 @dataclass(frozen=True)
 class InstallationCombination:
@@ -74,6 +96,42 @@ class InstallationResult:
     warnings: tuple[str, ...]
     observer_errors: tuple[str, ...]
     settings: LocalSettings | None
+
+
+@dataclass(frozen=True)
+class DriverComponent:
+    name: OfficialDriver
+    observed_version: str | None
+    status: DriverStatus
+    reason_code: str
+    evidence: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DriverMaintenanceResult:
+    operation_id: str
+    observed_at: datetime
+    driver: OfficialDriver
+    appium_version: str
+    before: DriverComponent
+    after: DriverComponent
+    outcome: DriverMaintenanceOutcome
+    changed: bool
+    warnings: tuple[str, ...]
+    observer_errors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DriverDoctorResult:
+    operation_id: str
+    observed_at: datetime
+    driver: OfficialDriver
+    appium_version: str
+    outcome: DriverDoctorOutcome
+    executed_check_count: int | None
+    may_have_modified_environment: bool
+    warnings: tuple[str, ...]
+    observer_errors: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -137,6 +195,8 @@ class RuntimeOperationError(Exception):
         self.operation_id = operation_id
         self.partial_report = partial_report
         self.installation_result = installation_result
+        self.driver_result: DriverMaintenanceResult | None = None
+        self.doctor_result: DriverDoctorResult | None = None
         self.runtime_http_cleanup_error: BaseException | None = None
         self.runtime_installation_cleanup_error: BaseException | None = None
         self.runtime_managed_cleanup_error: BaseException | None = None
@@ -172,3 +232,11 @@ class InvalidStateError(RuntimeOperationError):
 
 class InstallationError(RuntimeOperationError):
     """A managed installation could not safely complete."""
+
+
+class DriverMaintenanceError(RuntimeOperationError):
+    """An allowlisted managed driver could not be ensured safely."""
+
+
+class DriverDoctorError(RuntimeOperationError):
+    """An allowlisted managed driver's official Doctor did not complete safely."""

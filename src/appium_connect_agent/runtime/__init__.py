@@ -13,6 +13,21 @@ from ._models import (
     DiagnosticReport as DiagnosticReport,
 )
 from ._models import (
+    DriverComponent as DriverComponent,
+)
+from ._models import (
+    DriverDoctorError as DriverDoctorError,
+)
+from ._models import (
+    DriverDoctorResult as DriverDoctorResult,
+)
+from ._models import (
+    DriverMaintenanceError as DriverMaintenanceError,
+)
+from ._models import (
+    DriverMaintenanceResult as DriverMaintenanceResult,
+)
+from ._models import (
     EnvironmentBusyError as EnvironmentBusyError,
 )
 from ._models import (
@@ -32,6 +47,9 @@ from ._models import (
 )
 from ._models import (
     InvalidStateError as InvalidStateError,
+)
+from ._models import (
+    OfficialDriver as OfficialDriver,
 )
 from ._models import (
     OperationCancelledError as OperationCancelledError,

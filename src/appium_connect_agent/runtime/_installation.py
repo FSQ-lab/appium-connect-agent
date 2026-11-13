@@ -71,6 +71,9 @@ _SERVICE_STATES = frozenset(
         "stopped",
     }
 )
+_MAINTENANCE_STATES = frozenset(
+    {"incomplete", "complete", "failed", "cleanup_pending", "recovery_required"}
+)
 
 _CONTROL_ENV = (
     "node_options",
@@ -258,27 +261,38 @@ class _Tool:
 @dataclass(frozen=True)
 class _CommandResult:
     returncode: int
-    stdout: bytes
+    stdout: bytearray
     stdout_truncated: bool
 
 
 class _ProcessHandle:
     """One owned process group and its continuously drained bounded streams."""
 
-    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+    def __init__(
+        self, process: subprocess.Popen[bytes], *, stdout_limit: int = _OUTPUT_LIMIT
+    ) -> None:
         self.process = process
         self.group_id = process.pid
         self._group_gone = False
-        self.selector = selectors.DefaultSelector()
+        self.stdout_limit = stdout_limit
+        self.selector: selectors.BaseSelector | None = None
         self.buffers: dict[Literal["stdout", "stderr"], bytearray] = {
             "stdout": bytearray(),
             "stderr": bytearray(),
         }
         self.truncated = {"stdout": False, "stderr": False}
-        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
-            assert stream is not None
-            os.set_blocking(stream.fileno(), False)
-            self.selector.register(stream.fileno(), selectors.EVENT_READ, name)
+        self.initialization_error: BaseException | None = None
+        try:
+            self.selector = selectors.DefaultSelector()
+            for name, stream in (
+                ("stdout", process.stdout),
+                ("stderr", process.stderr),
+            ):
+                assert stream is not None
+                os.set_blocking(stream.fileno(), False)
+                self.selector.register(stream.fileno(), selectors.EVENT_READ, name)
+        except BaseException as error:
+            self.initialization_error = error
 
     def _read_ready(self, descriptor: int, name: Literal["stdout", "stderr"]) -> None:
         while True:
@@ -287,11 +301,13 @@ class _ProcessHandle:
             except BlockingIOError:
                 return
             if not block:
-                with suppress(KeyError):
-                    self.selector.unregister(descriptor)
+                if self.selector is not None:
+                    with suppress(KeyError):
+                        self.selector.unregister(descriptor)
                 return
             target = self.buffers[name]
-            available = _OUTPUT_LIMIT - len(target)
+            limit = self.stdout_limit if name == "stdout" else _OUTPUT_LIMIT
+            available = limit - len(target)
             if available:
                 target.extend(block[:available])
             if len(block) > available:
@@ -311,6 +327,9 @@ class _ProcessHandle:
         return "alive"
 
     def wait(self, checkpoint: Callable[[], None], deadline: float) -> _CommandResult:
+        if self.initialization_error is not None:
+            raise self.initialization_error
+        assert self.selector is not None
         while (
             self.process.poll() is None
             or self.selector.get_map()
@@ -326,6 +345,8 @@ class _ProcessHandle:
         return self.result()
 
     def _drain_until(self, deadline: float) -> None:
+        if self.selector is None:
+            return
         while self.selector.get_map() and time.monotonic() < deadline:
             events = self.selector.select(min(0.05, deadline - time.monotonic()))
             for key, _ in events:
@@ -369,7 +390,7 @@ class _ProcessHandle:
         complete = (
             self._group_state() == "gone"
             and self.process.poll() is not None
-            and not self.selector.get_map()
+            and (self.selector is None or not self.selector.get_map())
         )
         if complete:
             self.close()
@@ -378,14 +399,13 @@ class _ProcessHandle:
     def result(self) -> _CommandResult:
         returncode = self.process.returncode
         assert returncode is not None
-        return _CommandResult(
-            returncode,
-            bytes(self.buffers["stdout"]),
-            self.truncated["stdout"],
-        )
+        stdout = self.buffers["stdout"]
+        self.buffers["stdout"] = bytearray()
+        return _CommandResult(returncode, stdout, self.truncated["stdout"])
 
     def close(self) -> None:
-        self.selector.close()
+        if self.selector is not None:
+            self.selector.close()
         for stream in (self.process.stdout, self.process.stderr):
             if stream is not None and not stream.closed:
                 stream.close()
@@ -481,6 +501,7 @@ def _owned_regular(path: Path, limit: int) -> bytes:
         or stat.S_ISLNK(info.st_mode)
         or info.st_uid != os.getuid()
         or info.st_nlink != 1
+        or info.st_mode & 0o022
         or info.st_size > limit
     ):
         raise _StateFailure("installation_state_unknown")
@@ -546,6 +567,7 @@ def _safe_directory(path: Path) -> None:
         not stat.S_ISDIR(info.st_mode)
         or stat.S_ISLNK(info.st_mode)
         or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
     ):
         raise _StateFailure("installation_root_conflict")
 
@@ -585,6 +607,7 @@ def _inspect_package(
         not stat.S_ISDIR(package_info.st_mode)
         or stat.S_ISLNK(package_info.st_mode)
         or package_info.st_uid != os.getuid()
+        or package_info.st_mode & 0o022
         or not package_root.is_relative_to(base_root)
     ):
         return snapshot("unknown", "path_untrusted")
@@ -616,6 +639,7 @@ def _inspect_package(
             return snapshot("damaged", "entry_missing", observed)
         if (
             not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode))
+            or info.st_mode & 0o022
             or not resolved.is_relative_to(package_root)
             or not resolved.is_file()
         ):
@@ -657,6 +681,8 @@ def _inspect_components(root: Path) -> tuple[InstallationComponent, ...]:
 def _validate_root(root: Path) -> bool:
     try:
         _safe_directory(root)
+        if stat.S_IMODE(root.lstat().st_mode) != 0o700:
+            raise _StateFailure("installation_root_conflict")
         names = {entry.name for entry in root.iterdir()}
     except FileNotFoundError:
         return False
@@ -737,11 +763,59 @@ def _service_record_state(root: Path) -> str:
     return state
 
 
-def _record_state(
-    root: Path, components: tuple[InstallationComponent, ...]
-) -> Literal["complete", "failed"]:
+def _maintenance_record_state(root: Path) -> str:
+    record = root / "records" / "maintenance.json"
+    try:
+        info = record.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        raise _StateFailure("installation_recovery_required") from None
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_nlink != 1
+        or info.st_size > _RECORD_LIMIT
+        or info.st_mode & 0o077
+    ):
+        raise _StateFailure("installation_recovery_required")
+    try:
+        value = json.loads(record.read_bytes())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        raise _StateFailure("installation_recovery_required") from None
+    fields = {
+        "schema",
+        "state",
+        "operation_id",
+        "operation",
+        "driver",
+        "may_have_changed",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise _StateFailure("installation_recovery_required")
+    operation_id = value["operation_id"]
+    state = value["state"]
+    if (
+        type(value["schema"]) is not int
+        or value["schema"] != 1
+        or not isinstance(operation_id, str)
+        or not 1 <= len(operation_id) <= 128
+        or any(
+            ord(character) <= 32 or ord(character) >= 127 for character in operation_id
+        )
+        or not isinstance(state, str)
+        or state not in _MAINTENANCE_STATES
+        or value["operation"] not in ("driver_install", "driver_doctor")
+        or value["driver"] not in ("uiautomator2", "xcuitest", "mac2")
+        or type(value["may_have_changed"]) is not bool
+    ):
+        raise _StateFailure("installation_recovery_required")
+    return state
+
+
+def _record_namespace_state(root: Path) -> None:
     records = root / "records"
-    record = records / "installation.json"
     if not records.exists():
         raise _StateFailure("installation_recovery_required")
     try:
@@ -751,42 +825,97 @@ def _record_state(
     if "installation.json" not in entries or entries - {
         "installation.json",
         "service.json",
+        "maintenance.json",
     }:
         raise _StateFailure("installation_recovery_required")
     if _service_record_state(root) not in ("absent", "stopped"):
         raise _StateFailure("installation_recovery_required")
+    if _maintenance_record_state(root) not in ("absent", "complete", "failed"):
+        raise _StateFailure("installation_recovery_required")
+
+
+def _installation_record_state(root: Path) -> Literal["complete", "failed"]:
     try:
-        value = _json_file(record, _RECORD_LIMIT)
+        value = _json_file(root / "records" / "installation.json", _RECORD_LIMIT)
     except _StateFailure:
         raise _StateFailure("installation_recovery_required") from None
-    fields = {
-        "schema",
-        "state",
-        "operation_id",
-        "combination_id",
-        "changed",
-    }
+    fields = {"schema", "state", "operation_id", "combination_id", "changed"}
     if (
         not isinstance(value, dict)
         or set(value) != fields
-        or not isinstance(value["schema"], int)
-        or isinstance(value["schema"], bool)
+        or type(value["schema"]) is not int
         or value["schema"] != 1
         or not isinstance(value["operation_id"], str)
         or not value["operation_id"]
         or value["combination_id"] != _COMBINATION.combination_id
-        or not isinstance(value["changed"], bool)
+        or type(value["changed"]) is not bool
     ):
         raise _StateFailure("installation_recovery_required")
     state = value["state"]
-    statuses = {component.status for component in components}
     if state == "complete":
-        if "missing" in statuses and statuses <= {"missing", "verified"}:
-            raise _StateFailure("installation_damaged")
         return "complete"
     if state == "failed":
         return "failed"
     raise _StateFailure("installation_recovery_required")
+
+
+def _managed_appium(root: Path) -> tuple[Path, str]:
+    appium_root, _, package_root, _ = _paths(root)
+    try:
+        package_info = package_root.lstat()
+        resolved_package = package_root.resolve(strict=True)
+        resolved_appium = appium_root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise _StateFailure("installation_damaged") from None
+    if (
+        not stat.S_ISDIR(package_info.st_mode)
+        or stat.S_ISLNK(package_info.st_mode)
+        or package_info.st_uid != os.getuid()
+        or package_info.st_mode & 0o022
+        or not resolved_package.is_relative_to(resolved_appium)
+    ):
+        raise _StateFailure("installation_damaged")
+    value = _json_file(resolved_package / "package.json", _METADATA_LIMIT)
+    if not isinstance(value, dict) or value.get("name") != "appium":
+        raise _StateFailure("installation_damaged")
+    observed = version(value.get("version"))
+    if observed is None or observed.major != 3:
+        raise _StateFailure("installation_damaged")
+    entry = resolved_package / "index.js"
+    try:
+        info = entry.lstat()
+        resolved_entry = entry.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise _StateFailure("installation_damaged") from None
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
+        or info.st_nlink != 1
+        or not resolved_entry.is_relative_to(resolved_package)
+    ):
+        raise _StateFailure("installation_damaged")
+    return resolved_entry, observed.text
+
+
+def _record_state(
+    root: Path, components: tuple[InstallationComponent, ...]
+) -> Literal["complete", "failed"]:
+    _record_namespace_state(root)
+    state = _installation_record_state(root)
+    statuses = {component.status for component in components}
+    if (
+        state == "complete"
+        and "missing" in statuses
+        and statuses
+        <= {
+            "missing",
+            "verified",
+        }
+    ):
+        raise _StateFailure("installation_damaged")
+    return state
 
 
 def _record_value(operation: _InstallOperation, state: str) -> dict[str, object]:
@@ -1416,7 +1545,12 @@ def install(
 ) -> InstallationResult:
     operation = _InstallOperation(runtime, control)
     _ = request.combination_id
-    if runtime._installing or runtime._active_thread is not None or runtime._diagnosing:
+    if (
+        runtime._installing
+        or runtime._active_thread is not None
+        or runtime._diagnosing
+        or runtime._managed_scope is not None
+    ):
         raise operation.error(EnvironmentBusyError, "environment_busy")
     runtime._installing = True
     installer = _Installer(operation)
@@ -1432,6 +1566,8 @@ def cleanup_installation(
 ) -> InstallationResult:
     pending = runtime._installation_cleanup
     if pending is not None:
+        if not isinstance(pending, _Installer):
+            raise AssertionError("maintenance cleanup must be dispatched first")
         runtime._installation_cleanup = None
         try:
             return pending.cleanup(control)

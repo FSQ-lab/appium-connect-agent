@@ -34,9 +34,8 @@ from ._installation import (
     _atomic_json,
     _base_environment,
     _inspect_components,
-    _paths,
+    _managed_appium,
     _record_state,
-    _service_record_state,
     _StateFailure,
     _tool,
     _validate_root,
@@ -413,10 +412,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 raise operation.error(
                     ServiceLifecycleError, "managed_installation_not_ready"
                 )
-            if _service_record_state(self.root) not in ("absent", "stopped"):
-                raise operation.error(
-                    ServiceLifecycleError, "managed_recovery_required"
-                )
+            appium_entry, _ = _managed_appium(self.root)
         except _StateFailure as failure:
             code = (
                 "managed_root_conflict"
@@ -434,7 +430,6 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
             raise operation.error(
                 ServiceLifecycleError, "managed_installation_not_ready"
             ) from None
-        appium_entry = _paths(self.root)[2] / "index.js"
         return node.path, appium_entry
 
     def _port_preflight(self, operation: _Operation) -> None:
