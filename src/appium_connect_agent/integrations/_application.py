@@ -161,6 +161,7 @@ class Application:
         self._tombstones: OrderedDict[str, _Tombstone] = OrderedDict()
         self._runtime_active = False
         self._runtime_cleanup_failed = False
+        self._managed_cleanup_pending = False
         self._shutdown_degraded = False
         self._close_in_flight = False
         self._closed = False
@@ -416,6 +417,8 @@ class Application:
         timeout_seconds: float,
     ) -> RuntimeCheckResult:
         call_id = self._call_id()
+        if mode == "external_connection" and self._settings.server_mode != "external":
+            self._raise_not_sent(call_id, "runtime_mode_mismatch")
         if self._runtime_blocked():
             self._raise_not_sent(call_id, "runtime_scope_active")
         if not self._runtime_gate.acquire(blocking=False):
@@ -848,12 +851,17 @@ class Application:
         if not active:
             return None
         failure: BaseException | None = None
+        ownership = self._runtime_owner.ownership
         try:
             self._runtime_owner.exit()
         except Exception as error:
             failure = error
             with self._registry_lock:
                 self._runtime_cleanup_failed = True
+                if ownership == "managed" and getattr(error, "code", None) != (
+                    "service_in_use"
+                ):
+                    self._managed_cleanup_pending = True
         finally:
             with self._registry_lock:
                 self._runtime_active = False
@@ -869,8 +877,21 @@ class Application:
 
         def open_session(budget: OperationBudget) -> SessionData:
             try:
-                scope = Runtime(self._settings).connect(control=budget.control())
-                connection = self._runtime_owner.enter(scope)
+                runtime = Runtime(self._settings)
+                if self._settings.server_mode == "external":
+                    scope = runtime.connect(control=budget.control())
+                else:
+                    host = self._settings.managed_host
+                    port = self._settings.managed_port
+                    if host is None or port is None:
+                        raise RuntimeError("managed settings invariant violated")
+                    scope = runtime.start_managed(
+                        host=host,
+                        port=port,
+                        base_path=self._settings.managed_base_path,
+                        control=budget.control(),
+                    )
+                connection = self._runtime_owner.enter(runtime, scope)
                 with self._registry_lock:
                     self._runtime_active = True
                 session = create_session(
@@ -1011,14 +1032,7 @@ class Application:
     def _finish_confirmed_close(
         self, entry: _SessionEntry
     ) -> tuple[SessionData, BaseException | None]:
-        with self._registry_lock:
-            active = self._runtime_active
-        cleanup: BaseException | None = None
-        if active:
-            try:
-                self._runtime_owner.exit()
-            except Exception as error:
-                cleanup = error
+        cleanup = self._exit_runtime()
         return self._publish_closed(entry, cleanup), cleanup
 
     def _prepare_close(self, handle: str, call_id: str) -> _SessionEntry | SessionData:
@@ -1188,6 +1202,20 @@ class Application:
 
                 cleanup = self._exit_runtime()
                 if cleanup is not None or self._runtime_cleanup_failed:
+                    self._shutdown_degraded = True
+                if self._managed_cleanup_pending:
+                    control = OperationControl(
+                        timeout_seconds=30.0, cancellation=Event()
+                    )
+                    try:
+                        await anyio.to_thread.run_sync(
+                            lambda: self._runtime_owner.cleanup_managed(control),
+                            abandon_on_cancel=False,
+                        )
+                    except Exception:
+                        self._shutdown_degraded = True
+                    else:
+                        self._managed_cleanup_pending = False
                     self._shutdown_degraded = True
                 try:
                     await anyio.to_thread.run_sync(

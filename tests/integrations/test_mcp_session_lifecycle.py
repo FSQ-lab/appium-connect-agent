@@ -76,6 +76,253 @@ def _assert_only_clean_server_stop(harness: McpHarness) -> None:
     assert harness.events() == [{"event": "server_stopped", "result": 0}]
 
 
+def _managed_config(harness: McpHarness) -> Any:
+    config = harness.root / "managed.toml"
+    config.write_text(
+        '[runtime]\nserver_mode = "managed"\nmanaged_host = "127.0.0.1"\n'
+        'managed_port = 4723\nmanaged_base_path = "/wd/hub"\n',
+        encoding="utf-8",
+    )
+    return config
+
+
+def _managed_parameters(harness: McpHarness, mode: str) -> Any:
+    config = _managed_config(harness)
+    return harness.parameters(mode=mode, args=harness.arguments(config=config))
+
+
+def test_managed_session_open_close_uses_one_owned_scope(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(_managed_parameters(mcp_harness, "session_normal")) as client:
+            opened = await _open(client)
+            await _close(client, opened["data"]["session_handle"])
+
+    anyio.run(scenario)
+    events = mcp_harness.events()
+    names = [event["event"] for event in events]
+    assert names.count("runtime_start_managed") == 1
+    assert names.count("runtime_managed_enter") == 1
+    assert names.count("runtime_managed_exit") == 1
+    assert "runtime_connect" not in names
+    assert "runtime_cleanup_managed" not in names
+    started = next(
+        event for event in events if event["event"] == "runtime_start_managed"
+    )
+    assert (started["host"], started["port"], started["base_path"]) == (
+        "127.0.0.1",
+        4723,
+        "/wd/hub",
+    )
+    entered = next(
+        event for event in events if event["event"] == "runtime_managed_enter"
+    )
+    exited = next(event for event in events if event["event"] == "runtime_managed_exit")
+    assert entered["thread"] == exited["thread"]
+    assert (
+        next(event for event in events if event["event"] == "server_stopped")["result"]
+        == 0
+    )
+
+
+def test_managed_configuration_rejects_external_runtime_check_before_io(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(_managed_parameters(mcp_harness, "session_normal")) as client:
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[1],
+                    _request(mode="external_connection", timeout_seconds=10.0),
+                )
+            )
+            assert failure["code"] == "runtime_mode_mismatch"
+            assert failure["request_state"] == "not_sent"
+            assert failure["operation_id"] is None
+            assert failure["cleanup_status"] == "not_needed"
+
+    anyio.run(scenario)
+    assert not {
+        "runtime_connect",
+        "runtime_start_managed",
+        "runtime_diagnose",
+    }.intersection(_event_names(mcp_harness))
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "managed_exit_pending",
+        "managed_exit_timeout",
+        "managed_exit_record_failure",
+        "managed_cleanup_failure",
+    ],
+)
+def test_managed_confirmed_close_retains_runtime_for_one_safe_continuation(
+    mcp_harness: McpHarness, mode: str
+) -> None:
+    async def scenario() -> None:
+        async with Client(_managed_parameters(mcp_harness, mode)) as client:
+            opened = await _open(client)
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[5],
+                    _request(session_handle=opened["data"]["session_handle"]),
+                )
+            )
+            assert failure["code"] == "cleanup_failed"
+            assert failure["session_state"] == "closed"
+
+    anyio.run(scenario)
+    names = _event_names(mcp_harness)
+    assert names.count("session_quit") == 1
+    assert names.count("runtime_managed_exit") == 1
+    assert names.count("runtime_cleanup_managed") == 1
+    entered = next(
+        event
+        for event in mcp_harness.events()
+        if event["event"] == "runtime_managed_enter"
+    )
+    continued = next(
+        event
+        for event in mcp_harness.events()
+        if event["event"] == "runtime_cleanup_managed"
+    )
+    assert entered["thread"] == continued["thread"]
+    assert (
+        next(
+            event
+            for event in mcp_harness.events()
+            if event["event"] == "server_stopped"
+        )["result"]
+        == 4
+    )
+
+
+def test_managed_no_retained_create_failure_exits_cleanly_without_tombstone(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(
+            _managed_parameters(mcp_harness, "managed_open_known")
+        ) as client:
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[3], _request(device_id="managed-no-retained-clean")
+                )
+            )
+            assert failure["code"] == "session_not_created"
+            assert failure["session_handle"] is None
+            assert failure["session_state"] is None
+            assert failure["cleanup_status"] == "completed"
+
+    anyio.run(scenario)
+    names = _event_names(mcp_harness)
+    assert names.count("runtime_managed_exit") == 1
+    assert "runtime_cleanup_managed" not in names
+    assert "session_quit" not in names
+    assert (
+        next(
+            event
+            for event in mcp_harness.events()
+            if event["event"] == "server_stopped"
+        )["result"]
+        == 0
+    )
+
+
+def test_managed_no_retained_service_in_use_never_signals_cleanup(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(
+            _managed_parameters(mcp_harness, "managed_open_known_service_in_use")
+        ) as client:
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[3], _request(device_id="managed-no-retained-unsafe")
+                )
+            )
+            assert failure["code"] == "session_not_created"
+            assert failure["session_handle"] is None
+            assert failure["session_state"] is None
+            assert failure["cleanup_status"] == "failed"
+
+    anyio.run(scenario)
+    names = _event_names(mcp_harness)
+    assert names.count("runtime_managed_exit") == 1
+    assert "runtime_cleanup_managed" not in names
+    assert "session_quit" not in names
+    assert (
+        next(
+            event
+            for event in mcp_harness.events()
+            if event["event"] == "server_stopped"
+        )["result"]
+        == 4
+    )
+
+
+def test_managed_no_retained_create_failure_has_no_tombstone_and_continues_cleanup(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(
+            _managed_parameters(mcp_harness, "managed_open_known_exit_timeout")
+        ) as client:
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[3], _request(device_id="managed-no-retained")
+                )
+            )
+            assert failure["code"] == "session_not_created"
+            assert failure["session_handle"] is None
+            assert failure["session_state"] is None
+
+    anyio.run(scenario)
+    names = _event_names(mcp_harness)
+    assert names.count("runtime_managed_exit") == 1
+    assert names.count("runtime_cleanup_managed") == 1
+    assert "session_quit" not in names
+    assert (
+        next(
+            event
+            for event in mcp_harness.events()
+            if event["event"] == "server_stopped"
+        )["result"]
+        == 4
+    )
+
+
+def test_managed_uncertain_session_is_zero_signal_degraded_without_cleanup_retry(
+    mcp_harness: McpHarness,
+) -> None:
+    async def scenario() -> None:
+        async with Client(_managed_parameters(mcp_harness, "open_unknown")) as client:
+            failure = _error(
+                await client.call_tool(
+                    TOOL_NAMES[3], _request(device_id="managed-uncertain")
+                )
+            )
+            assert failure["code"] == "session_create_unknown"
+            assert failure["session_state"] == "uncertain"
+
+    anyio.run(scenario)
+    names = _event_names(mcp_harness)
+    assert names.count("runtime_managed_exit") == 1
+    assert "runtime_cleanup_managed" not in names
+    assert "session_quit" not in names
+    assert (
+        next(
+            event
+            for event in mcp_harness.events()
+            if event["event"] == "server_stopped"
+        )["result"]
+        == 4
+    )
+
+
 def test_ten_tools_have_fixed_order_annotations_and_session_schemas(
     mcp_harness: McpHarness,
 ) -> None:

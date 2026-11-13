@@ -5,6 +5,29 @@ import re
 from urllib.parse import urlsplit
 
 
+def normalize_base_path(value: str, *, trim_trailing_slash: bool) -> str:
+    if (
+        not isinstance(value, str)
+        or any(ord(char) <= 32 or ord(char) >= 127 for char in value)
+        or any(char in value for char in "\\%?#")
+        or "//" in value
+    ):
+        raise ValueError("base path must use safe ASCII path segments")
+    if trim_trailing_slash:
+        value = value.rstrip("/")
+    elif value.endswith("/"):
+        raise ValueError("base path must not have a trailing slash")
+    if value and (
+        not value.startswith("/")
+        or any(
+            segment in (".", "..") or re.fullmatch(r"[A-Za-z0-9._~-]+", segment) is None
+            for segment in value[1:].split("/")
+        )
+    ):
+        raise ValueError("base path must use safe ASCII path segments")
+    return value
+
+
 def normalize_server_url(value: str) -> str:
     if (
         not isinstance(value, str)
@@ -36,19 +59,7 @@ def normalize_server_url(value: str) -> str:
         if not address.is_loopback:
             raise ValueError
         host = f"[{address}]" if address.version == 6 else str(address)
-        path = parts.path
-        if "//" in path:
-            raise ValueError
-        path = path.rstrip("/")
-        if path and (
-            not path.startswith("/")
-            or any(
-                segment in (".", "..")
-                or re.fullmatch(r"[A-Za-z0-9._~-]+", segment) is None
-                for segment in path[1:].split("/")
-            )
-        ):
-            raise ValueError
+        path = normalize_base_path(parts.path, trim_trailing_slash=True)
     except ValueError:
         raise ValueError(
             "server_url must have a loopback host, port and safe base path"

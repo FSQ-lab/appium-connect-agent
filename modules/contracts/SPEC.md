@@ -42,3 +42,16 @@
 - 非 None 为最多 2048 字符的完整 HTTP URL，必须显式指定有效端口；host 只能为数值 loopback IPv4/IPv6 或 `localhost`，后者纯值规范化为 `127.0.0.1`，不使用 DNS。
 - 拒绝 userinfo、查询、fragment、空白/控制字符、非 ASCII、反斜线和百分号路径；base path 的段仅允许字母、数字及 `-._~`，拒绝 `.`/`..` 段及重复 `/`。统一 scheme/host、IPv6 方括号和尾斜线，根或 base path 尾 `/` 去除；非法值抛 ValueError，不静默回退。
 - Contracts 不拥有带范围有效性或 Runtime 报告的 RuntimeConnection，不依赖 Runtime。此增量不新增远程、认证、安装或配置来源模型。
+
+## INT-CORE-02 Managed Runtime Settings（已确认）
+
+> **已确认合同。** 用户已在Issue #24 SPEC Gate确认本节及零新增依赖方案，并授权Issue范围内实现、聚焦验证与独立审查；不授权Runtime源码修改、设备/Appium操作或外部交付。
+
+- 唯一`LocalSettings`保持既有七字段的名称、类型、默认值、顺序语义、不可变仅关键字构造及Runtime重导出；在其后追加`server_mode: Literal["external", "managed"] = "external"`、`managed_host: Literal["127.0.0.1", "::1"] | None = None`、`managed_port: int | None = None`、`managed_base_path: str = ""`。
+- 四字段只做纯值校验，不访问文件系统、账号home、环境、DNS、socket、HTTP、进程、Runtime或设备。`server_mode`和`managed_host`只接受精确实际字符串；port只接受排除bool的实际int且为`1..65535`；不做别名、大小写折叠、字符串数值转换、默认端口或端点发现。
+- `managed_base_path`只接受实际ASCII字符串；空串表示根，非空必须以`/`开头且不得以`/`结尾。段沿既有本地URL规则仅为`[A-Za-z0-9._~-]+`，拒绝control/空白、非ASCII、反斜线、百分号、query/fragment、重复斜线及`.`/`..`段；非法拼写拒绝而不规范化。
+- `server_mode="external"`拒绝非None`managed_host`、非None`managed_port`和非空`managed_base_path`。`server_mode="managed"`要求host与port均非None，并拒绝非None`server_url`、`appium_executable`、`appium_home`；空base path合法。`node_executable`、`npm_executable`、`java_home`、`android_sdk_root`既有语义不变。
+- 默认`LocalSettings()`仍为external、无server URL和无managed值，保持现有静态`Runtime.diagnose()`构造行为。显式managed缺host/port在构造时失败，不把无效不可变快照推迟到启动，不隐式回退external或猜测端口。
+- 实现可在Contracts内部提取一个私有安全base-path段校验以供`server_url`与`managed_base_path`共用；不得新增公共URL/Runtime Interface、依赖方向或通用解析器。
+
+详细状态、不变量与零新增依赖依据见[已确认设计](../../docs/superpowers/specs/2026-11-13-integrations-managed-runtime-design.md)。

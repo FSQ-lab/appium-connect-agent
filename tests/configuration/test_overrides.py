@@ -15,14 +15,27 @@ from appium_connect_agent.configuration import (
 )
 from appium_connect_agent.contracts import LocalSettings
 
-FIELDS = (
+PATH_FIELDS = (
     "appium_executable",
     "appium_home",
     "node_executable",
     "npm_executable",
     "java_home",
     "android_sdk_root",
-    "server_url",
+)
+
+
+class _StringSubclass(str):
+    pass
+
+
+LEGACY_FIELDS = (*PATH_FIELDS, "server_url")
+FIELDS = (
+    *LEGACY_FIELDS,
+    "server_mode",
+    "managed_host",
+    "managed_port",
+    "managed_base_path",
 )
 
 
@@ -38,26 +51,27 @@ def test_empty_file_plus_url_and_omission(tmp_path: Path) -> None:
     assert type(loaded.settings) is LocalSettings
     assert loaded.settings == LocalSettings(server_url="http://127.0.0.1:4723")
     assert loaded.config_file == config
-    assert loaded.sources == (
-        *(SettingSource(name, "default", None) for name in FIELDS[:-1]),
-        SettingSource("server_url", "override", None),
+    assert loaded.sources == tuple(
+        SettingSource(name, "override" if name == "server_url" else "default", None)
+        for name in FIELDS
     )
     assert load_configuration(config).settings == LocalSettings()
 
 
-@pytest.mark.parametrize("name", FIELDS)
+@pytest.mark.parametrize("name", LEGACY_FIELDS)
 def test_each_override_wins_and_unpassed_fields_remain(
     tmp_path: Path, name: str
 ) -> None:
     text = (
         "[runtime]\n"
-        + "\n".join(f'{field} = "original/{field}"' for field in FIELDS[:-1])
+        + "\n".join(f'{field} = "original/{field}"' for field in PATH_FIELDS)
         + '\nserver_url = "http://localhost:4723"'
     )
     config = write_config(tmp_path, text)
     original = load_configuration(config)
     value = "http://localhost:4724/" if name == "server_url" else f"override/{name}"
-    loaded = load_configuration(config, **{name: value})
+    overrides: dict[str, Any] = {name: value}
+    loaded = load_configuration(config, **overrides)
     expected = "http://127.0.0.1:4724" if name == "server_url" else tmp_path / value
     for field in FIELDS:
         assert getattr(loaded.settings, field) == (
@@ -66,12 +80,16 @@ def test_each_override_wins_and_unpassed_fields_remain(
     assert loaded.sources == tuple(
         SettingSource(field, "override", None)
         if field == name
-        else SettingSource(field, "file", config)
+        else SettingSource(
+            field,
+            "file" if field in LEGACY_FIELDS else "default",
+            config if field in LEGACY_FIELDS else None,
+        )
         for field in FIELDS
     )
 
 
-@pytest.mark.parametrize("name", FIELDS[:-1])
+@pytest.mark.parametrize("name", PATH_FIELDS)
 @pytest.mark.parametrize("absolute", [False, True])
 @pytest.mark.parametrize("as_path", [False, True])
 def test_path_arguments_share_config_base(
@@ -98,7 +116,7 @@ def test_path_arguments_share_config_base(
     assert loaded.sources[FIELDS.index(name)] == SettingSource(name, "override", None)
 
 
-@pytest.mark.parametrize("name", FIELDS)
+@pytest.mark.parametrize("name", LEGACY_FIELDS)
 @pytest.mark.parametrize("value", [None, "", True, 4, [], {}])
 def test_bad_argument_is_not_omission_or_clear(
     tmp_path: Path, name: str, value: Any
@@ -112,7 +130,54 @@ def test_bad_argument_is_not_omission_or_clear(
     assert issue.code == ("empty_value" if value == "" else "invalid_type")
 
 
-@pytest.mark.parametrize("name", FIELDS[:-1])
+@pytest.mark.parametrize(
+    ("name", "value", "code"),
+    [
+        ("server_mode", None, "invalid_type"),
+        ("server_mode", "", "empty_value"),
+        ("server_mode", True, "invalid_type"),
+        ("server_mode", _StringSubclass("managed"), "invalid_type"),
+        ("managed_host", None, "invalid_type"),
+        ("managed_host", "localhost", "invalid_value"),
+        ("managed_host", _StringSubclass("127.0.0.1"), "invalid_type"),
+        ("managed_port", None, "invalid_type"),
+        ("managed_port", True, "invalid_type"),
+        ("managed_port", "4723", "invalid_type"),
+        ("managed_port", 0, "invalid_value"),
+        ("managed_base_path", None, "invalid_type"),
+        ("managed_base_path", "/wd/hub/", "invalid_value"),
+        ("managed_base_path", _StringSubclass("/wd/hub"), "invalid_type"),
+    ],
+)
+def test_bad_managed_argument(tmp_path: Path, name: str, value: Any, code: str) -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        load_configuration(write_config(tmp_path), **{name: value})
+    assert [
+        (issue.source, issue.field, issue.code) for issue in caught.value.issues
+    ] == [("argument", name, code)]
+
+
+def test_managed_overrides_form_one_valid_snapshot(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    loaded = load_configuration(
+        config,
+        server_mode="managed",
+        managed_host="::1",
+        managed_port=4723,
+        managed_base_path="/wd/hub",
+    )
+    assert loaded.settings == LocalSettings(
+        server_mode="managed",
+        managed_host="::1",
+        managed_port=4723,
+        managed_base_path="/wd/hub",
+    )
+    assert loaded.sources[-4:] == tuple(
+        SettingSource(name, "override", None) for name in FIELDS[-4:]
+    )
+
+
+@pytest.mark.parametrize("name", PATH_FIELDS)
 @pytest.mark.parametrize("as_path", [False, True])
 @pytest.mark.parametrize("value", ["~/tools", "$TOOL/bin", "${TOOL}/bin", "%TOOL%/bin"])
 def test_argument_shorthand_rejected(

@@ -166,6 +166,7 @@ if MODE == "forbid":
     runtime.Runtime.diagnose = forbidden
     runtime.Runtime.connect = forbidden
     automation.list_devices = forbidden
+    runtime.Runtime.start_managed = forbidden
     import mcp.server as mcp_server
 
     class ForbiddenServer:
@@ -188,6 +189,7 @@ elif MODE != "passthrough":
         DiagnosticReport,
         EnvironmentBusyError,
         OperationTimeoutError as RuntimeTimeoutError,
+        ServiceLifecycleError,
     )
 
     def report(maximum: bool = False) -> DiagnosticReport:
@@ -356,6 +358,78 @@ elif MODE != "passthrough":
     def connect(self: object, control: object = None) -> ConnectionScope:
         record("runtime_connect", **control_values(control))
         return ConnectionScope(control)
+
+    class ManagedConnectionScope(ConnectionScope):
+        def __enter__(self) -> object:
+            record(
+                "runtime_managed_enter",
+                thread=threading.get_ident(),
+                **control_values(self.control),
+            )
+            return SimpleNamespace(
+                ownership="managed",
+                appium_version="3.7.0",
+                compatibility="declared_compatible",
+                report=report(),
+            )
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: object,
+        ) -> None:
+            del exc_value, traceback
+            record(
+                "runtime_managed_exit",
+                thread=threading.get_ident(),
+                error=exc_type is not None,
+            )
+            current = report()
+            if MODE in {"open_unknown", "managed_open_known_service_in_use"}:
+                raise ServiceLifecycleError(
+                    "service_in_use", current.operation_id, current
+                )
+            if MODE == "managed_exit_pending":
+                raise ServiceLifecycleError(
+                    "managed_cleanup_pending", current.operation_id, current
+                )
+            if MODE in {"managed_exit_timeout", "managed_open_known_exit_timeout"}:
+                raise RuntimeTimeoutError(
+                    "operation_timeout", current.operation_id, current
+                )
+            if MODE == "managed_exit_record_failure":
+                raise OSError(f"{CANARY} {SECRET}")
+            if MODE == "managed_cleanup_failure":
+                raise RuntimeError(f"{CANARY} {SECRET}")
+
+    def start_managed(
+        self: object,
+        *,
+        host: str,
+        port: int,
+        base_path: str = "",
+        control: object = None,
+    ) -> ManagedConnectionScope:
+        del self
+        record(
+            "runtime_start_managed",
+            host=host,
+            port=port,
+            base_path=base_path,
+            **control_values(control),
+        )
+        return ManagedConnectionScope(control)
+
+    def cleanup_managed(self: object, *, control: object = None) -> None:
+        del self
+        record(
+            "runtime_cleanup_managed",
+            thread=threading.get_ident(),
+            **control_values(control),
+        )
+        if MODE == "managed_cleanup_failure":
+            raise RuntimeError(f"{CANARY} {SECRET}")
 
     def devices(maximum: bool = False) -> tuple[DeviceInfo, ...]:
         if MODE == "empty":
@@ -604,7 +678,12 @@ elif MODE != "passthrough":
                 session=session,
                 cleanup_errors=(RuntimeError(f"{CANARY} {SECRET}"),),
             )
-        if MODE == "open_known":
+        if MODE in {
+            "open_known",
+            "managed_open_known",
+            "managed_open_known_exit_timeout",
+            "managed_open_known_service_in_use",
+        }:
             raise CommandError(
                 "session_not_created",
                 "op-open-known",
@@ -616,6 +695,8 @@ elif MODE != "passthrough":
     automation.create_session = create_session
     runtime.Runtime.diagnose = diagnose
     runtime.Runtime.connect = connect
+    runtime.Runtime.start_managed = start_managed
+    runtime.Runtime.cleanup_managed = cleanup_managed
     automation.list_devices = list_devices
 
 matches = [
@@ -627,8 +708,11 @@ if len(matches) != 1:
     raise RuntimeError("installed MCP entrypoint is not unique")
 main = matches[0].load()
 result = main()
-if MODE in {"cancel_stalled", "cancel_twice", "eof_stalled"} or MODE.startswith(
-    ("session_", "shutdown_", "open_", "close_", "runtime_exit_")
+if (
+    MODE in {"cancel_stalled", "cancel_twice", "eof_stalled"}
+    or MODE.startswith(
+        ("session_", "shutdown_", "open_", "close_", "runtime_exit_", "managed_")
+    )
 ):
     record("server_stopped", result=result)
 raise SystemExit(0 if result is None else result)
