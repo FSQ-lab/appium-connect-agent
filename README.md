@@ -56,7 +56,7 @@ appium-connect-agent-mcp --config /absolute/path/project.toml --adb-executable /
 
 所有工具都使用 schema version 1；I/O 工具有有限总预算并把 MCP 取消桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；下层完整文档最大 65,536 UTF-8 bytes，外层完整结果有 69,632-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用与Device back都只调用一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element，但MCP不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。back成功只表示官方命令取得合法响应，不保证页面变化或到达特定页面。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常stdio shutdown会对已知active owned Session最多调用一次公开quit；终态未知时degraded退出并明确远端可能遗留。Appium 和 ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
 
-协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click与INT-MCP-05 Element text已在固定Android Native组合完成各自限定真实链验收。INT-MCP-06 Device back当前处于实现与验收中；只有产品、受控协议、安装wheel consumer、另行获准的安全页面真实返回链和独立full审查全部通过后才可判限定Done。未资格化 Copilot CLI、Codex CLI 或其他具体 Host。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，MCP 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准 client，不写入默认日志或证据。
+协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click、INT-MCP-05 Element text与INT-MCP-06 Device back均已在固定Android Native组合完成各自限定真实链验收；Issue #8也已通过正式wheel、官方MCP Client与固定Calculator安全链完成`observe → click → observe → replace → observe → back`限定验收。未资格化 Copilot CLI、Codex CLI 或其他具体 Host。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，MCP 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准 client，不写入默认日志或证据。
 
 ## Automation Element 接口
 
