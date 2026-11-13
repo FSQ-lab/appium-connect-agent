@@ -52,6 +52,8 @@ from ._models import (
     AutomationModuleStatus,
     CapabilityLimitations,
     CapabilityResult,
+    CliCapabilityData,
+    CliCapabilityResult,
     DeviceBackData,
     DeviceBackRequest,
     DeviceBackResult,
@@ -143,8 +145,10 @@ class Application:
         settings: LocalSettings,
         adb_executable: Path,
         *,
-        surface: Literal["mcp", "toolcall"],
+        surface: Literal["mcp", "toolcall", "cli"],
     ) -> None:
+        if surface not in {"mcp", "toolcall", "cli"}:
+            raise ValueError("unsupported application surface")
         self._settings = settings
         self._adb_executable = adb_executable
         self._surface = surface
@@ -166,7 +170,7 @@ class Application:
         return self._shutdown_degraded
 
     @property
-    def surface(self) -> Literal["mcp", "toolcall"]:
+    def surface(self) -> Literal["mcp", "toolcall", "cli"]:
         return self._surface
 
     async def __aenter__(self) -> Application:
@@ -216,8 +220,8 @@ class Application:
     async def dispatch(
         self, tool_name: str, arguments: Mapping[str, JsonValue]
     ) -> BaseModel:
-        if self._surface != "toolcall":
-            raise ValueError("ToolCall dispatch requires surface='toolcall'")
+        if self._surface not in {"toolcall", "cli"}:
+            raise ValueError("dispatch requires surface='toolcall' or surface='cli'")
         if self._closed:
             raise ApplicationError(self._simple_error("application_closed"))
         if not isinstance(arguments, dict):
@@ -230,7 +234,7 @@ class Application:
             request = spec.request_adapter.validate_python(arguments, strict=True)
         except (TypeError, ValueError, ValidationError):
             raise ApplicationError(self.invalid_argument()) from None
-        return await self._invoke_validated(spec, request, surface="toolcall")
+        return await self._invoke_validated(spec, request, surface=self._surface)
 
     async def _dispatch_mcp(self, spec: ToolSpec, request: BaseModel) -> BaseModel:
         return await self._invoke_validated(spec, request, surface="mcp")
@@ -240,16 +244,17 @@ class Application:
         spec: ToolSpec,
         request: BaseModel,
         *,
-        surface: Literal["mcp", "toolcall"],
+        surface: Literal["mcp", "toolcall", "cli"],
     ) -> BaseModel:
         if self._surface != surface:
             raise ValueError(f"application surface is not {surface!r}")
         result = await spec.invoke_validated(self, request)
-        expected = (
-            ToolCallCapabilityResult
-            if surface == "toolcall" and spec.tool_name == "appium_capabilities_get"
-            else spec.result_model
-        )
+        expected = spec.result_model
+        if spec.tool_name == "appium_capabilities_get":
+            if surface == "toolcall":
+                expected = ToolCallCapabilityResult
+            elif surface == "cli":
+                expected = CliCapabilityResult
         if not isinstance(result, expected):
             raise ApplicationError(self.internal_error())
         return result
@@ -331,7 +336,6 @@ class Application:
             "single_session_capacity",
             "opaque_handle_process_local",
             "no_session_attach_recovery",
-            "no_cli_product",
             "no_http_transport",
             "no_clear_app",
             "automation_module_e2e_unqualified",
@@ -357,7 +361,27 @@ class Application:
                     limitations=limitations,
                 ),
             )
-        return ToolCallCapabilityResult(
+        if self._surface == "toolcall":
+            return ToolCallCapabilityResult(
+                schema_version=1,
+                call_id=self._call_id(),
+                execution="completed",
+                operation_id=None,
+                request_state=None,
+                warnings=(),
+                automation_module_status=self._module_status(),
+                data=ToolCallCapabilityData(
+                    integration_form="toolcall",
+                    transport="in_process",
+                    protocol_target=None,
+                    host_compatibility="unqualified",
+                    adb_configured=True,
+                    platform=platform,
+                    tools=TOOL_CATALOG.tool_names,
+                    limitations=limitations,
+                ),
+            )
+        return CliCapabilityResult(
             schema_version=1,
             call_id=self._call_id(),
             execution="completed",
@@ -365,9 +389,9 @@ class Application:
             request_state=None,
             warnings=(),
             automation_module_status=self._module_status(),
-            data=ToolCallCapabilityData(
-                integration_form="toolcall",
-                transport="in_process",
+            data=CliCapabilityData(
+                integration_form="cli",
+                transport="unix_socket",
                 protocol_target=None,
                 host_compatibility="unqualified",
                 adb_configured=True,

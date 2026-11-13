@@ -4,18 +4,18 @@
 
 本模块维护 MCP、CLI、SDK 等接入形式的适配边界。
 
-当前确认接入形式为本地stdio MCP，以及与其十项能力同源、前期只面向FSQ的进程内Python ToolCall；CLI、HTTP和其他Agent/Host不因模块定位自动承诺。
+当前确认接入形式为本地stdio MCP、与其十项能力同源且前期只面向FSQ的进程内Python ToolCall，以及账号私有Unix socket bridge上的正式产品CLI；HTTP和其他Agent/Host不因模块定位自动承诺。
 
 ## Responsibilities
 
 - 维护后续确认的 Agent 与开发者接入适配职责。
 - 使不同接入形式复用其他模块提供的能力。
-- 以唯一ToolCatalog/Application内核向MCP与FSQ ToolCall暴露同一strict schema、参数校验、SessionRegistry、生命周期和错误语义。
+- 以唯一ToolCatalog/Application内核向MCP、FSQ ToolCall与CLI暴露同一strict schema、参数校验、SessionRegistry、生命周期和错误语义。
 
 ## Non-Responsibilities
 
 - 不重复实现配置、运行管理、Session、设备操作或观测能力。
-- 不表示CLI、HTTP、其他Agent Adapter或具体FSQ模型Host资格已承诺交付。
+- 不表示HTTP、其他Agent Adapter或具体FSQ模型Host资格已承诺交付。
 
 ## Module Relationships
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04与INT-MCP-05分别由Issue #5和#11完成限定验收并进入`master`。INT-MCP-06精确合同已经确认，其状态以Issue #2为准。INT-CORE-01同源内核与FSQ ToolCall合同已经确认，其实施、验证与审查状态以Issue #22为准。SPEC本身不派生设备、提交、push、merge或发布授权。Integrations、Automation、当前平台与项目整体仍non-Done。
+INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04与INT-MCP-05分别由Issue #5和#11完成限定验收并进入`master`。INT-MCP-06精确合同已经确认，其状态以Issue #2为准。INT-CORE-01同源内核与FSQ ToolCall合同已经确认，其实施、验证与审查状态以Issue #22为准。INT-CLI-01合同已由用户在Issue #23实施授权中确认，其实施、验证与审查状态以Issue #23为准。SPEC本身不派生设备、提交、push、merge或发布授权。Integrations、Automation、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -340,3 +340,72 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - 本feature不授权真实设备、Appium服务、安装、敏感数据保留、commit、push、merge或release。无FSQ真实模型调用时只能声明schema/callback合同通过，不声明具体FSQ模型Host资格；Integrations、Automation、平台与项目仍non-Done。
 
 详细设计与FSQ手工wiring见[确认文档](../../docs/superpowers/specs/2026-11-13-integrations-fsq-toolcall-core-design.md)。
+
+## INT-CLI-01 Local Unix Socket Session Bridge And Product CLI
+
+> **已确认合同。** 用户已在Issue #23当前实施授权中确认本节及链接设计；确认授权Issue范围内产品源码、测试、既有依赖复用和聚焦验证，不授权新增/升级依赖、真实设备/Appium操作、提交、push、merge或发布。
+
+### Scope, dependency and single-source architecture
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。本feature新增正式`appium-connect-agent`产品CLI与当前登录账号私有Unix domain socket daemon；既有`appium-connect-agent-mcp`不替换。CLI不新增Automation行为、平台、HTTP/TCP/远程/跨账号接入或具体Host资格，Integrations、Automation、当前平台与项目整体仍non-Done。
+- 精确依赖为Issue #22限定Done且无开放finding的`TOOL_CATALOG`、`Application`、typed DTO、canonical JSON及公开Configuration/Runtime/Automation Interface。daemon持有唯一`Application(settings, adb_executable, surface="cli")`；所有工具调用只通过`Application.dispatch()`与同一catalog，不复制tool表、request model、Registry、Runtime owner、Session状态机、错误映射或canonical serializer。
+- 无新增、替换或升级依赖。继续复用Python3.11标准库、AnyIO4.15.1 tag、Pydantic2.14.1 tag及现有serializer；精确版本依据、API保证与项目适配缺口见设计§13。禁止新增CLI/daemon框架、自研通用异步框架、raw Appium/WebDriver/ADB、Automation私有入口、fallback、retry、replay、请求队列或第二状态机。
+- `Application.surface` clean-cutover为`mcp|toolcall|cli`；`dispatch`为ToolCall与CLI共同接受唯一`TOOL_CATALOG.tool_names`并使用同一adapter/invocation。`SessionData.ownership`扩为`mcp|toolcall|cli`且始终等于所属Application表面；不同Application/表面仍不得attach、恢复、持久化或共享handle。
+
+### Truthful capability and schema cutover
+
+- 必须新增`CliCapabilityData`与`CliCapabilityResult(CapabilityResult)`；`CapabilityData` discriminated union精确加入CLI。`Application.capabilities()`穷举返回三surface对应subtype，`_invoke_validated()`为capabilities按surface选择精确expected subtype，未知surface fail closed。
+- CLI data固定`integration_form=cli`、`transport=unix_socket`、`protocol_target=null`、`host_compatibility=unqualified`、`adb_configured=true`、既有platform、`tools=TOOL_CATALOG.tool_names`及共同limitations。MCP保持`mcp/stdio/2026-07-28`与点号名；ToolCall保持`toolcall/in_process/null`与无点号名。
+- MCP、ToolCall、CLI三表面共同`CapabilityLimitations`按原顺序移除`no_cli_product`，其他限制不变；Capability与Session output schema按真实union更新。
+- session open/close description clean-cutover为`Open the single Application-owned Android Session.`与`Close one Application-owned Session or its retained tombstone.`，三表面共享。十项request annotation/model/adapter、MCP点号名称、注册顺序、annotation、顶层required `request`包装、handler与input schema不得变化；十项MCP canonical `inputSchema` SHA-256逐项等于设计§3基线。
+
+### Formal command Interface and public output
+
+- `pyproject.toml`新增`appium-connect-agent = "appium_connect_agent.integrations.cli:main"`，与现有MCP script共存。该模块只公开`main() -> int`；bridge/helper、daemon child mode与测试factory均私有且不可配置为plugin。
+- 命令精确固定为`daemon start --config <abs> --adb-executable <abs> [--socket <abs>] [--idle-timeout-seconds <finite-positive-default-900>]`、`daemon status [--socket <abs>]`、`daemon stop [--socket <abs>]`、`catalog`、`call <tool_name> --json-args <json_object> [--socket <abs>] [--timeout-seconds <finite-positive>]`。只接受不可缩写/重复的长option；不读环境/PATH/SDK root，不搜索、不提供短名/stdin/batch或隐式start。client timeout不注入工具预算。
+- `catalog`零socket/Runtime/ADB/设备I/O，从fresh `TOOL_CATALOG.specs`输出`{"schema_version":1,"tools":[...]}`；每项精确为`annotations{destructive,idempotent,open_world,read_only}`、neutral description、无点号name及canonical `parameters_schema`。不得以FSQ schema冒充canonical schema。
+- `call`只接受十个`TOOL_CATALOG.tool_names`；点号/alias/大小写变化/未知名exit2且零daemon请求。`--json-args`语法/非object为exit2；object内部schema错误仅由`Application.dispatch`返回canonical `invalid_argument`并exit1。
+- start/status/stop公开文档分别精确为`{"schema_version":1,"state":"running"}`、`{"accepting":true,"schema_version":1,"state":"running"}`及`{"schema_version":1,"shutdown":"clean|degraded"}`。call stdout为response中的原canonical string，无CLI/IPC wrapper。所有public JSON使用现有canonical设置和一个末尾换行。
+- 退出映射唯一：0为control/catalog/tool success；1为canonical Application/tool error；2为参数/JSON/bootstrap/endpoint/tool name，stdout空且stderr `cli_error code=<invalid_arguments|invalid_json|invalid_endpoint|already_running|endpoint_invalid|bootstrap_failed>\n`；3为不可达/timeout/disconnect/protocol/bridge，stdout空且stderr `bridge_error code=<unavailable|timeout|disconnected|protocol_error|daemon_stopping|internal_error|response_too_large>\n`；4只输出degraded stop文档；130在ACK前Ctrl+C且stderr `cli_error code=cancelled\n`。帮助/版本除外。
+
+### Daemon bootstrap and endpoint security
+
+- start用`Popen`参数数组、`shell=False`、`start_new_session=True`、三标准流`DEVNULL`及两根单向匿名pipe。bootstrap为4-byte length＋strict UTF-8 JSON单帧、最多16KiB，唯一字段为required `protocol_version=1/config/adb_executable/socket/idle_timeout_seconds`且extra/duplicate/non-finite拒绝；双方立即关闭未用FD且只继承两child ends。长驻child argv不含config/ADB/socket/JSON；短生命周期调用CLI argv含显式option是已披露OS事实，不得再次输出或持久化。
+- startup采用固定10秒ready/ACK双阶段：parent写frame并保留writer；child验证、取锁、bind/verify、构造Application后写唯一且最多32-byte的ASCII行`ready|already_running|endpoint_invalid|bootstrap_failed`并关闭ready writer；ready后等待bootstrap pipe精确一字节ACK `0x06`且ACK前不accept。parent验证ready、写ACK、关闭writer后才成功。ACK前Ctrl+C/timeout/EOF/malformed不写ACK，child完成listener/Application/socket/lock清理退出，parent最多等待/reap 10秒；未退出为bridge internal error。ACK后ownership已成功，不得报告启动失败。
+- 默认socket精确`/private/tmp/appium-connect-agent-<uid>/bridge.sock`；路径绝对strict UTF-8、无NUL、最多103 bytes，basename不为空/`.`/`..`/`daemon.lock`。固定account dir可原子创建0700；显式endpoint父目录不创建。account dir与endpoint direct parent均须current UID真实非symlink精确0700，并用opened descriptor复核`st_dev/st_ino`。
+- 固定账号级lock为`/private/tmp/appium-connect-agent-<uid>/daemon.lock`，`--socket`不可改变，确保不同显式父目录仍只有一个daemon。endpoint父目录不同时另持sibling `daemon.lock`保护stale处理；endpoint父目录就是account dir时两者同一文件只锁一次。固定顺序account→endpoint取得current UID、non-symlink、regular、link count1、mode0600的`flock(LOCK_EX|LOCK_NB)`并持有到cleanup终态；竞争时不probe/unlink。
+- socket精确current UID/0600。只有同时持account/endpoint locks者可处理stale：symlink/非socket/owner或mode不符零删除；可连接零删除；只有明确`ECONNREFUSED`且unlink前inode/owner/type/mode仍相同可删除一次。listener ready前chmod/lstat；shutdown只删自有且inode未变节点，替换则degraded。本合同不隔离同UID恶意进程。
+
+### Framing, connection ownership and cancellation
+
+- 私有IPC固定4-byte big-endian length＋strict UTF-8 JSON。request `1..1MiB`、完整response envelope `1..4MiB`；header+body总read budget 10秒，每次write budget 10秒。一连接一请求/响应，无reuse/pipeline/multiplex/compression/batch/FD/client ID。
+- 所有request/response为strict/frozen Pydantic discriminated union，字段全required、literal const、extra-forbid；duplicate key及NaN/Inf在DTO前拒绝。request精确为`tool.call{tool_name,arguments}`、`daemon.status`、`daemon.stop`。response精确为`tool_result{canonical_json,is_error}`、`daemon_status{state=running,accepting=true}`、`daemon_stopped{shutdown=clean|degraded}`、`bridge_error{code=protocol_error|daemon_stopping|internal_error|response_too_large}`，共同`protocol_version=1`和对应kind。
+- `tool_result.canonical_json`是现有serializer的原string；unknown ordinary dispatch Exception转`application.internal_error()`并`is_error=true`，BaseException控制流不转换。4MiB按外层转义后完整envelope计量；当前全部reachable typed result必须通过，未来接近上限先SPEC gate。overflow可能发生在operation后，exit3、delivery unknown且不重放。
+- 每次accept立即登记connection-owned cancel scope，覆盖partial header/body、decode、dispatch、watcher、write、close。length是请求边界；body后extra byte为post-dispatch violation，可能已发生一次下层调用，只cooperative cancel并保留late success/known error，不宣称not-sent。daemon并发accept但不在Application外排队/串行业务。
+
+### Idle and once-only shutdown
+
+- idle要求无accepted handler/in-flight valid request且距最近完成valid request达到有限正数，默认900秒；partial/invalid不刷新但在10秒read budget内阻止idle。有效status/tool刷新activity。
+- stop/idle/SIGINT/SIGTERM/fatal listener统一once-only coordinator：stopping、停止accept、以`daemon_stopping`拒绝新work、取消/关闭所有accepted scope（已读stop连接除外）、等待transport/Application worker、最多一次幂等shielded`Application.aclose()`、关闭listener/仅删自有socket、释放endpoint/account locks、再对stop连接单次10秒write并退出。所有非stop handler须在release lock前结束。
+- Session quit与Runtime exit只能由Application执行；active Session最多尝试quit一次。uncertain/busy/cleanup failure/节点替换保持degraded。stop client断连不取消shielded cleanup；SIGKILL/host crash/PID消失不表示known-clean。
+
+### Privacy and verification gate
+
+- tool stdout按用户确认可含当前调用需要的handle、device/app/UI。stderr、status、ready/control错误、daemon日志、长驻child argv、持久文件、默认测试/审查证据严禁出现path、raw JSON、handle、device/app/Automation/Appium ID、URL、locator/UI或异常原文；只允许固定code/state。parser不得插值非法值。
+- 永久测试覆盖三surface/subtype/description、十MCP hash、exact golden bytes、双锁跨目录单实例、endpoint/stale/race、bootstrap FD与ready/ACK竞态、partial/slow framing、完整envelope ceiling、post-dispatch extra byte、accepted-scope cancel、busy无队列、stop/idle/信号/fatal/degraded、once-only aclose/quit、privacy canary及wheel/sdist双入口。
+- 聚焦验证为Integrations合同测试、touched-scope Ruff、strict mypy、import-linter、`git diff --check`及适用独立full审查。真实设备CLI链仍须另行授权；controlled protocol不能证明真机。Feature通过不提升模块/平台/项目状态。
+
+### Minimum sufficient design
+
+一个正式CLI入口、一个私有bridge实现、一个endpoint policy、一个daemon、一个Application和一个ToolCatalog。只允许一个私有`application_factory`测试seam，不导出、不配置、不形成Adapter/plugin/registry。业务复杂度继续封装在既有深`Application` Module，bridge只拥有process/filesystem/framing/connection lifecycle。
+
+### Deferred by design
+
+- 自动启动/重启、launch agent、PID文件、持久日志、自升级。
+- TCP/HTTP/TLS/远程/跨账号、其他平台或具体Coding Agent资格。
+- 多daemon、多socket、多Application、多Session、多设备routing、attach/recovery/persisted handle。
+- per-tool结构化option、alias、stdin/batch/interactive/shell completion。
+- retry/replay/fallback/queue/probe、managed Appium adoption或新Runtime/Automation行为。
+- 公共bridge SDK、可替换transport Adapter或未来平台extension point。
+
+完整已确认设计、库依据、安全推导、验证矩阵及供commander合入的精确根SPEC delta全文见[INT-CLI-01设计](../../docs/superpowers/specs/2026-11-13-integrations-cli-bridge-design.md)。
