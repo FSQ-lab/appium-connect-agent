@@ -354,6 +354,42 @@ class Runtime:
 
         cleanup_managed(self, control or OperationControl(timeout_seconds=30.0))
 
+    def stop_managed(
+        self,
+        connection: RuntimeConnection,
+        *,
+        control: OperationControl | None = None,
+    ) -> None:
+        from ._connection import RuntimeConnection as RuntimeConnectionType
+
+        if not isinstance(connection, RuntimeConnectionType):
+            raise ValueError("connection must be RuntimeConnection")
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        from ._managed import stop_managed
+
+        stop_managed(
+            self, connection, control or OperationControl(timeout_seconds=30.0)
+        )
+
+    def restart_managed(
+        self,
+        connection: RuntimeConnection,
+        *,
+        control: OperationControl | None = None,
+    ) -> RuntimeConnection:
+        from ._connection import RuntimeConnection as RuntimeConnectionType
+
+        if not isinstance(connection, RuntimeConnectionType):
+            raise ValueError("connection must be RuntimeConnection")
+        if control is not None and not isinstance(control, OperationControl):
+            raise ValueError("control must be OperationControl or None")
+        from ._managed import restart_managed
+
+        return restart_managed(
+            self, connection, control or OperationControl(timeout_seconds=90.0)
+        )
+
     def install(
         self,
         request: InstallRequest,

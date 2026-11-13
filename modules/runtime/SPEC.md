@@ -4,7 +4,7 @@
 
 本模块维护 Appium 运行环境相关职责的边界。
 
-当前已确认本地静态诊断、已有本地 Appium 连接、固定受管根初始安装、scope-managed Appium 启动与 usage/清理，以及官方 driver ensure 与显式 Driver Doctor Interface。设备发现和 Session 创建/使用/关闭由 Automation 或调用方负责，显式服务 stop/restart 仍按后续 feature 确认。
+当前已确认本地静态诊断、已有本地 Appium 连接、固定受管根初始安装、scope-managed Appium 启动与 usage/清理、active owned 服务显式 stop/restart，以及官方 driver ensure 与显式 Driver Doctor Interface。设备发现和 Session 创建/使用/关闭由 Automation 或调用方负责。
 
 ## Responsibilities
 
@@ -22,7 +22,7 @@
 
 ## Current Status
 
-静态诊断、本地连接、固定受管根初始安装、managed lifecycle 及官方 driver ensure/Doctor 契约已确认；各 feature 的实现与聚焦验证以交付证据为准。RT-LOCAL-05 的真实三平台安装/Doctor、副作用恢复、质量/发行物和独立审查仍是其 Done gate；本模块整体验收不由单个平台或非设备证据提升。
+静态诊断、本地连接、固定受管根初始安装、managed lifecycle、active owned 服务显式 stop/restart 及官方 driver ensure/Doctor 契约已确认；各 feature 的实现与聚焦验证以交付证据为准。RT-LOCAL-05 的真实三平台安装/Doctor、副作用恢复、质量/发行物和独立审查仍是其 Done gate；RT-LOCAL-06 的实现、受控矩阵、真实 stop/restart 链、质量/发行物和独立审查仍是其 Done gate；本模块整体验收不由单个平台或非设备证据提升。
 
 ## Static Local Diagnostics
 
@@ -337,3 +337,42 @@ RuntimeUsage.release() -> None
 ### Deferred By Design
 
 - Appium 更新/降级/选择；driver version/tag/update/unsafe/uninstall/rollback/compatibility resolver；第三方 driver/plugin/任意 package/source/path/argv；自动/startup Doctor、scheduler/cache/retry/fallback；Doctor per-check DTO或日志解析；sandbox/环境diff/事务回滚/平台工具自研修复；active service stop/restart；external或用户npm维护；跨进程PID接管；Session/ADB/设备/UI；持久原始日志/环境快照/遥测，均不在本 feature，也不预建占位 Interface。
+
+## Local Managed Appium Explicit Stop And Restart
+
+本节定义 Issue #4、TaskID `RT-LOCAL-06-DESIGN-SPEC-GATE-01` 的已确认合同；对应详细设计为[显式 stop/restart](../../docs/superpowers/specs/2026-11-13-runtime-local-06-stop-restart-design.md)。合同确认不表示产品实现、真实服务/设备链或 Runtime 模块已经验收，也不授权真实服务/设备、提交、推送、合并或发布。
+
+### Public Interface, Target Identity And Scope
+
+- Runtime 增加同步 `stop_managed(connection: RuntimeConnection, *, control: OperationControl | None = None) -> None` 与 `restart_managed(connection: RuntimeConnection, *, control: OperationControl | None = None) -> RuntimeConnection`；两者只允许在 active `with runtime.start_managed(...) as connection:` scope 内由进入 scope 的 owner thread 调用。显式 connection 参数是当前目标和 generation capability，不提供隐式 current-service stop/restart、别名或额外 context。
+- connection/control 类型错误在任何 I/O 前 ValueError。ownership 非 managed 为 `InvalidStateError/unsupported_connection_ownership`；错误 Runtime、伪造对象、非当前 scope、旧/replaced generation、stopped/closed 为 `connection_closed`；当前 generation 正在 stop/restart/close-requested/cleanup-pending 为 `connection_closing`。必须同时验证同一 Runtime、当前 `_managed_scope`、精确 RuntimeConnection 对象身份和当前 generation；URL、host/port、report 或字段相等不能替代身份。
+- managed connection 私有 owner 必须绑定 generation；撤销 generation 后旧 `RuntimeConnection.server_url` 和 `acquire_usage()` 永久 `connection_closed`，不能在同一 scope 再 active 时复活。ownership、appium_version、compatibility、report 仍是既有不可变快照。restart 只有完成新 active 资格后才创建并返回全新 RuntimeConnection 对象。
+- 不增加 ManagedRuntimeConnection、stop/restart scope/result、manager、registry、Adapter、Configuration 字段或公开 generation/usage/PID。Contracts、Configuration、Automation、Integrations与模块依赖方向不变。
+
+### Usage, Lock And Stop Semantics
+
+- 两入口在 scope usage lock 内原子复核当前 identity/state/usage。任一未释放 RuntimeUsage（含 active 或 unknown/uncertain Automation Session）存在时，立即 `ServiceLifecycleError/service_in_use`；本调用零信号、零文件/socket/HTTP/lsof，scope/process/current connection 与 `service.json=active` 全部保持不变。该行为与 usage>0 的 scope `__exit__` 转 close-requested/cleanup_pending 明确不同。
+- 只有 usage=0 才先把 scope 转为 stopping/restarting并撤销当前 generation，然后执行破坏性 I/O。只允许 signal 当前实例内存中本次真实 `_ManagedProcess` 的 Popen/PGID；磁盘 PID/PGID、端口、status、进程名、目录、EOF或空闲锁不授权 stop/restart、kill或attach。
+- `stop_managed` 的 control=None 默认30秒；一个 operation 和单一 monotonic deadline覆盖 stopping record、SIGTERM、最多2秒温和等待、必要SIGKILL、双流排空、wait、pipe/selector close、drain thread join和terminal record，不按阶段重置。进程刚退出时不发送无意义信号，但仍须证明组、组长、selector、双pipe和thread全部终态。
+- 只有全部终态成立才原子写 `service.json=stopped`、丢弃进程句柄并进入 stopped。stop 成功后 `_ManagedScope` 继续持有原账号 `runtime.lock` 至词法 with `__exit__`；exit 对 stopped 只清除注册/current connection并释放锁，不重复写record或signal。stopped 是该 scope 的terminal服务状态；同一 with 内不能用旧连接再restart，需直接原子restart或退出后新建start scope。
+- stop 的终态不能证明时最佳努力写 cleanup_pending，保留真实句柄和账号锁，只允许同实例既有 cleanup_managed 在usage=0后重试；取消/超时/清理错误不得写stopped或释放锁冒充完成。with exit 对 cleanup_pending 不重复signal、不覆盖主错误、不释放锁。
+
+### Atomic Restart And Failure Boundaries
+
+- `restart_managed` 的 control=None 默认90秒业务总预算；同一 operation_id、cancellation和monotonic deadline在同一既有账号锁内贯穿 stop old 与 start new，不为start重置。先永久撤销旧 generation，再完整写 stopping、清理旧 owned进程并写stopped；旧终态不能证明时转cleanup_pending且零port preflight、零spawn、零HTTP。
+- 旧stop完成后沿用scope不可变 `(host, port, base_path)`；在record仍为stopped时重新核对受管根、installation/maintenance idle事实和固定`/usr/sbin/lsof`可信性，再执行numeric loopback独占bind预检。root/lsof/取消/预算或port在该阶段失败时scope/record保持stopped、零spawn；不得复用旧Popen/PGID、自动换端口、读取新配置或跨进程attach。
+- preflight成功且紧邻spawn的最后checkpoint通过后才写starting，再spawn全新进程组和drain thread，中间不插入其他业务I/O/checkpoint。新进程完整复用RT-LOCAL-04资格链：首次owned PID精确LISTEN FD proof之后才请求`/status`；必须HTTP 200、对象形value、ready=true、可靠Appium SemVer `3.x`；再做第二次同PID/endpoint proof并确认child alive，写active后才在usage lock内发布新generation和全新RuntimeConnection。旧连接始终closed，新连接active且可取得usage。
+- starting写入后的Popen创建/启动失败沿既有 `_startup_failure` 使用额外最多30秒失败安全收尾；该预算不恢复restart业务步骤。确认无process或新进程清理成功且terminal record成功才进入stopped；terminal stopped写入或进程清理不能证明则cleanup_pending并保留scope/句柄/锁，由cleanup_managed重试。所有失败均不自动重启、retry/fallback、恢复旧Session或连接、跨进程attach。
+- restart成功后scope恢复active并继续持锁，with自然退出只清理新generation。restart失败且stopped时exit只释放锁；cleanup_pending时只能cleanup_managed。父进程崩溃、非法/非终态记录或ownership不足继续managed_recovery_required，不接管或kill。
+
+### Errors, Reuse And Verification
+
+- 新稳定code仅增加 `unsupported_connection_ownership`；复用 `connection_closed`、`connection_closing`、`service_in_use`、`managed_cleanup_pending`、`service_port_in_use`、`service_ownership_unverified`、`managed_service_exited`、现有HTTP/版本/预算/取消/协调错误。主错误对象保持；managed安全收尾错误独立附`runtime_managed_cleanup_error`，锁释放错误沿`runtime_cleanup_error`。未知程序缺陷保持原对象并保守pending，不映射成stopped/active。
+- `service.json` schema/字段/安全文件规则不变，不持久化PID/PGID/generation/version/流；stopping/starting/active/stopped/cleanup_pending/recovery_required语义保持。stop不执行lsof/HTTP；restart只复用现有双lsof proof与HTTP status。两入口不运行Doctor、driver install/update、npm、ADB、Session或设备命令，不修改installation/maintenance/component/cache。
+- 复用CPython3.11 subprocess/os.killpg/signal/selectors/socket/threading/time.monotonic、macOS固定`/usr/sbin/lsof`、既有httpx==0.28.1/anyio==4.15.1/httpcore==1.0.9与node-semver==0.9.1用途；零新增或升级产品/开发依赖，不引入psutil/AppiumService、自研HTTP/SemVer/进程registry或第二套supervisor。
+- 永久测试必须覆盖零I/O身份拒绝、external不受影响、usage>0拒绝保持active、alive/刚退出stop、TERM/KILL/双流/线程/record/pending、stopped scope幂等exit、单deadline原子restart、新旧generation视图、端口抢占、旧stop unknown零spawn、新startup failure stopped/pending、崩溃不接管、脱敏与账号锁复用。默认使用隔离临时root、fake Appium和受控真实临时进程组/listener，不要求设备。
+- Feature Done另需正式wheel/sdist公共入口验证、质量检查、完整独立正确性/安全审查0 open findings，以及获准固定真实受管服务完成active→stop→端口释放→restart新PID双proof+ready→旧视图closed/新视图active→最终自然清理→service stopped→锁复用，并证明external服务未受影响。没有服务授权时只能non-device pass，不能声明真实链或Feature Done。
+
+### Deferred By Design
+
+- stopped scope内再次单独start；usage drain/force/自动Session quit或恢复；自动重启/retry/fallback/换端口；恢复旧Session；跨进程attach/PID接管；external或远程stop/restart；多managed服务、daemon；Appium/driver维护或Doctor；设备/ADB/UI；generation持久化、公开计数/PID/result DTO、遥测和原始日志，均不在本feature，也不预建占位Interface。

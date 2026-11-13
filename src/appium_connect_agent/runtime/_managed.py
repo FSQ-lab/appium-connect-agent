@@ -158,6 +158,8 @@ class _ManagedProcess:
         self.truncated = {"stdout": False, "stderr": False}
         self._selector = selectors.DefaultSelector()
         self._drain_error: BaseException | None = None
+        self._close_error: BaseException | None = None
+        self._selector_closed = False
         self._closed = False
         self._group_gone = False
         for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
@@ -198,15 +200,26 @@ class _ManagedProcess:
             self._close_streams()
 
     def _close_streams(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        with suppress(Exception):
-            self._selector.close()
+        close_error: BaseException | None = None
+        if not self._selector_closed:
+            try:
+                self._selector.close()
+            except BaseException as error:
+                close_error = error
+            else:
+                self._selector_closed = True
         for stream in (self.process.stdout, self.process.stderr):
             if stream is not None and not stream.closed:
-                with suppress(OSError):
+                try:
                     stream.close()
+                except BaseException as error:
+                    if close_error is None:
+                        close_error = error
+        self._close_error = close_error
+        self._closed = self._selector_closed and all(
+            stream is None or stream.closed
+            for stream in (self.process.stdout, self.process.stderr)
+        )
 
     def group_state(self) -> Literal["alive", "gone", "unknown"]:
         self.process.poll()
@@ -255,14 +268,38 @@ class _ManagedProcess:
         if remaining <= 0:
             operation.checkpoint()
         self._thread.join(remaining)
+        if not self._thread.is_alive():
+            self._close_streams()
         complete = (
             self.group_state() == "gone"
             and self.process.poll() is not None
             and not self._thread.is_alive()
+            and self._selector_closed
             and self._closed
             and self._drain_error is None
+            and self._close_error is None
         )
         return complete
+
+
+class _ManagedConnectionOwner:
+    """Bind one public connection view to exactly one managed generation."""
+
+    __slots__ = ("generation", "operation", "scope")
+
+    def __init__(
+        self, scope: _ManagedScope, generation: int, operation: _Operation
+    ) -> None:
+        self.scope = scope
+        self.generation = generation
+        self.operation = operation
+
+    @property
+    def connection_active(self) -> bool:
+        return self.scope._connection_active(self.generation)
+
+    def acquire_usage(self) -> RuntimeUsage:
+        return self.scope._acquire_usage(self.generation, self.operation)
 
 
 class _ManagedScope(AbstractContextManager[RuntimeConnection]):
@@ -286,6 +323,9 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         self._entry = Lock()
         self._usage_lock = Lock()
         self._usages = 0
+        self._generation = 0
+        self._connection: RuntimeConnection | None = None
+        self._owner_thread: int | None = None
         self._intent_written = False
         self._registered = False
 
@@ -293,17 +333,21 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
     def root(self) -> Path:
         return _coordination._account_home() / ".appium-connect-agent"
 
-    @property
-    def connection_active(self) -> bool:
+    def _connection_active(self, generation: int) -> bool:
         with self._usage_lock:
-            available = self.state in ("active", "close_requested")
-        process = self.process
-        return available and process is not None and process.alive()
+            if (
+                generation != self._generation
+                or self._connection is None
+                or self.state not in ("active", "close_requested")
+            ):
+                return False
+            process = self.process
+            return process is not None and process.alive()
 
-    def acquire_usage(self) -> RuntimeUsage:
-        operation = self.operation
-        assert operation is not None
+    def _acquire_usage(self, generation: int, operation: _Operation) -> RuntimeUsage:
         with self._usage_lock:
+            if generation != self._generation or self._connection is None:
+                raise operation.error(InvalidStateError, "connection_closed")
             if self.state == "close_requested":
                 raise operation.error(InvalidStateError, "connection_closing")
             if (
@@ -321,6 +365,59 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         with self._usage_lock:
             assert self._usages > 0
             self._usages -= 1
+
+    def _publish_connection(
+        self, version: str, operation: _Operation
+    ) -> RuntimeConnection:
+        report = operation.report()
+        with self._usage_lock:
+            self._generation += 1
+            owner = _ManagedConnectionOwner(self, self._generation, operation)
+            connection = RuntimeConnection(
+                owner,
+                self.url,
+                version,
+                "declared_compatible",
+                report,
+                "managed",
+            )
+            self._connection = connection
+            self.state = "active"
+            self.operation = operation
+            self._owner_thread = get_ident()
+        self.runtime._active_thread = get_ident()
+        return connection
+
+    def _begin_explicit(
+        self,
+        connection: RuntimeConnection,
+        operation: _Operation,
+        state: Literal["stopping", "restarting"],
+    ) -> None:
+        with self.runtime._managed_guard:
+            if self.runtime._managed_scope is not self:
+                raise operation.error(InvalidStateError, "connection_closed")
+            with self._usage_lock:
+                if self.state in (
+                    "stopping",
+                    "restarting",
+                    "close_requested",
+                    "cleanup_pending",
+                ):
+                    raise operation.error(InvalidStateError, "connection_closing")
+                if (
+                    self.state != "active"
+                    or self._connection is not connection
+                    or self._owner_thread != get_ident()
+                ):
+                    raise operation.error(InvalidStateError, "connection_closed")
+                if self._usages:
+                    raise operation.error(ServiceLifecycleError, "service_in_use")
+                operation.checkpoint()
+                self.state = state
+                self._connection = None
+                self._generation += 1
+                self.operation = operation
 
     def _register(self, operation: _Operation) -> None:
         with self.runtime._managed_guard:
@@ -435,6 +532,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
     def _port_preflight(self, operation: _Operation) -> None:
         family = socket.AF_INET6 if self.host == "::1" else socket.AF_INET
         candidate = socket.socket(family, socket.SOCK_STREAM)
+        candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             candidate.bind((self.host, self.port))
         except OSError as error:
@@ -648,6 +746,24 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 return version
             _sleep(operation)
 
+    def _activate(self, operation: _Operation) -> RuntimeConnection:
+        self._wait_for_proof(operation)
+        version = self._wait_ready(operation)
+        if not self._probe(operation):
+            raise operation.error(ServiceLifecycleError, "service_ownership_unverified")
+        operation.add("host", "pass", "host_observed")
+        operation.add("service", "pass", "service_ready")
+        operation.add(
+            "declared_compatibility",
+            "pass",
+            "declared_compatible",
+            (f"version={version}",),
+        )
+        operation.add("qualified_support", "unknown", "not_qualified")
+        operation.add("device", "unknown", "not_checked")
+        self._record("active", operation)
+        return self._publish_connection(version, operation)
+
     def __enter__(self) -> RuntimeConnection:
         if not self._entry.acquire(blocking=False):
             operation = self.operation or _Operation(self.control, None)
@@ -668,34 +784,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
             self._record("starting", operation)
             self._port_preflight(operation)
             self._spawn(node, appium_entry, operation)
-            self._wait_for_proof(operation)
-            version = self._wait_ready(operation)
-            if not self._probe(operation):
-                raise operation.error(
-                    ServiceLifecycleError, "service_ownership_unverified"
-                )
-            operation.add("host", "pass", "host_observed")
-            operation.add("service", "pass", "service_ready")
-            operation.add(
-                "declared_compatibility",
-                "pass",
-                "declared_compatible",
-                (f"version={version}",),
-            )
-            operation.add("qualified_support", "unknown", "not_qualified")
-            operation.add("device", "unknown", "not_checked")
-            self._record("active", operation)
-            with self._usage_lock:
-                self.state = "active"
-            self.runtime._active_thread = get_ident()
-            return RuntimeConnection(
-                self,
-                self.url,
-                version,
-                "declared_compatible",
-                operation.report(),
-                "managed",
-            )
+            return self._activate(operation)
         except BaseException as error:
             self._startup_failure(error)
             raise
@@ -718,41 +807,125 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 if self._intent_written:
                     self._record("cleanup_pending", operation)
         if cleanup_error is None:
-            self.state = "closed"
+            with self._usage_lock:
+                self.state = "closed"
+                self._connection = None
+                self._owner_thread = None
+                self._generation += 1
             self.process = None
             self._clear_registration()
             self._release_lock(error)
         else:
-            self.state = "cleanup_pending"
+            with self._usage_lock:
+                self.state = "cleanup_pending"
+                self._connection = None
+                self._generation += 1
             self.runtime._managed_cleanup = self
             error.__dict__["runtime_managed_cleanup_error"] = cleanup_error
 
-    def _cleanup(self, operation: _Operation, original: BaseException | None) -> None:
-        with self._usage_lock:
-            usages = self._usages
-        if usages:
-            raise operation.error(ServiceLifecycleError, "service_in_use")
+    def _stop_owned(self, operation: _Operation) -> None:
         process = self.process
         try:
             self._record("stopping", operation)
             if process is not None and not process.cleanup(operation):
                 raise operation.error(ServiceLifecycleError, "managed_cleanup_pending")
             self._record("stopped", operation)
-        except BaseException as cleanup:
+        except BaseException:
             with suppress(BaseException):
                 self._record("cleanup_pending", operation)
-            self.state = "cleanup_pending"
+            with self._usage_lock:
+                self.state = "cleanup_pending"
             self.runtime._managed_cleanup = self
-            if original is not None:
-                original.__dict__["runtime_managed_cleanup_error"] = cleanup
-                return
             raise
         self.process = None
-        self.state = "closed"
+        self.runtime._managed_cleanup = None
+
+    def _finish_closed(self, original: BaseException | None) -> None:
+        with self._usage_lock:
+            self._connection = None
+            self._generation += 1
+            self._owner_thread = None
+            self.state = "closed"
         self.runtime._active_thread = None
         self._clear_registration()
         self.runtime._managed_cleanup = None
         self._release_lock(original)
+
+    def stop(self, connection: RuntimeConnection, control: OperationControl) -> None:
+        operation = _Operation(
+            control, self.runtime._on_progress, phase="stopping_managed"
+        )
+        self._begin_explicit(connection, operation, "stopping")
+        self._stop_owned(operation)
+        with self._usage_lock:
+            self.state = "stopped"
+
+    def _restart_startup_failure(self, error: BaseException) -> None:
+        operation = _Operation(
+            OperationControl(timeout_seconds=30.0),
+            self.runtime._on_progress,
+            phase="cleaning_managed",
+        )
+        try:
+            if self.process is not None and not self.process.cleanup(operation):
+                raise operation.error(ServiceLifecycleError, "managed_cleanup_pending")
+            self._record("stopped", operation)
+        except BaseException as cleanup:
+            with suppress(BaseException):
+                self._record("cleanup_pending", operation)
+            with self._usage_lock:
+                self.state = "cleanup_pending"
+            self.runtime._managed_cleanup = self
+            error.__dict__["runtime_managed_cleanup_error"] = cleanup
+            return
+        self.process = None
+        self.runtime._managed_cleanup = None
+        with self._usage_lock:
+            self.state = "stopped"
+
+    def restart(
+        self, connection: RuntimeConnection, control: OperationControl
+    ) -> RuntimeConnection:
+        operation = _Operation(
+            control, self.runtime._on_progress, phase="restarting_managed"
+        )
+        self._begin_explicit(connection, operation, "restarting")
+        self._stop_owned(operation)
+        starting_attempted = False
+        try:
+            node, appium_entry = self._validate_root(operation)
+            self._validate_lsof(operation)
+            self._port_preflight(operation)
+            operation.checkpoint()
+            starting_attempted = True
+            self._record("starting", operation)
+            with self._usage_lock:
+                self.state = "starting"
+            self._spawn(node, appium_entry, operation)
+            return self._activate(operation)
+        except BaseException as error:
+            if starting_attempted:
+                self._restart_startup_failure(error)
+            else:
+                with self._usage_lock:
+                    self.state = "stopped"
+            raise
+
+    def _cleanup(self, operation: _Operation, original: BaseException | None) -> None:
+        with self._usage_lock:
+            if self._usages:
+                raise operation.error(ServiceLifecycleError, "service_in_use")
+            self._connection = None
+            self._generation += 1
+            self.state = "terminating"
+        try:
+            self._stop_owned(operation)
+        except BaseException as cleanup:
+            if original is not None:
+                original.__dict__["runtime_managed_cleanup_error"] = cleanup
+                return
+            raise
+        self._finish_closed(original)
 
     def __exit__(
         self,
@@ -762,9 +935,17 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
     ) -> None:
         del exc_type, traceback
         with self._usage_lock:
+            state = self.state
             usages = self._usages
-            if usages:
+            if state == "active" and usages:
                 self.state = "close_requested"
+        if state == "closed":
+            return
+        if state == "stopped":
+            self._finish_closed(exc_value)
+            return
+        if state == "cleanup_pending":
+            return
         if usages:
             operation = _Operation(
                 OperationControl(timeout_seconds=30.0),
@@ -807,3 +988,33 @@ def cleanup_managed(runtime: Runtime, control: OperationControl) -> None:
             raise operation.error(ServiceLifecycleError, "service_in_use")
         return
     pending.cleanup(control)
+
+
+def _explicit_scope(runtime: Runtime, connection: RuntimeConnection) -> _ManagedScope:
+    if connection.ownership != "managed":
+        raise InvalidStateError(
+            "unsupported_connection_ownership",
+            connection.report.operation_id,
+            connection.report,
+        )
+    owner = connection._scope
+    if (
+        not isinstance(owner, _ManagedConnectionOwner)
+        or owner.scope.runtime is not runtime
+    ):
+        raise InvalidStateError(
+            "connection_closed", connection.report.operation_id, connection.report
+        )
+    return owner.scope
+
+
+def stop_managed(
+    runtime: Runtime, connection: RuntimeConnection, control: OperationControl
+) -> None:
+    _explicit_scope(runtime, connection).stop(connection, control)
+
+
+def restart_managed(
+    runtime: Runtime, connection: RuntimeConnection, control: OperationControl
+) -> RuntimeConnection:
+    return _explicit_scope(runtime, connection).restart(connection, control)

@@ -26,6 +26,7 @@ from appium_connect_agent.runtime import (
     OperationControl,
     OperationTimeoutError,
     Runtime,
+    RuntimeConnection,
     RuntimeOperationError,
     ServiceConnectionError,
     ServiceLifecycleError,
@@ -876,6 +877,8 @@ def test_sigterm_ignoring_child_is_killed_and_all_resources_close(
         "sigkill-error",
         "wait-timeout",
         "drain-thread-error",
+        "selector-close",
+        "stdout-close",
     ],
 )
 def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
@@ -931,6 +934,30 @@ def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
 
         monkeypatch.setattr(process.process, "poll", faulty_poll)
         monkeypatch.setattr(process.process, "wait", faulty_wait)
+    elif failure_point == "selector-close":
+        original_selector_close = process._selector.close
+
+        def faulty_selector_close() -> None:
+            if fault_enabled:
+                raise OSError("selector close failed")
+            original_selector_close()
+
+        monkeypatch.setattr(process._selector, "close", faulty_selector_close)
+    elif failure_point == "stdout-close":
+        original_stdout = process.process.stdout
+        assert original_stdout is not None
+
+        class FailingCloseStream:
+            @property
+            def closed(self) -> bool:
+                return bool(original_stdout.closed)
+
+            def close(self) -> None:
+                if fault_enabled:
+                    raise OSError("stdout close failed")
+                original_stdout.close()
+
+        cast(Any, process.process).stdout = FailingCloseStream()
     else:
         process._drain_error = OSError("drain failed")
 
@@ -1112,3 +1139,561 @@ def test_active_child_exit_closes_connection_without_restarting_or_releasing_usa
     usage.release()
     scope.__exit__(None, None, None)
     assert _service_state(root) == "stopped"
+
+
+def test_stop_restart_value_and_external_rejections_are_zero_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = Runtime(LocalSettings())
+    report = runtime.diagnose()
+
+    def forbidden(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("lifecycle rejection performed I/O")
+
+    monkeypatch.setattr(cast(Any, _coordination), "account_lock", forbidden)
+    monkeypatch.setattr(cast(Any, _managed).subprocess, "Popen", forbidden)
+    with pytest.raises(ValueError, match="connection must be RuntimeConnection"):
+        runtime.stop_managed(cast(Any, object()))
+
+    external = RuntimeConnection(
+        cast(Any, object()),
+        "http://127.0.0.1:4723",
+        None,
+        "unverified",
+        report,
+    )
+    with pytest.raises(ValueError, match="control must be OperationControl or None"):
+        runtime.restart_managed(external, control=cast(Any, object()))
+    with pytest.raises(InvalidStateError) as stopped:
+        runtime.stop_managed(external)
+    assert stopped.value.code == "unsupported_connection_ownership"
+    with pytest.raises(InvalidStateError) as restarted:
+        runtime.restart_managed(external)
+    assert restarted.value.code == "unsupported_connection_ownership"
+
+
+@pytest.mark.parametrize("method", ["stop_managed", "restart_managed"])
+def test_explicit_lifecycle_usage_rejection_preserves_active_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    usage = connection.acquire_usage()
+    second_usage = connection.acquire_usage()
+    owner = cast(Any, scope)
+    process = owner.process
+    signals: list[int] = []
+    original_killpg = os.killpg
+
+    def observed(group: int, signal_number: int) -> None:
+        if signal_number:
+            signals.append(signal_number)
+        original_killpg(group, signal_number)
+
+    monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed)
+    try:
+        with pytest.raises(ServiceLifecycleError) as blocked:
+            getattr(runtime, method)(connection)
+        assert blocked.value.code == "service_in_use"
+        assert owner.state == "active"
+        assert owner.process is process
+        assert process is not None and process.alive()
+        assert connection.server_url.startswith("http://127.0.0.1:")
+        assert _service_state(root) == "active"
+        assert signals == []
+    finally:
+        second_usage.release()
+        usage.release()
+        scope.__exit__(None, None, None)
+
+
+def test_explicit_stop_invalidates_view_and_holds_lock_until_scope_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    signals: list[int] = []
+    original_killpg = os.killpg
+
+    def observed(group: int, signal_number: int) -> None:
+        if signal_number:
+            signals.append(signal_number)
+        original_killpg(group, signal_number)
+
+    monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed)
+    runtime.stop_managed(connection)
+    count_after_stop = len(signals)
+    assert cast(Any, scope).state == "stopped"
+    assert cast(Any, scope).process is None
+    assert _service_state(root) == "stopped"
+    with pytest.raises(InvalidStateError) as closed_url:
+        _ = connection.server_url
+    assert closed_url.value.code == "connection_closed"
+    with pytest.raises(InvalidStateError) as closed_usage:
+        connection.acquire_usage()
+    assert closed_usage.value.code == "connection_closed"
+    with pytest.raises(EnvironmentBusyError):
+        Runtime(LocalSettings(node_executable=node)).start_managed(
+            host="127.0.0.1", port=_unused_port("127.0.0.1")
+        ).__enter__()
+
+    scope.__exit__(None, None, None)
+    assert len(signals) == count_after_stop
+    assert runtime._managed_scope is None
+    runtime.diagnose()
+
+
+def test_explicit_stop_of_just_exited_group_sends_no_termination_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    process = cast(Any, scope).process
+    assert process is not None
+    os.killpg(process.group_id, signal.SIGKILL)
+    process.process.wait(timeout=2)
+    signals: list[int] = []
+    original_killpg = os.killpg
+
+    def observed(group: int, signal_number: int) -> None:
+        if signal_number:
+            signals.append(signal_number)
+        original_killpg(group, signal_number)
+
+    monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed)
+    runtime.stop_managed(connection)
+    assert signals == []
+    assert _service_state(root) == "stopped"
+    with pytest.raises(InvalidStateError) as repeated:
+        runtime.restart_managed(connection)
+    assert repeated.value.code == "connection_closed"
+    assert signals == []
+    scope.__exit__(None, None, None)
+
+
+def test_restart_replaces_generation_under_one_deadline_and_cleans_new_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    old_connection = scope.__enter__()
+    owner = cast(Any, scope)
+    old_process = owner.process
+    assert old_process is not None
+    old_pid = old_process.process.pid
+    expected_url = old_connection.server_url
+    deadlines: list[float] = []
+    original_cleanup = old_process.cleanup
+    original_activate = owner._activate
+
+    def observed_cleanup(operation: Any) -> bool:
+        deadlines.append(operation.deadline)
+        return cast(bool, original_cleanup(operation))
+
+    def observed_activate(operation: Any) -> RuntimeConnection:
+        deadlines.append(operation.deadline)
+        return cast(RuntimeConnection, original_activate(operation))
+
+    monkeypatch.setattr(old_process, "cleanup", observed_cleanup)
+    monkeypatch.setattr(owner, "_activate", observed_activate)
+    new_connection = runtime.restart_managed(old_connection)
+    new_process = owner.process
+    assert new_process is not None and new_process.process.pid != old_pid
+    assert deadlines[0] == deadlines[1]
+    assert new_connection is not old_connection
+    assert new_connection.server_url == expected_url
+    assert new_connection.ownership == "managed"
+    assert new_connection.appium_version == "3.15.0"
+    with pytest.raises(InvalidStateError) as old_url:
+        _ = old_connection.server_url
+    assert old_url.value.code == "connection_closed"
+    with pytest.raises(InvalidStateError) as old_usage:
+        old_connection.acquire_usage()
+    assert old_usage.value.code == "connection_closed"
+    usage = new_connection.acquire_usage()
+    usage.release()
+    assert _service_state(root) == "active"
+
+    scope.__exit__(None, None, None)
+    assert _service_state(root) == "stopped"
+    with pytest.raises(ProcessLookupError):
+        os.killpg(new_process.group_id, 0)
+
+
+def test_restart_port_race_keeps_stopped_and_does_not_touch_external_listener(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    port = _unused_port("127.0.0.1")
+    scope = runtime.start_managed(host="127.0.0.1", port=port)
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    original_validate = owner._validate_root
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    def occupy_after_validation(operation: Any) -> tuple[Path, Path]:
+        result = cast(tuple[Path, Path], original_validate(operation))
+        listener.bind(("127.0.0.1", port))
+        listener.listen(1)
+        return result
+
+    monkeypatch.setattr(owner, "_validate_root", occupy_after_validation)
+    try:
+        with pytest.raises(ServiceLifecycleError) as occupied:
+            runtime.restart_managed(connection)
+        assert occupied.value.code == "service_port_in_use"
+        assert owner.state == "stopped"
+        assert owner.process is None
+        assert _service_state(root) == "stopped"
+        assert listener.getsockname()[1] == port
+        scope.__exit__(None, None, None)
+    finally:
+        listener.close()
+
+
+def test_restart_startup_failure_stays_stopped_and_old_view_never_revives(
+    tmp_path: Path,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    (root / "appium" / "node_modules" / "appium" / "index.js").write_text("version-2")
+
+    with pytest.raises(UnsupportedVersionError):
+        runtime.restart_managed(connection)
+    assert cast(Any, scope).state == "stopped"
+    assert cast(Any, scope).process is None
+    assert _service_state(root) == "stopped"
+    with pytest.raises(InvalidStateError) as closed:
+        _ = connection.server_url
+    assert closed.value.code == "connection_closed"
+    scope.__exit__(None, None, None)
+    runtime.diagnose()
+
+
+def test_restart_terminal_record_failure_is_cleanup_pending_until_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    (root / "appium" / "node_modules" / "appium" / "index.js").write_text("version-2")
+    original_record = owner._record
+    stopped_records = 0
+    fault_enabled = True
+
+    def fail_new_terminal_record(state: str, operation: Any) -> None:
+        nonlocal stopped_records
+        if state == "stopped":
+            stopped_records += 1
+            if fault_enabled and stopped_records == 2:
+                raise OSError("new terminal record failed")
+        original_record(state, operation)
+
+    monkeypatch.setattr(owner, "_record", fail_new_terminal_record)
+    with pytest.raises(UnsupportedVersionError) as failed:
+        runtime.restart_managed(connection)
+    attached = failed.value.__dict__["runtime_managed_cleanup_error"]
+    assert isinstance(attached, OSError)
+    assert owner.state == "cleanup_pending"
+    assert owner.process is not None
+    assert _service_state(root) == "cleanup_pending"
+    scope.__exit__(None, failed.value, None)
+    assert runtime._managed_scope is owner
+
+    fault_enabled = False
+    runtime.cleanup_managed()
+    assert cast(Any, scope).state == "closed"
+    assert cast(Any, scope).process is None
+    assert _service_state(root) == "stopped"
+    assert runtime._managed_scope is None
+
+
+def test_explicit_stop_cleanup_pending_exit_is_noop_until_cleanup_managed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    process = owner.process
+    assert process is not None
+    original_cleanup = process.cleanup
+    attempts = 0
+
+    def incomplete_once(operation: Any) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return False
+        return cast(bool, original_cleanup(operation))
+
+    monkeypatch.setattr(process, "cleanup", incomplete_once)
+    with pytest.raises(ServiceLifecycleError) as pending:
+        runtime.stop_managed(connection)
+    assert pending.value.code == "managed_cleanup_pending"
+    assert owner.state == "cleanup_pending"
+    assert _service_state(root) == "cleanup_pending"
+    scope.__exit__(None, pending.value, None)
+    assert attempts == 1
+    assert runtime._managed_scope is owner
+    assert runtime._managed_cleanup is owner
+
+    runtime.cleanup_managed()
+    assert attempts == 2
+    assert _service_state(root) == "stopped"
+    assert runtime._managed_scope is None
+
+
+def test_restart_identity_thread_and_precancel_rejections_preserve_active(
+    tmp_path: Path,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    other = Runtime(LocalSettings(node_executable=node))
+    with pytest.raises(InvalidStateError) as wrong_runtime:
+        other.restart_managed(connection)
+    assert wrong_runtime.value.code == "connection_closed"
+
+    cancellation = threading.Event()
+    cancellation.set()
+    with pytest.raises(OperationCancelledError):
+        runtime.restart_managed(
+            connection,
+            control=OperationControl(timeout_seconds=1, cancellation=cancellation),
+        )
+    assert cast(Any, scope).state == "active"
+    assert _service_state(root) == "active"
+
+    errors: list[BaseException] = []
+
+    def wrong_thread() -> None:
+        try:
+            runtime.stop_managed(connection)
+        except BaseException as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=wrong_thread)
+    worker.start()
+    worker.join(timeout=2)
+    assert len(errors) == 1 and isinstance(errors[0], InvalidStateError)
+    assert errors[0].code == "connection_closed"
+    assert cast(Any, scope).state == "active"
+    assert _service_state(root) == "active"
+    scope.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("failure", ["cancel", "timeout"])
+def test_stop_interruption_after_generation_revoke_stays_cleanup_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    process = owner.process
+    assert process is not None
+    original_cleanup = process.cleanup
+    cancellation = threading.Event()
+
+    def interrupt(operation: Any) -> bool:
+        if failure == "cancel":
+            cancellation.set()
+        else:
+            operation.deadline = time.monotonic() - 1
+        operation.checkpoint()
+        raise AssertionError("checkpoint accepted an interrupted operation")
+
+    monkeypatch.setattr(process, "cleanup", interrupt)
+    control = OperationControl(timeout_seconds=5, cancellation=cancellation)
+    expected = OperationCancelledError if failure == "cancel" else OperationTimeoutError
+    with pytest.raises(expected):
+        runtime.stop_managed(connection, control=control)
+    assert owner.state == "cleanup_pending"
+    assert owner.process is process
+    assert _service_state(root) != "stopped"
+    with pytest.raises(InvalidStateError) as closed:
+        _ = connection.server_url
+    assert closed.value.code == "connection_closed"
+    with pytest.raises(EnvironmentBusyError):
+        Runtime(LocalSettings(node_executable=node)).start_managed(
+            host="127.0.0.1", port=_unused_port("127.0.0.1")
+        ).__enter__()
+
+    cancellation.clear()
+    monkeypatch.setattr(process, "cleanup", original_cleanup)
+    runtime.cleanup_managed()
+    assert _service_state(root) == "stopped"
+    assert runtime._managed_scope is None
+
+
+def test_restart_unknown_old_group_never_reaches_start_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    process = owner.process
+    assert process is not None
+    original_group_state = process.group_state
+    unknown = True
+
+    def group_state() -> str:
+        return "unknown" if unknown else cast(str, original_group_state())
+
+    def forbidden(*args: object, **kwargs: object) -> Any:
+        raise AssertionError("restart reached start phase before old cleanup")
+
+    monkeypatch.setattr(process, "group_state", group_state)
+    monkeypatch.setattr(owner, "_validate_root", forbidden)
+    monkeypatch.setattr(owner, "_port_preflight", forbidden)
+    monkeypatch.setattr(owner, "_spawn", forbidden)
+    with pytest.raises(ServiceLifecycleError) as pending:
+        runtime.restart_managed(connection)
+    assert pending.value.code == "managed_cleanup_pending"
+    assert owner.state == "cleanup_pending"
+    assert owner.process is process
+    assert _service_state(root) == "cleanup_pending"
+
+    unknown = False
+    runtime.cleanup_managed()
+    assert _service_state(root) == "stopped"
+    assert runtime._managed_scope is None
+
+
+@pytest.mark.parametrize("failure", ["root", "lsof", "cancel", "timeout"])
+def test_restart_prestarting_failure_remains_stopped_without_spawn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    original_validate_root = owner._validate_root
+    cancellation = threading.Event()
+
+    def fail_root(operation: Any) -> tuple[Path, Path]:
+        if failure == "root":
+            raise operation.error(
+                ServiceLifecycleError, "managed_installation_not_ready"
+            )
+        if failure == "cancel":
+            cancellation.set()
+            operation.checkpoint()
+        if failure == "timeout":
+            operation.deadline = time.monotonic() - 1
+            operation.checkpoint()
+        return cast(tuple[Path, Path], original_validate_root(operation))
+
+    def fail_lsof(operation: Any) -> None:
+        if failure == "lsof":
+            raise operation.error(ServiceLifecycleError, "service_ownership_unverified")
+
+    def forbidden_spawn(*args: object, **kwargs: object) -> None:
+        raise AssertionError("pre-start failure spawned a process")
+
+    monkeypatch.setattr(owner, "_validate_root", fail_root)
+    monkeypatch.setattr(owner, "_validate_lsof", fail_lsof)
+    monkeypatch.setattr(owner, "_spawn", forbidden_spawn)
+    control = OperationControl(timeout_seconds=5, cancellation=cancellation)
+    expected: type[BaseException]
+    expected = {
+        "cancel": OperationCancelledError,
+        "timeout": OperationTimeoutError,
+    }.get(failure, ServiceLifecycleError)
+    with pytest.raises(expected):
+        runtime.restart_managed(connection, control=control)
+    assert owner.state == "stopped"
+    assert owner.process is None
+    assert _service_state(root) == "stopped"
+    scope.__exit__(None, None, None)
+    assert runtime._managed_scope is None
+
+
+def test_restart_popen_failure_restores_stopped_without_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    popen_calls = 0
+
+    def fail_popen(*args: object, **kwargs: object) -> Any:
+        nonlocal popen_calls
+        popen_calls += 1
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(cast(Any, _managed).subprocess, "Popen", fail_popen)
+    with pytest.raises(ServiceLifecycleError) as failed:
+        runtime.restart_managed(connection)
+    assert failed.value.code == "managed_service_exited"
+    assert popen_calls == 1
+    assert cast(Any, scope).state == "stopped"
+    assert cast(Any, scope).process is None
+    assert _service_state(root) == "stopped"
+    scope.__exit__(None, None, None)
+
+
+def test_restart_new_process_cleanup_failure_stays_pending_until_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    owner = cast(Any, scope)
+    old_process = owner.process
+    assert old_process is not None
+    (root / "appium" / "node_modules" / "appium" / "index.js").write_text("version-2")
+    original_cleanup = cast(Any, _managed)._ManagedProcess.cleanup
+    fault_enabled = True
+
+    def fail_new_cleanup(process: Any, operation: Any) -> bool:
+        if fault_enabled and process is not old_process:
+            return False
+        return cast(bool, original_cleanup(process, operation))
+
+    monkeypatch.setattr(
+        cast(Any, _managed)._ManagedProcess, "cleanup", fail_new_cleanup
+    )
+    with pytest.raises(UnsupportedVersionError) as failed:
+        runtime.restart_managed(connection)
+    attached = failed.value.__dict__["runtime_managed_cleanup_error"]
+    assert isinstance(attached, ServiceLifecycleError)
+    assert attached.code == "managed_cleanup_pending"
+    assert owner.state == "cleanup_pending"
+    assert owner.process is not None and owner.process is not old_process
+    assert _service_state(root) == "cleanup_pending"
+
+    fault_enabled = False
+    runtime.cleanup_managed()
+    assert owner.state == "closed"
+    assert owner.process is None
+    assert _service_state(root) == "stopped"
+    assert runtime._managed_scope is None
