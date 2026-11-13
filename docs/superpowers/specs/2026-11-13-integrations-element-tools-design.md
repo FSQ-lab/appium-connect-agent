@@ -108,12 +108,15 @@ Use three strict/frozen object branches and `Field(discriminator="kind")`:
 class SingleClickRequest(_ElementClickRequestBase):
     kind: Literal["single"]
 
+
 class DoubleClickRequest(_ElementClickRequestBase):
     kind: Literal["double"]
+
 
 class LongClickRequest(_ElementClickRequestBase):
     kind: Literal["long"]
     duration_ms: int = Field(default=500, ge=1, le=60_000)
+
 
 ElementClickRequest = Annotated[
     SingleClickRequest | DoubleClickRequest | LongClickRequest,
@@ -152,8 +155,15 @@ class ElementImeActionRequest(_StrictModel):
     session_handle: SessionHandle
     locator: LocatorV1
     action: Literal[
-        "normal", "unspecified", "none", "go", "search",
-        "send", "next", "done", "previous",
+        "normal",
+        "unspecified",
+        "none",
+        "go",
+        "search",
+        "send",
+        "next",
+        "done",
+        "previous",
     ]
     wait_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
     timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)

@@ -84,7 +84,7 @@ if sys.platform == 'darwin':
     assert DriverComponent is not None and DriverMaintenanceResult is not None and DriverDoctorResult is not None
     assert OfficialDriver is not None
     assert issubclass(DriverMaintenanceError, Exception) and issubclass(DriverDoctorError, Exception)
-    assert len(TOOL_CATALOG.specs) == 10
+    assert len(TOOL_CATALOG.specs) == 12
     assert callable(Application) and callable(SyncApplication) and callable(cli_main)
     combinations = supported_combinations()
     assert len(combinations) == 1
