@@ -21,6 +21,10 @@ from ._models import (
     DeviceListResult,
     ElementClickRequest,
     ElementClickResult,
+    ElementGestureRequest,
+    ElementGestureResult,
+    ElementImeActionRequest,
+    ElementImeActionResult,
     ElementTextRequest,
     ElementTextResult,
     McpCapabilityResult,
@@ -121,11 +125,11 @@ class ToolSpec:
 
 
 class ToolCatalog:
-    """Immutable declarations and deterministic schema projections for ten tools."""
+    """Immutable declarations and deterministic schema projections for twelve tools."""
 
     def __init__(self, specs: tuple[ToolSpec, ...]) -> None:
-        if len(specs) != 10:
-            raise ValueError("tool catalog must contain exactly ten tools")
+        if len(specs) != 12:
+            raise ValueError("tool catalog must contain exactly twelve tools")
         if len({spec.mcp_name for spec in specs}) != len(specs):
             raise ValueError("MCP tool names must be unique")
         if len({spec.tool_name for spec in specs}) != len(specs):
@@ -504,6 +508,14 @@ async def _back(application: Application, request: BaseModel) -> BaseModel:
     return await application.back(cast(DeviceBackRequest, request))
 
 
+async def _ime_action(application: Application, request: BaseModel) -> BaseModel:
+    return await application.ime_action(cast(ElementImeActionRequest, request))
+
+
+async def _gesture(application: Application, request: BaseModel) -> BaseModel:
+    return await application.gesture(cast(ElementGestureRequest, request))
+
+
 def _spec(
     mcp_name: str,
     tool_name: str,
@@ -607,7 +619,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.element.click",
             "appium_element_click",
             "element_click",
-            "Click one explicitly located Native Element once.",
+            "Perform one single, double, or long click on an explicitly located Native Element.",
             ElementClickRequest,
             ElementClickResult,
             _WRITE_OPEN,
@@ -632,6 +644,26 @@ TOOL_CATALOG = ToolCatalog(
             DeviceBackResult,
             _WRITE_OPEN,
             _back,
+        ),
+        _spec(
+            "appium.element.ime_action",
+            "appium_element_ime_action",
+            "element_ime_action",
+            "Perform one explicit editor action on an explicitly located Native Element.",
+            ElementImeActionRequest,
+            ElementImeActionResult,
+            _WRITE_OPEN,
+            _ime_action,
+        ),
+        _spec(
+            "appium.element.gesture",
+            "appium_element_gesture",
+            "element_gesture",
+            "Swipe, scroll, scroll to a restricted target, or drag an explicitly located Native Element.",
+            ElementGestureRequest,
+            ElementGestureResult,
+            _WRITE_OPEN,
+            _gesture,
         ),
     )
 )

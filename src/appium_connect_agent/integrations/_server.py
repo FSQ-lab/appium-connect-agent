@@ -124,11 +124,11 @@ def create_server(application: Application) -> MCPServer[Application]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local readiness, explicit Session lifecycle, Native observation, one "
-            "caller-requested Element click, caller-requested Element text send, clear, "
-            "or replace, and one caller-requested Device back; no automatic focus, "
-            "submit, observation, verification, navigation, action chain, retry, replay, "
-            "rollback, attach, recovery, or HTTP tools."
+            "Local readiness, explicit Session lifecycle, Native observation, caller-requested "
+            "Element single, double, or long click, Element text send, clear, or replace, "
+            "Element IME action, Element swipe, scroll, restricted scroll-to, or drag-and-drop, "
+            "and Device back; no automatic observation, verification, navigation, action chain, "
+            "retry, replay, rollback, attach, recovery, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,

@@ -60,6 +60,8 @@ _TOOL_NAMES = (
     "appium_element_click",
     "appium_element_text",
     "appium_device_back",
+    "appium_element_ime_action",
+    "appium_element_gesture",
 )
 _INPUT_SCHEMA_SHA256 = {
     "appium.capabilities.get": "f53a26611f0f62347fe10b6e09ebea6a17d1040b5d069dc0af2d2d632b7818c4",
@@ -69,9 +71,11 @@ _INPUT_SCHEMA_SHA256 = {
     "appium.session.status": "e7d106bc945981291193fd8ff9509cfc92f51d73cde71db5169b18422e3c66de",
     "appium.session.close": "702d080d90efbe49179f282489e8cc1ae537700c121f0479401ed69c04488ace",
     "appium.ui.observe": "310d885d7f095ed9c96624852413d1b6c8495abbd24088809aa492e669314cf9",
-    "appium.element.click": "738b9045b86d6b75f97e3f601258240af5f635f08947b51880d4ccd6c9bf53d1",
+    "appium.element.click": "212fbc6fdc56cf45acc2e82b33e1c811f6aec7f40470983cf1f157458c8049b0",
     "appium.element.text": "109542fda082a344ed20ad2249f5eb66cadad88aeee5e51c136fb9380632dbd6",
     "appium.device.back": "f5b1986f683b37b974a549156afb4907bc66539228fc6930e10c2cb3bea6455d",
+    "appium.element.ime_action": "725369e79e3051381adabf720817b605f4ef2c82bfd1458c5e7150886e9497be",
+    "appium.element.gesture": "1d56c60870092cda6912fefba06ca799f00cf7aa847629680b60693462194b34",
 }
 _OPENAI_SCHEMA_SHA256 = {
     "appium_capabilities_get": "5adb3919717cd87cc52ba5d526ac4ef34fe0980531f4b0f6e23a0fae09be46da",
@@ -81,9 +85,11 @@ _OPENAI_SCHEMA_SHA256 = {
     "appium_session_status": "db08632cc7de86cb3edf049477b318fb79e80b90b8626bf631d28d62aaf697a5",
     "appium_session_close": "6b5b665bc41f8e09c804114963479e60387186819f28340e409598997c0c508d",
     "appium_ui_observe": "829193a3d9e9826e6e2e350a733e75e2b0db9ae1f5bbc808edb20121a3716a20",
-    "appium_element_click": "2c87f917f75c4abf0da7f377c857a2c3a87f5a14148be6ba4282ee7bbd931bc5",
+    "appium_element_click": "702bd8dec03bbf1201cae62d3574671b4633dfe13c1e14ae0bb5f86c688a111c",
     "appium_element_text": "e50dae9c228824ffcd836f716c1d29221e73d73f7264d12306b611d645d0833a",
     "appium_device_back": "ed7a312d325d4adb48c05de9a3d16fb85eb6251c097f050267d0df59f34e0557",
+    "appium_element_ime_action": "fd711080afdcca3847dc3a760df94341d1c316adaf36df8c74d187e3862fd77e",
+    "appium_element_gesture": "c8921fc233c267e31540bbc694b97c1088090b26b03369f2601b19979465ade2",
 }
 _GOOGLE_SCHEMA_SHA256 = {
     "appium_capabilities_get": "9c74a083afb10b3e5f05f989dccd9ac4097be39a3916ada18093b1ad237eba67",
@@ -93,9 +99,11 @@ _GOOGLE_SCHEMA_SHA256 = {
     "appium_session_status": "f485e180967ffc88fad4bb5b3f62aff74fad0fb1833ae520ebbbc5d45389fe0b",
     "appium_session_close": "c5da739f0c6eaedc2ac392f050d9c3467c9ab515a5f02592920a124b901ad4a7",
     "appium_ui_observe": "0c14ed3ca32b67551a11ebae78fb067343cac700f0ff5d2dde926a3c824c4789",
-    "appium_element_click": "4de91a77d5c915024e9f6145eb2871d7ed2c873d4ff870fb426cc603e9430759",
+    "appium_element_click": "aa4b1bfce17a4e9347412003229194dfcb000f45cac0135d7362839b6de8ab23",
     "appium_element_text": "ac6d41cf457dd0fed064f016fd177ee021136e9acf2df4cc043efa4ecf1463b1",
     "appium_device_back": "65b4a1222ea4b9c70e1ee14d045ea2a142d80f8c36ea747f9e4f5b89e7dbad7a",
+    "appium_element_ime_action": "e03c3579b11aace2d9334cbd4d8acf81142ccc88553fe64f38d7ef63a6c1fdb9",
+    "appium_element_gesture": "5341d64927df1c63a8ca195a432c8575bf486201ef010c3451dc10556c7313fc",
 }
 _OPENAI_KEYWORDS = {
     "$defs",
@@ -283,7 +291,7 @@ def _payload(value: str) -> dict[str, Any]:
 
 def test_catalog_is_fixed_and_fsq_projection_is_safe_and_fresh() -> None:
     assert TOOL_CATALOG.tool_names == _TOOL_NAMES
-    assert len(TOOL_CATALOG.mcp_names) == 10
+    assert len(TOOL_CATALOG.mcp_names) == 12
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in _TOOL_NAMES)
 
     for name in _TOOL_NAMES:
@@ -441,7 +449,7 @@ def test_tool_bindings_execute_capability_and_use_surface_truth(tmp_path: Path) 
         application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
         bindings = application.tool_bindings()
         assert tuple(binding.name for binding in bindings) == _TOOL_NAMES
-        assert len({id(binding.parameters_schema) for binding in bindings}) == 10
+        assert len({id(binding.parameters_schema) for binding in bindings}) == 12
 
         result = _payload(
             await bindings[0].invoke(
@@ -757,6 +765,81 @@ class _FakeElement:
         self._session._fail("click")
         self._session._state.calls.append("element.click")
 
+    def double_click(self, *, wait_timeout_seconds: float, control: object) -> None:
+        del wait_timeout_seconds, control
+        self._session._fail("click")
+        self._session._state.calls.append("element.double_click")
+
+    def long_click(
+        self, duration_ms: int, *, wait_timeout_seconds: float, control: object
+    ) -> None:
+        del duration_ms, wait_timeout_seconds, control
+        self._session._fail("click")
+        self._session._state.calls.append("element.long_click")
+
+    def perform_editor_action(
+        self, action: str, *, wait_timeout_seconds: float, control: object
+    ) -> None:
+        del action, wait_timeout_seconds, control
+        self._session._fail("ime")
+        self._session._state.calls.append("element.ime")
+
+    def swipe_gesture(
+        self,
+        *,
+        direction: str,
+        percent: float,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del direction, percent, wait_timeout_seconds, control
+        self._session._fail("gesture")
+        self._session._state.calls.append("element.swipe")
+
+    def scroll_gesture(
+        self,
+        *,
+        direction: str,
+        percent: float,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> bool:
+        del direction, percent, wait_timeout_seconds, control
+        self._session._fail("gesture")
+        self._session._state.calls.append("element.scroll_gesture")
+        return True
+
+    def scroll(
+        self,
+        target: object,
+        *,
+        max_swipes: int,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del target, max_swipes, wait_timeout_seconds, control
+        self._session._fail("gesture")
+        self._session._state.calls.append("element.scroll")
+
+    def drag_and_drop(
+        self,
+        destination: object,
+        *,
+        destination_x_ratio: float,
+        destination_y_ratio: float,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del (
+            destination,
+            destination_x_ratio,
+            destination_y_ratio,
+            wait_timeout_seconds,
+            control,
+        )
+        self._session._fail("gesture")
+        self._session._state.calls.append("element.drag")
+
     def send_keys(
         self, text: str, *, wait_timeout_seconds: float, control: object
     ) -> None:
@@ -917,6 +1000,7 @@ _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
         "schema_version": 1,
         "session_handle": "s_" + ("a" * 32),
         "locator": {"by": "id", "value": "target"},
+        "kind": "single",
         "wait_timeout_seconds": 15.0,
         "timeout_seconds": 90.0,
     },
@@ -933,10 +1017,28 @@ _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
         "session_handle": "s_" + ("a" * 32),
         "timeout_seconds": 90.0,
     },
+    "appium_element_ime_action": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "locator": {"by": "id", "value": "target"},
+        "action": "done",
+        "wait_timeout_seconds": 15.0,
+        "timeout_seconds": 90.0,
+    },
+    "appium_element_gesture": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "intent": "swipe",
+        "locator": {"by": "id", "value": "target"},
+        "direction": "up",
+        "percent": 0.5,
+        "wait_timeout_seconds": 15.0,
+        "timeout_seconds": 90.0,
+    },
 }
 
 
-def test_real_toolcall_lifecycle_runs_all_ten_state_machines(
+def test_real_toolcall_lifecycle_runs_all_twelve_state_machines(
     mcp_harness: McpHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     state = _LowerState()
@@ -1012,11 +1114,73 @@ def test_real_toolcall_lifecycle_runs_all_ten_state_machines(
                 "schema_version": 1,
                 "session_handle": handle,
                 "locator": locator,
+                "kind": "single",
                 "wait_timeout_seconds": 15.0,
                 "timeout_seconds": 90.0,
             },
         )
         assert clicked["data"]["action"] == "click"
+        for kind, action in (("double", "double_click"), ("long", "long_click")):
+            click_arguments: dict[str, JsonValue] = {
+                "schema_version": 1,
+                "session_handle": handle,
+                "locator": locator,
+                "kind": kind,
+            }
+            if kind == "long":
+                click_arguments["duration_ms"] = 750
+            clicked = await _invoke_binding(
+                bindings, "appium_element_click", click_arguments
+            )
+            assert clicked["data"]["action"] == action
+
+        ime = await _invoke_binding(
+            bindings,
+            "appium_element_ime_action",
+            {
+                "schema_version": 1,
+                "session_handle": handle,
+                "locator": locator,
+                "action": "done",
+            },
+        )
+        assert ime["data"]["action"] == "ime_action"
+
+        gestures: tuple[dict[str, JsonValue], ...] = (
+            {"intent": "swipe", "locator": locator, "direction": "up", "percent": 0.5},
+            {
+                "intent": "scroll",
+                "locator": locator,
+                "direction": "down",
+                "percent": 2.0,
+            },
+            {
+                "intent": "scroll_to",
+                "container_locator": locator,
+                "target_by": "id",
+                "target_value": "child",
+                "target_package": "com.example",
+                "max_swipes": 3,
+            },
+            {
+                "intent": "drag_and_drop",
+                "source_locator": locator,
+                "destination_locator": {"by": "id", "value": "destination"},
+                "destination_x_ratio": 0.5,
+                "destination_y_ratio": 0.75,
+            },
+        )
+        for request in gestures:
+            gestured = await _invoke_binding(
+                bindings,
+                "appium_element_gesture",
+                {"schema_version": 1, "session_handle": handle, **request},
+            )
+            assert gestured["data"]["intent"] == request["intent"]
+            if request["intent"] == "scroll":
+                assert gestured["data"]["can_scroll_more"] is True
+            else:
+                assert gestured["data"]["can_scroll_more"] is None
         for intent, text in (("send", "value"), ("clear", None), ("replace", "new")):
             arguments: dict[str, JsonValue] = {
                 "schema_version": 1,
@@ -1070,7 +1234,19 @@ def test_real_toolcall_lifecycle_runs_all_ten_state_machines(
     assert state.calls.count("devices.list") == 1
     assert state.calls.count("session.create") == 1
     assert state.calls.count("session.quit") == 1
-    assert {"element.send", "element.clear", "element.replace"}.issubset(state.calls)
+    assert {
+        "element.click",
+        "element.double_click",
+        "element.long_click",
+        "element.ime",
+        "element.swipe",
+        "element.scroll_gesture",
+        "element.scroll",
+        "element.drag",
+        "element.send",
+        "element.clear",
+        "element.replace",
+    }.issubset(state.calls)
 
 
 def test_real_tool_errors_preserve_only_owned_session_resources(
@@ -1131,6 +1307,7 @@ def test_real_tool_errors_preserve_only_owned_session_resources(
                     "schema_version": 1,
                     "session_handle": handle,
                     "locator": locator,
+                    "kind": "single",
                     "wait_timeout_seconds": 15.0,
                     "timeout_seconds": 90.0,
                 },

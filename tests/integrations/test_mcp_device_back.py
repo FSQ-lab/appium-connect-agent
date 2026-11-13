@@ -24,7 +24,10 @@ from .conftest import CANARY, SECRET_PATH, TOOL_NAMES, McpHarness
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "locator" in values and "mode" not in values and "intent" not in values:
+        request.setdefault("kind", "single")
+    return {"request": request}
 
 
 def _text(result: CallToolResult) -> str:

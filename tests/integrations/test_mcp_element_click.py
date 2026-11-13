@@ -10,6 +10,7 @@ import anyio
 import pytest
 from mcp import Client
 from mcp.types import CallToolResult, Tool
+from pydantic import TypeAdapter
 
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.integrations._application import Application, ApplicationError
@@ -26,7 +27,10 @@ from .conftest import CANARY, SECRET_PATH, TOOL_NAMES, McpHarness
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "locator" in values and "mode" not in values and "intent" not in values:
+        request.setdefault("kind", "single")
+    return {"request": request}
 
 
 def _locator(
@@ -128,36 +132,49 @@ def test_click_is_eighth_destructive_tool_with_strict_schema(
     assert input_root["type"] == "object"
     assert input_root["required"] == ["request"]
     request_schema = _schema_target(input_root, input_root["properties"]["request"])
-    assert request_schema["additionalProperties"] is False
-    assert set(request_schema["required"]) == {
-        "schema_version",
-        "session_handle",
-        "locator",
+    assert request_schema["discriminator"]["propertyName"] == "kind"
+    branches = [
+        _schema_target(input_root, branch) for branch in request_schema["oneOf"]
+    ]
+    assert [branch["properties"]["kind"]["const"] for branch in branches] == [
+        "single",
+        "double",
+        "long",
+    ]
+    for branch in branches:
+        assert branch["additionalProperties"] is False
+        assert set(branch["required"]) == {
+            "schema_version",
+            "session_handle",
+            "locator",
+            "kind",
+        }
+        assert branch["properties"]["wait_timeout_seconds"] == {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 120.0,
+            "title": "Wait Timeout Seconds",
+            "type": "number",
+        }
+        assert branch["properties"]["timeout_seconds"] == {
+            "default": 90.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 120.0,
+            "title": "Timeout Seconds",
+            "type": "number",
+        }
+        locator_schema = _schema_target(input_root, branch["properties"]["locator"])
+        assert locator_schema["additionalProperties"] is False
+        assert set(locator_schema["required"]) == {"by", "value"}
+    assert "duration_ms" not in branches[0]["properties"]
+    assert "duration_ms" not in branches[1]["properties"]
+    assert branches[2]["properties"]["duration_ms"] == {
+        "default": 500,
+        "maximum": 60000,
+        "minimum": 1,
+        "title": "Duration Ms",
+        "type": "integer",
     }
-    assert set(request_schema["properties"]) == {
-        "schema_version",
-        "session_handle",
-        "locator",
-        "wait_timeout_seconds",
-        "timeout_seconds",
-    }
-    assert request_schema["properties"]["wait_timeout_seconds"] == {
-        "default": 15.0,
-        "exclusiveMinimum": 0.0,
-        "maximum": 120.0,
-        "title": "Wait Timeout Seconds",
-        "type": "number",
-    }
-    assert request_schema["properties"]["timeout_seconds"] == {
-        "default": 90.0,
-        "exclusiveMinimum": 0.0,
-        "maximum": 120.0,
-        "title": "Timeout Seconds",
-        "type": "number",
-    }
-    locator_schema = _schema_target(input_root, request_schema["properties"]["locator"])
-    assert locator_schema["additionalProperties"] is False
-    assert set(locator_schema["required"]) == {"by", "value"}
 
     assert click.output_schema is not None
     output_root = _schema_target(click.output_schema, click.output_schema)
@@ -175,7 +192,11 @@ def test_click_is_eighth_destructive_tool_with_strict_schema(
     data_schema = _schema_target(click.output_schema, output_root["properties"]["data"])
     assert data_schema["additionalProperties"] is False
     assert set(data_schema["required"]) == {"action", "session_state", "busy"}
-    assert data_schema["properties"]["action"]["const"] == "click"
+    assert data_schema["properties"]["action"]["enum"] == [
+        "click",
+        "double_click",
+        "long_click",
+    ]
     assert data_schema["properties"]["session_state"]["const"] == "active"
     assert data_schema["properties"]["busy"]["const"] is False
 
@@ -188,6 +209,7 @@ def test_click_schema_rejects_invalid_requests_before_handler(
         "schema_version": 1,
         "session_handle": handle,
         "locator": _locator(),
+        "kind": "single",
     }
     invalid = [
         {key: value for key, value in valid.items() if key != "locator"},
@@ -450,6 +472,7 @@ def test_click_accepts_json_object_string_and_locator_depth_boundary(
                                 "schema_version": 1,
                                 "session_handle": handle,
                                 "locator": locator,
+                                "kind": "single",
                                 "wait_timeout_seconds": 1.0,
                                 "timeout_seconds": 2.0,
                             }
@@ -874,11 +897,12 @@ def test_click_timeout_budget_starts_before_registry_admission(
         return entry, lower_calls
 
     monkeypatch.setattr(application, "_prepare_ui_operation", delayed_prepare)
-    request = ElementClickRequest.model_validate(
+    request = TypeAdapter(ElementClickRequest).validate_python(
         {
             "schema_version": 1,
             "session_handle": entry.handle,
             "locator": _locator(),
+            "kind": "single",
             "timeout_seconds": 0.01,
         }
     )

@@ -1065,11 +1065,11 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
             )
             initialized = receive(1)
             assert initialized["result"]["instructions"] == (
-                "Local readiness, explicit Session lifecycle, Native observation, one "
-                "caller-requested Element click, caller-requested Element text send, clear, "
-                "or replace, and one caller-requested Device back; no automatic focus, "
-                "submit, observation, verification, navigation, action chain, retry, replay, "
-                "rollback, attach, recovery, or HTTP tools."
+                "Local readiness, explicit Session lifecycle, Native observation, caller-requested "
+                "Element single, double, or long click, Element text send, clear, or replace, "
+                "Element IME action, Element swipe, scroll, restricted scroll-to, or drag-and-drop, "
+                "and Device back; no automatic observation, verification, navigation, action chain, "
+                "retry, replay, rollback, attach, recovery, or HTTP tools."
             )
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send(

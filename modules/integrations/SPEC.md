@@ -4,7 +4,7 @@
 
 本模块维护 MCP、CLI、SDK 等接入形式的适配边界。
 
-当前确认接入形式为本地stdio MCP、与其十项能力同源且前期只面向FSQ的进程内Python ToolCall，以及账号私有Unix socket bridge上的正式产品CLI；HTTP和其他Agent/Host不因模块定位自动承诺。
+当前确认接入形式为本地stdio MCP、与唯一`TOOL_CATALOG`同源且前期只面向FSQ的进程内Python ToolCall，以及账号私有Unix socket bridge上的正式产品CLI；具体工具数量与顺序由下文最新已确认feature合同维护，HTTP和其他Agent/Host不因模块定位自动承诺。
 
 ## Responsibilities
 
@@ -471,3 +471,73 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - Capability/config disclosure、新工具字段、新平台、remote/TLS或具体Host资格。
 
 完整设计、库依据、状态矩阵及已由commander合入的精确根SPEC delta全文见[已确认设计](../../docs/superpowers/specs/2026-11-13-integrations-managed-runtime-design.md)。
+
+## INT-TOOLS-01 Element Extended Click, IME Action, And Gestures（已确认）
+
+> **已确认合同。** Issue #25 已完成 SPEC gate；产品源码、测试和直接文档的实现仅限本节合同。依赖、设备/服务、根SPEC、commit、push、merge及发布权限仍按项目授权门槛执行。
+
+### Scope, dependencies and single-source cutover
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。精确下层依赖为已分别限定Done且无开放finding的Automation AIF-04公开`Element.click/double_click/long_click`、AIF-06公开`Element.swipe_gesture/scroll_gesture/scroll/drag_and_drop`、AIF-ED公开绑定Element构造/归属，以及AIF-07公开`Element.perform_editor_action`；上层依赖为INT-CORE-01唯一catalog/Application、INT-CLI-01正式CLI与INT-CORE-02同一Runtime owner路径。
+- Automation继续`device_validation_blocked_known_clean`、`module_done=false`、`automatic_retry_authorized=false`。AIF-06真机drag-and-drop历史验证缺口原样保留；受控协议或Integrations代表性真机手势不得关闭、提升或改写该缺口。
+- 唯一不可变`TOOL_CATALOG`从10项clean cutover为12项并同时驱动MCP、FSQ Python ToolCall和CLI：既有第8项扩展click；第11项新增IME；第12项新增gesture。禁止第二tool表、第二request模型、第二Registry/预算/错误状态机、shell专用dispatch、Automation私有入口、raw WebDriver/Appium/HTTP/ADB/script、fallback、retry或replay。
+- 无新增、替换或升级依赖。继续在已批准版本/用途内复用Pydantic2.14.1 strict/frozen判别联合、MCP2.3.0高层注册/annotation、AnyIO4.15.1既有worker路径、Python3.11标准库、既有FSQ fail-closed投射和公开Automation Interface；Configuration、Runtime、Contracts、Automation及依赖/lock no-delta。
+
+### Exact twelve-tool surface and capability truth
+
+- MCP固定顺序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe, appium.element.click, appium.element.text, appium.device.back, appium.element.ime_action, appium.element.gesture]`。ToolCall/CLI对应顺序为`[appium_capabilities_get, appium_runtime_check, appium_devices_list, appium_session_open, appium_session_status, appium_session_close, appium_ui_observe, appium_element_click, appium_element_text, appium_device_back, appium_element_ime_action, appium_element_gesture]`。
+- click保留`handler_symbol="element_click"`；IME固定`handler_symbol="element_ime_action"`；gesture固定`handler_symbol="element_gesture"`。三者annotation均为`readOnly=false, destructive=true, idempotent=false, openWorld=true`。annotation仅为Host提示，不授权自动调用或失败重放。
+- 三项变更后的`ToolSpec.description`为逐字合同：click从旧single-only文案clean cutover为`Perform one single, double, or long click on an explicitly located Native Element.`；IME为`Perform one explicit editor action on an explicitly located Native Element.`；gesture为`Swipe, scroll, scroll to a restricted target, or drag an explicitly located Native Element.`。MCP tools/list、FSQ `ToolBinding.description`与CLI catalog必须从同一ToolSpec原样暴露，不做shell专用改写。
+- `ToolCatalog`构造不变量改为`len(specs)==12`。`McpToolNames`、`ToolCallToolNames`、MCP注册、FSQ binding、CLI零I/O catalog/call及capability tools必须从同一catalog按上述顺序产生，不维护副本。
+- `CapabilityLimitations`固定有序为`[native_observation_element_click_text_ime_gestures_and_device_back, no_automatic_post_action_observation, ime_requires_explicit_element_and_action, gesture_coordinates_not_exposed, no_automatic_navigation, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。移除会与AIF-07必要聚焦及显式editor action冲突的`no_automatic_focus_submit_or_verify`；不宣称IME无副作用或手势业务成功。
+- MCP instructions固定为`Local readiness, explicit Session lifecycle, Native observation, caller-requested Element single, double, or long click, Element text send, clear, or replace, Element IME action, Element swipe, scroll, restricted scroll-to, or drag-and-drop, and Device back; no automatic observation, verification, navigation, action chain, retry, replay, rollback, attach, recovery, or HTTP tools.`
+
+### Extended click strict union and result
+
+- `ElementClickRequest` clean cutover为按required `kind`判别的`SingleClickRequest | DoubleClickRequest | LongClickRequest`，每个strict/frozen分支均为JSON Schema2020-12 closed object并拥有互斥`kind` const。共同required字段为`schema_version=1`、`session_handle`、`locator: LocatorV1`和`kind`；optional `wait_timeout_seconds=15.0`与`timeout_seconds=90.0`均接受actual finite int/float、拒绝bool且`0 < value <= 120.0`。
+- `kind=single|double`分支不拥有或接受`duration_ms`；仅`kind=long`拥有optional strict-int `duration_ms=500`且精确`1..60_000`。旧调用不再隐式single，必须迁移为`kind="single"`；缺失tag在Registry/Automation前拒绝，不保留alias或兼容模型。
+- worker构造一个Element后按分支恰好调用一次`Element.click`、`Element.double_click`或`Element.long_click`；long显式传duration，三者都传wait和同一remaining Control。不得用多次single模拟double/long、自动observe或业务验证。
+- `ElementClickResult`共同envelope不变；typed data固定`action=click|double_click|long_click`、`session_state=active`、`busy=false`。single仍返回`action=click`；结果不回显kind、duration或locator。
+
+### Element IME action
+
+- 新工具`appium.element.ime_action` / `appium_element_ime_action`的`ElementImeActionRequest`为strict/frozen closed object：required `schema_version=1`、`session_handle`、`locator: LocatorV1`和`action=normal|unspecified|none|go|search|send|next|done|previous`；optional实际有限数`wait_timeout_seconds=15.0`与`timeout_seconds=90.0`均为`0 < value <= 120.0`且拒绝bool。
+- worker构造一个Element并恰好调用一次公开`Element.perform_editor_action(action, wait_timeout_seconds=..., control=remaining)`。AIF-07可在同一公开调用/Session gate/预算内执行必要的一次click和focused核对；Integrations不得预点击、inspect、poll、重试、回滚、自动选择action或验证业务结果。
+- `ElementImeActionResult`沿共同success envelope，typed data固定`action=ime_action`、`session_state=active`、`busy=false`。不回显请求action、locator、focus/keyboard/text或UI数据。
+
+### Element gesture discriminated union
+
+- 新工具`appium.element.gesture` / `appium_element_gesture`的`ElementGestureRequest`为按required `intent`判别的四个strict/frozen closed object联合；四个branch const精确为`swipe|scroll|scroll_to|drag_and_drop`且互斥。共同required字段为`schema_version=1`、`session_handle`和`intent`；optional实际有限数`wait_timeout_seconds=15.0`与`timeout_seconds=90.0`均为`0 < value <= 120.0`且拒绝bool。
+- swipe分支required `locator: LocatorV1`、`direction=up|down|left|right`和actual finite `percent`且`0 < value <= 1.0`；恰好调用一次`Element.swipe_gesture`，成功`can_scroll_more=null`。scroll分支同形但percent为`0 < value <= 3.0`，恰好调用一次`Element.scroll_gesture`并原样返回strict bool；false是成功且不继续滚动。
+- scroll_to分支required `container_locator: LocatorV1`、`target_by=id|accessibility_id`、strict UTF-8 `target_value` 1..4096 code points且禁NUL、nullable/default-null `target_package`最多255 code points，以及strict-int `max_swipes=1..30`。`target_by=accessibility_id`时non-null package在Registry前拒绝。
+- scroll_to Adapter先以既有helper构造`container`，再精确调用`session.element(mapped_target_by, target_value, parent=container, package=target_package)`构造target，最后恰好一次`container.scroll(target, max_swipes=..., wait_timeout_seconds=..., control=remaining)`。调用方不传target parent/raw/XPath/链；同一个container对象同时是receiver和`target.parent`。Automation继续权威校验container canonical root ID、target canonical ID/accessibility ID、package、`mapTestTagToResourceId`及全部受限official-scroll语义，Integrations不复制或放宽。
+- drag_and_drop分支required `source_locator`、`destination_locator`及actual finite `destination_x_ratio`/`destination_y_ratio`，两者闭区间`[0.0,1.0]`且拒绝bool；构造同Session两Element并恰好调用一次`source.drag_and_drop(destination, ratios..., wait_timeout_seconds=..., control=remaining)`。Integrations不读取rect、不计算或公开坐标。
+- `ElementGestureResult.data`按intent保持精确不变量：仅scroll的`can_scroll_more`为strict bool，其他三分支为null；共同`session_state=active`、`busy=false`。结果不回显locator/package/direction/percent/ratio/target。
+
+### FSQ projection, dispatch, errors and privacy
+
+- canonical request仍来自同一Pydantic TypeAdapter。click三个和gesture四个branch均由required literal discriminator产生互斥`const`；既有`_verify_disjoint_one_of`必须先证明branch disjoint，随后才允许`oneOf→anyOf`并移除discriminator metadata。不得新增投射例外、conditional schema、任意dict、provider专用模型或约束删除。
+- 最终12项投射必须实际通过FSQ OpenAI `ensure_strict_json_schema`与Gemini `google_schema`。OpenAI strict会将全部advertised properties列为required，因此FSQ long-click须输出`duration_ms`且defaulted timeout也须输出；直接MCP/CLI/Pydantic仍可使用模型default。Gemini将const转单项enum并删除default；branch互斥仍由tag保持。
+- 每个handler只创建一个absolute deadline和Event，只调用一次既有`WorkerRegistry.run_budget`；Registry准入后锁外构造所需Element并调用一个公开Automation方法，finally用公开`session_info()`同步entry。成功必须最终active/idle；unknown/closed/uncertain/closing/busy/provisional/tombstone、ElementValidationError、AutomationError、response unknown/quarantine、cancel/late/EOF/broken pipe/no-abandon/no-replay及external/managed shutdown沿既有合同。
+- Locator/package/handle/device/app/target/ratio/UI/focus/Automation/Appium ID及异常输入均为敏感数据，只供发起且获准的client使用。结果不回显这些值；stderr、telemetry、Registry、manifest、默认测试/审查/证据不得记录原文、hash、异常message/repr/traceback或前后UI，只允许既有tool/kind/intent/code/call_id/operation_id/phase/duration/request_state/state/count allowlist。
+
+### Verification, status and limits
+
+- 永久合同覆盖12项顺序/名称/symbol/description/annotation、完整limitations/instructions、click三分支、IME九action、gesture四分支、branch无关字段拒绝、strict数字/UTF-8/Locator/timeout边界、schema拒绝零Registry/下层请求、typed result及canonical最大值。
+- 使用锁定真实Appium/Selenium client到受控HTTP协议服务，覆盖每个分支恰好一次公开Automation调用、精确下层route/payload/strict返回、wait/raw Settings、known/unknown/partial effect、预算/cancel/late、同Session action/close竞态、active/uncertain shutdown、no-replay与privacy canary；mock不能单独证明该接缝。
+- MCP官方Client、FSQ真实双转换器/ToolBinding callback和CLI catalog/daemon call须证明三壳同源。重锁变化的item8及新增item11/12 schema/output digest；其他九项既有request schema须证明不受影响。聚焦Integrations测试、Ruff/format、strict mypy、import-linter、wheel/sdist隔离安装及全新独立full实现审查仍为实施门槛。
+- 当前Automation状态必须保持`device_validation_blocked_known_clean`；代表性真机验收另需明确设备、安全页面、精确Locator/action、数据保留/基线恢复和服务权限。controlled protocol不冒充真机；本feature证据不关闭AIF-06历史drag缺口，不提升Automation、Integrations、平台、FSQ Host或项目Done。
+
+### Minimum sufficient design
+
+只扩展一个`ToolCatalog`和一个深`Application` Module：两个新ToolSpec与一个扩展ToolSpec隐藏三壳注册、strict union、Registry、预算、分派、错误和隐私复杂度。scroll_to由Adapter构造同一container-parent对象以消除调用方一致性陷阱；不存在第二manager、factory、registry、protocol或extension point。
+
+### Deferred by design
+
+- 其他Device/App/安装/面板/剪贴板/弹窗能力及新平台。
+- 绝对坐标、speed/duration、任意轨迹/UiAutomator/XPath scroll target、其他手势或动作组合。
+- 自动目标发现、scroll-before-action、focus/keyboard/业务验证、后观测、导航、retry/replay/rollback/fallback。
+- Element缓存、多Session/队列、attach/recovery/persistence、HTTP/remote或具体Host/model资格。
+- 关闭Automation AIF-06真机drag历史缺口或提升任何模块/平台Done。
+
+完整已确认设计、库复用、FSQ双转换器实证及已由commander合入的精确根SPEC delta全文见[INT-TOOLS-01设计](../../docs/superpowers/specs/2026-11-13-integrations-element-tools-design.md)。

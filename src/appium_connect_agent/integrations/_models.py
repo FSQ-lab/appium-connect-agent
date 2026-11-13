@@ -152,6 +152,8 @@ McpToolNames: TypeAlias = tuple[
     Literal["appium.element.click"],
     Literal["appium.element.text"],
     Literal["appium.device.back"],
+    Literal["appium.element.ime_action"],
+    Literal["appium.element.gesture"],
 ]
 ToolCallToolNames: TypeAlias = tuple[
     Literal["appium_capabilities_get"],
@@ -164,11 +166,14 @@ ToolCallToolNames: TypeAlias = tuple[
     Literal["appium_element_click"],
     Literal["appium_element_text"],
     Literal["appium_device_back"],
+    Literal["appium_element_ime_action"],
+    Literal["appium_element_gesture"],
 ]
 CapabilityLimitations: TypeAlias = tuple[
-    Literal["native_observation_single_click_element_text_and_device_back"],
+    Literal["native_observation_element_click_text_ime_gestures_and_device_back"],
     Literal["no_automatic_post_action_observation"],
-    Literal["no_automatic_focus_submit_or_verify"],
+    Literal["ime_requires_explicit_element_and_action"],
+    Literal["gesture_coordinates_not_exposed"],
     Literal["no_automatic_navigation"],
     Literal["no_node_cache"],
     Literal["observation_document_65536_bytes"],
@@ -542,7 +547,7 @@ ObserveRequest: TypeAlias = Annotated[
 ]
 
 
-class ElementClickRequest(_StrictModel):
+class _ElementClickRequest(_StrictModel):
     schema_version: Literal[1]
     session_handle: SessionHandle
     locator: LocatorV1
@@ -553,6 +558,129 @@ class ElementClickRequest(_StrictModel):
     @classmethod
     def _actual_number(cls, value: object) -> float:
         return _finite_number(value)
+
+
+class SingleClickRequest(_ElementClickRequest):
+    kind: Literal["single"]
+
+
+class DoubleClickRequest(_ElementClickRequest):
+    kind: Literal["double"]
+
+
+class LongClickRequest(_ElementClickRequest):
+    kind: Literal["long"]
+    duration_ms: int = Field(default=500, ge=1, le=60_000)
+
+
+ElementClickRequest: TypeAlias = Annotated[
+    SingleClickRequest | DoubleClickRequest | LongClickRequest,
+    Field(discriminator="kind"),
+]
+
+
+class ElementImeActionRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    locator: LocatorV1
+    action: Literal[
+        "normal",
+        "unspecified",
+        "none",
+        "go",
+        "search",
+        "send",
+        "next",
+        "done",
+        "previous",
+    ]
+    wait_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("wait_timeout_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class _ElementGestureRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    wait_timeout_seconds: float = Field(default=15.0, gt=0.0, le=120.0)
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("wait_timeout_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class ElementSwipeRequest(_ElementGestureRequest):
+    intent: Literal["swipe"]
+    locator: LocatorV1
+    direction: Literal["up", "down", "left", "right"]
+    percent: float = Field(gt=0.0, le=1.0)
+
+    @field_validator("percent", mode="before")
+    @classmethod
+    def _actual_percent(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class ElementScrollRequest(_ElementGestureRequest):
+    intent: Literal["scroll"]
+    locator: LocatorV1
+    direction: Literal["up", "down", "left", "right"]
+    percent: float = Field(gt=0.0, le=3.0)
+
+    @field_validator("percent", mode="before")
+    @classmethod
+    def _actual_percent(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class ElementScrollToRequest(_ElementGestureRequest):
+    intent: Literal["scroll_to"]
+    container_locator: LocatorV1
+    target_by: Literal["id", "accessibility_id"]
+    target_value: Annotated[StrictUtf8, Field(min_length=1, max_length=4096)]
+    target_package: Annotated[StrictUtf8, Field(max_length=255)] | None = None
+    max_swipes: int = Field(ge=1, le=30)
+
+    @field_validator("target_value")
+    @classmethod
+    def _target_without_nul(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("target value must not contain NUL")
+        return value
+
+    @model_validator(mode="after")
+    def _package_only_for_id(self) -> ElementScrollToRequest:
+        if self.target_by == "accessibility_id" and self.target_package is not None:
+            raise ValueError("target package is only valid for id")
+        return self
+
+
+class ElementDragAndDropRequest(_ElementGestureRequest):
+    intent: Literal["drag_and_drop"]
+    source_locator: LocatorV1
+    destination_locator: LocatorV1
+    destination_x_ratio: float = Field(ge=0.0, le=1.0)
+    destination_y_ratio: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("destination_x_ratio", "destination_y_ratio", mode="before")
+    @classmethod
+    def _actual_ratio(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+ElementGestureRequest: TypeAlias = Annotated[
+    ElementSwipeRequest
+    | ElementScrollRequest
+    | ElementScrollToRequest
+    | ElementDragAndDropRequest,
+    Field(discriminator="intent"),
+]
 
 
 class _ElementTextRequest(_StrictModel):
@@ -980,7 +1108,7 @@ class ObservationResult(_StrictModel):
 
 
 class ElementClickData(_StrictModel):
-    action: Literal["click"]
+    action: Literal["click", "double_click", "long_click"]
     session_state: Literal["active"]
     busy: Literal[False]
 
@@ -996,6 +1124,86 @@ class ElementClickResult(_StrictModel):
     )
     automation_module_status: AutomationModuleStatus
     data: ElementClickData
+
+    @field_validator("warnings")
+    @classmethod
+    def _unique_warnings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("warnings must be unique")
+        return value
+
+
+class ElementImeActionData(_StrictModel):
+    action: Literal["ime_action"]
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class ElementImeActionResult(_StrictModel):
+    schema_version: Literal[1]
+    call_id: CallId
+    execution: Literal["completed"]
+    operation_id: None
+    request_state: None
+    warnings: tuple[StableCode, ...] = Field(
+        max_length=16, json_schema_extra={"uniqueItems": True}
+    )
+    automation_module_status: AutomationModuleStatus
+    data: ElementImeActionData
+
+    @field_validator("warnings")
+    @classmethod
+    def _unique_warnings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("warnings must be unique")
+        return value
+
+
+class ElementSwipeData(_StrictModel):
+    intent: Literal["swipe"]
+    can_scroll_more: None
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class ElementScrollData(_StrictModel):
+    intent: Literal["scroll"]
+    can_scroll_more: bool
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class ElementScrollToData(_StrictModel):
+    intent: Literal["scroll_to"]
+    can_scroll_more: None
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class ElementDragAndDropData(_StrictModel):
+    intent: Literal["drag_and_drop"]
+    can_scroll_more: None
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+ElementGestureData: TypeAlias = Annotated[
+    ElementSwipeData | ElementScrollData | ElementScrollToData | ElementDragAndDropData,
+    Field(discriminator="intent"),
+]
+
+
+class ElementGestureResult(_StrictModel):
+    schema_version: Literal[1]
+    call_id: CallId
+    execution: Literal["completed"]
+    operation_id: None
+    request_state: None
+    warnings: tuple[StableCode, ...] = Field(
+        max_length=16, json_schema_extra={"uniqueItems": True}
+    )
+    automation_module_status: AutomationModuleStatus
+    data: ElementGestureData
 
     @field_validator("warnings")
     @classmethod

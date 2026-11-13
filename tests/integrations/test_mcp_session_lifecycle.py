@@ -323,7 +323,7 @@ def test_managed_uncertain_session_is_zero_signal_degraded_without_cleanup_retry
     )
 
 
-def test_ten_tools_have_fixed_order_annotations_and_session_schemas(
+def test_twelve_tools_have_fixed_order_annotations_and_session_schemas(
     mcp_harness: McpHarness,
 ) -> None:
     async def scenario() -> list[Tool]:
@@ -386,6 +386,20 @@ def test_ten_tools_have_fixed_order_annotations_and_session_schemas(
             "readOnlyHint": True,
             "destructiveHint": False,
             "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
             "openWorldHint": True,
         },
         {

@@ -25,6 +25,8 @@ from appium_connect_agent.integrations._models import (
     DeviceBackResult,
     DeviceListResult,
     ElementClickResult,
+    ElementGestureResult,
+    ElementImeActionResult,
     ElementTextResult,
     RuntimeCheckResult,
     SessionCloseResult,
@@ -46,9 +48,9 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "d5662b84abcbcc89ff0f51ebe3e67994cfaf340d154184364c22d5e9266ee8e2"
+    "58e124913faaa89874e610973ff7262698b3e901d9ff7174c32446f66c3ea313"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3305
+CAPABILITY_MAX_CANONICAL_BYTES = 3403
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
@@ -57,6 +59,8 @@ SESSION_CLOSE_MAX_CANONICAL_BYTES = 5601
 ELEMENT_TEXT_MAX_CANONICAL_BYTES = 2493
 ELEMENT_CLICK_MAX_CANONICAL_BYTES = 2491
 DEVICE_BACK_MAX_CANONICAL_BYTES = 2490
+ELEMENT_IME_ACTION_MAX_CANONICAL_BYTES = 2496
+ELEMENT_GESTURE_MAX_CANONICAL_BYTES = 2522
 ERROR_MAX_CANONICAL_BYTES = 6835
 ERROR_WIRE_BYTES = {
     TOOL_NAMES[0]: 6852,
@@ -69,6 +73,8 @@ ERROR_WIRE_BYTES = {
     TOOL_NAMES[7]: 6888,
     TOOL_NAMES[8]: 6887,
     TOOL_NAMES[9]: 6886,
+    TOOL_NAMES[10]: 6893,
+    TOOL_NAMES[11]: 6890,
 }
 
 
@@ -232,6 +238,41 @@ def maximum_text_result() -> ElementTextResult:
             "warnings": tuple(maximum_codes("w", 16)),
             "automation_module_status": AUTOMATION_STATUS,
             "data": {"intent": "replace", "session_state": "active", "busy": False},
+        }
+    )
+
+
+def maximum_ime_action_result() -> ElementImeActionResult:
+    return ElementImeActionResult.model_validate(
+        {
+            "schema_version": 1,
+            "call_id": "c_" + ("a" * 22),
+            "execution": "completed",
+            "operation_id": None,
+            "request_state": None,
+            "warnings": tuple(maximum_codes("w", 16)),
+            "automation_module_status": AUTOMATION_STATUS,
+            "data": {"action": "ime_action", "session_state": "active", "busy": False},
+        }
+    )
+
+
+def maximum_gesture_result() -> ElementGestureResult:
+    return ElementGestureResult.model_validate(
+        {
+            "schema_version": 1,
+            "call_id": "c_" + ("a" * 22),
+            "execution": "completed",
+            "operation_id": None,
+            "request_state": None,
+            "warnings": tuple(maximum_codes("w", 16)),
+            "automation_module_status": AUTOMATION_STATUS,
+            "data": {
+                "intent": "drag_and_drop",
+                "can_scroll_more": None,
+                "session_state": "active",
+                "busy": False,
+            },
         }
     )
 
@@ -429,9 +470,10 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                 },
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "native_observation_single_click_element_text_and_device_back",
+                    "native_observation_element_click_text_ime_gestures_and_device_back",
                     "no_automatic_post_action_observation",
-                    "no_automatic_focus_submit_or_verify",
+                    "ime_requires_explicit_element_and_action",
+                    "gesture_coordinates_not_exposed",
                     "no_automatic_navigation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
@@ -1275,12 +1317,24 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         async def back_tool() -> DeviceBackResult:
             return cast(DeviceBackResult, product_result(maximum_back_result()))
 
+        @server.tool(name=TOOL_NAMES[10], structured_output=True)
+        async def ime_action_tool() -> ElementImeActionResult:
+            return cast(
+                ElementImeActionResult, product_result(maximum_ime_action_result())
+            )
+
+        @server.tool(name=TOOL_NAMES[11], structured_output=True)
+        async def gesture_tool() -> ElementGestureResult:
+            return cast(ElementGestureResult, product_result(maximum_gesture_result()))
+
         async with Client(server) as client:
             return [
                 *[await client.call_tool(name, {}) for name in TOOL_NAMES[:6]],
                 await client.call_tool(TOOL_NAMES[7], {}),
                 await client.call_tool(TOOL_NAMES[8], {}),
                 await client.call_tool(TOOL_NAMES[9], {}),
+                await client.call_tool(TOOL_NAMES[10], {}),
+                await client.call_tool(TOOL_NAMES[11], {}),
             ]
 
     wire_results = anyio.run(send_models)
@@ -1293,6 +1347,8 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         maximum_click_result(),
         maximum_text_result(),
         maximum_back_result(),
+        maximum_ime_action_result(),
+        maximum_gesture_result(),
     )
     expected_sizes: tuple[int | None, ...] = (
         CAPABILITY_MAX_CANONICAL_BYTES,
@@ -1304,6 +1360,8 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         ELEMENT_CLICK_MAX_CANONICAL_BYTES,
         ELEMENT_TEXT_MAX_CANONICAL_BYTES,
         DEVICE_BACK_MAX_CANONICAL_BYTES,
+        ELEMENT_IME_ACTION_MAX_CANONICAL_BYTES,
+        ELEMENT_GESTURE_MAX_CANONICAL_BYTES,
     )
     for model, result, expected_size in zip(
         models, wire_results, expected_sizes, strict=True

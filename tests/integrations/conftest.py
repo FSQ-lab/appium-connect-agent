@@ -23,6 +23,8 @@ TOOL_NAMES = (
     "appium.element.click",
     "appium.element.text",
     "appium.device.back",
+    "appium.element.ime_action",
+    "appium.element.gesture",
 )
 AUTOMATION_STATUS = {
     "feature_qualification": "aif_01_to_10_individually_done",

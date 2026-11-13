@@ -60,9 +60,24 @@ from ._models import (
     DeviceData,
     DeviceListData,
     DeviceListResult,
+    DoubleClickRequest,
     ElementClickData,
     ElementClickRequest,
     ElementClickResult,
+    ElementDragAndDropData,
+    ElementDragAndDropRequest,
+    ElementGestureData,
+    ElementGestureRequest,
+    ElementGestureResult,
+    ElementImeActionData,
+    ElementImeActionRequest,
+    ElementImeActionResult,
+    ElementScrollData,
+    ElementScrollRequest,
+    ElementScrollToData,
+    ElementScrollToRequest,
+    ElementSwipeData,
+    ElementSwipeRequest,
     ElementTextClearRequest,
     ElementTextData,
     ElementTextReplaceRequest,
@@ -70,6 +85,7 @@ from ._models import (
     ElementTextResult,
     ElementTextSendRequest,
     LocatorV1,
+    LongClickRequest,
     McpCapabilityData,
     McpCapabilityResult,
     ObservationData,
@@ -87,6 +103,7 @@ from ._models import (
     SessionOpenRequest,
     SessionOpenResult,
     SessionStatusResult,
+    SingleClickRequest,
     StructureObserveRequest,
     ToolCallCapabilityData,
     ToolCallCapabilityResult,
@@ -328,9 +345,10 @@ class Application:
             host="macos", target="android_native", driver="uiautomator2"
         )
         limitations: CapabilityLimitations = (
-            "native_observation_single_click_element_text_and_device_back",
+            "native_observation_element_click_text_ime_gestures_and_device_back",
             "no_automatic_post_action_observation",
-            "no_automatic_focus_submit_or_verify",
+            "ime_requires_explicit_element_and_action",
+            "gesture_coordinates_not_exposed",
             "no_automatic_navigation",
             "no_node_cache",
             "observation_document_65536_bytes",
@@ -676,10 +694,29 @@ class Application:
         def click_once(budget: OperationBudget) -> ElementClickResult:
             try:
                 element = self._element(session, request.locator)
-                element.click(
-                    wait_timeout_seconds=request.wait_timeout_seconds,
-                    control=budget.control(),
-                )
+                control = budget.control()
+                action: Literal["click", "double_click", "long_click"]
+                if isinstance(request, SingleClickRequest):
+                    element.click(
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    action = "click"
+                elif isinstance(request, DoubleClickRequest):
+                    element.double_click(
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    action = "double_click"
+                elif isinstance(request, LongClickRequest):
+                    element.long_click(
+                        duration_ms=request.duration_ms,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    action = "long_click"
+                else:
+                    raise AssertionError("unsupported Element click request")
                 info = session.session_info()
                 if info.state != "active" or info.busy:
                     raise RuntimeError(
@@ -694,7 +731,7 @@ class Application:
                     warnings=(),
                     automation_module_status=self._module_status(),
                     data=ElementClickData(
-                        action="click",
+                        action=action,
                         session_state="active",
                         busy=False,
                     ),
@@ -705,6 +742,160 @@ class Application:
         return await self._run_ui_worker(
             budget,
             click_once,
+            call_id,
+            entry,
+        )
+
+    async def ime_action(
+        self, request: ElementImeActionRequest
+    ) -> ElementImeActionResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def ime_action_once(budget: OperationBudget) -> ElementImeActionResult:
+            try:
+                element = self._element(session, request.locator)
+                element.perform_editor_action(
+                    request.action,
+                    wait_timeout_seconds=request.wait_timeout_seconds,
+                    control=budget.control(),
+                )
+                info = session.session_info()
+                if info.state != "active" or info.busy:
+                    raise RuntimeError(
+                        "successful IME action did not leave Session active and idle"
+                    )
+                return ElementImeActionResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=ElementImeActionData(
+                        action="ime_action",
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(
+            budget,
+            ime_action_once,
+            call_id,
+            entry,
+        )
+
+    async def gesture(self, request: ElementGestureRequest) -> ElementGestureResult:
+        budget = OperationBudget(
+            time.monotonic() + request.timeout_seconds,
+            Event(),
+        )
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def gesture_once(budget: OperationBudget) -> ElementGestureResult:
+            try:
+                control = budget.control()
+                data: ElementGestureData
+                if isinstance(request, ElementSwipeRequest):
+                    element = self._element(session, request.locator)
+                    element.swipe_gesture(
+                        direction=request.direction,
+                        percent=request.percent,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementSwipeData(
+                        intent="swipe",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementScrollRequest):
+                    element = self._element(session, request.locator)
+                    can_scroll_more = element.scroll_gesture(
+                        direction=request.direction,
+                        percent=request.percent,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementScrollData(
+                        intent="scroll",
+                        can_scroll_more=can_scroll_more,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementScrollToRequest):
+                    container = self._element(session, request.container_locator)
+                    target = session.element(
+                        by=(
+                            "accessibility id"
+                            if request.target_by == "accessibility_id"
+                            else "id"
+                        ),
+                        value=request.target_value,
+                        package=request.target_package,
+                        parent=container,
+                    )
+                    container.scroll(
+                        target,
+                        max_swipes=request.max_swipes,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementScrollToData(
+                        intent="scroll_to",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementDragAndDropRequest):
+                    source = self._element(session, request.source_locator)
+                    destination = self._element(session, request.destination_locator)
+                    source.drag_and_drop(
+                        destination,
+                        destination_x_ratio=request.destination_x_ratio,
+                        destination_y_ratio=request.destination_y_ratio,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementDragAndDropData(
+                        intent="drag_and_drop",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                else:
+                    raise AssertionError("unsupported Element gesture request")
+                info = session.session_info()
+                if info.state != "active" or info.busy:
+                    raise RuntimeError(
+                        "successful gesture did not leave Session active and idle"
+                    )
+                return ElementGestureResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=data,
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(
+            budget,
+            gesture_once,
             call_id,
             entry,
         )
