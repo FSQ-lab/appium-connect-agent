@@ -409,3 +409,65 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - 公共bridge SDK、可替换transport Adapter或未来平台extension point。
 
 完整已确认设计、库依据、安全推导、验证矩阵及供commander合入的精确根SPEC delta全文见[INT-CLI-01设计](../../docs/superpowers/specs/2026-11-13-integrations-cli-bridge-design.md)。
+
+## INT-CORE-02 Managed Runtime Integration（已确认）
+
+> **已确认合同。** 用户已在Issue #24 SPEC Gate确认本节及零新增依赖方案，并授权Issue范围内实现、聚焦验证与独立审查；不授权Runtime/Automation源码修改、真实设备/Appium操作、提交、push、merge或发布。
+
+### Scope, dependency and single-source design
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。精确依赖为已验收Runtime RT-LOCAL-04公开`start_managed`、`cleanup_managed`、`RuntimeConnection.ownership`/usage，以及既有Automation Session公开Interface；Runtime与Automation源码本feature均no-delta。
+- 同一个`Application`、`RuntimeOwner`、Session Registry、`TOOL_CATALOG`、预算、错误和shutdown链服务MCP、FSQ ToolCall及CLI。禁止第二managed Adapter/Registry/worker pool、Runtime私有入口、raw进程/记录/锁/信号、usage复制、fallback、retry、replay、restart、端口扫描或隐式install/ensure/Doctor。
+- 无新增、替换或升级依赖。继续复用Python3.11标准库、AnyIO4.15.1、Pydantic2.14.1、MCP2.3.0及公开Runtime/Automation的既有批准用途；模块依赖方向不变。
+
+### Session open and owner-thread lifecycle
+
+- `session.open`保持一个provisional entry和一个总deadline/Event。`settings.server_mode="external"`时精确沿现有`Runtime(settings).connect(control=budget.control())`；managed时精确调用同一Runtime实例的`start_managed(host=settings.managed_host, port=settings.managed_port, base_path=settings.managed_base_path, control=budget.control())`。Contracts保证managed值非None；Adapter不补默认或推断。
+- 一个专用单线程`RuntimeOwner`在同一线程串行执行scope enter、首次exit及必要managed cleanup continuation。owner显式保留本次Runtime实例、精确scope、返回connection ownership和`active|cleanup_pending|released`状态；不得仅依赖临时局部变量或scope对Runtime的偶然引用。
+- Runtime进入后仍只调用一次公开`create_session`并传新派生remaining Control。进入失败删除provisional。create失败且无retained Session时Automation已释放usage：删除provisional、不建tombstone并只退出scope一次；exit成功则资源clean，`service_in_use`为unsafe不变量违例并degraded，其他任意异常保留同一Runtime/scope、不二次exit且在`aclose()`执行下节同一幂等cleanup一次。open保留原create错误及真实cleanup失败语义，continuation成功或失败均保持shutdown degraded。create失败携带retained uncertain Session时绑定并发布uncertain、保持`_runtime_active=True`，不立即退出scope。
+
+### Confirmed close, pending cleanup and uncertain preservation
+
+- confirmed `session.close`严格先调用一次`session.quit()`；Automation确认远端删除和本地收尾后纯内存释放managed usage。只有`usage==0`后，`_finish_confirmed_close`才在owner线程调用一次`scope.__exit__(None,None,None)`。成功时Runtime在固定30秒预算内自然停止owned Appium、写`service.json.state="stopped"`并释放账号锁，然后才允许replacement。
+- confirmed close后的managed首次exit抛出任何异常时，Session仍转closed tombstone且本次工具返回既有`cleanup_failed/closed`；new open与`runtime.check`继续阻断，owner保留同一Runtime/scope且不得第二次调用`__exit__`。若异常为`service_in_use`，视为usage/生命周期不变量违例并沿零信号unsafe分支。其余异常只在usage已证明为零时进入safe-continuation：`Application.aclose()`用一个新的30秒非取消Control，在owner线程对同一Runtime调用公开幂等`cleanup_managed()`一次，不读取`_managed_cleanup`或按`managed_cleanup_pending`单一码推断状态。该调用可继续真实pending或在无pending时安全幂等返回；首次exit失败已使最终shutdown保持degraded，继续成功仅证明资源收尾完成。无retained create失败的对应规则由上节维护，且不产生tombstone。
+- create/quit结果unknown或清理失败而保留Session时usage保持。`Application.aclose()`不补设备命令并调用scope exit一次；`service_in_use`表示usage非零，必须零TERM/KILL、零`cleanup_managed`、零第二次exit/quit/probe/retry，保留unknown在途资源并设置`shutdown_degraded=True`。MCP和CLI沿现有映射exit4；CLI stop输出`shutdown="degraded"`。
+- external模式的connect、close、sticky cleanup失败和shutdown行为保持现有合同。owner executor仅在application终态决策后停止；停止线程池本身不表示或触发Appium停止。
+
+### Lifecycle matrix
+
+| worker后事实 | shutdown设备命令 | Runtime owner动作 | managed信号 | 结果 |
+| --- | ---: | --- | --- | --- |
+| 无entry/scope | 0 | 0 | 0 | clean |
+| active、终态已知 | quit恰好1次 | confirmed closed后exit一次 | usage=0才允许有界TERM/KILL | clean或真实cleanup error |
+| closed且exit成功 | 0 | exit一次 | 自然有界停止 | tombstone/clean |
+| closed且managed exit抛任一非`service_in_use`异常 | 0 | 保留同一Runtime/scope，不重复exit；aclose时幂等cleanup一次 | usage=0才有界继续 | close cleanup_failed；资源可继续完成，shutdown仍degraded |
+| create失败、无retained Session | 0 | 删除provisional、不建tombstone；exit一次；非service_in_use失败保留同一Runtime/scope并在aclose幂等cleanup一次 | usage=0可继续；service_in_use为unsafe不变量违例 | 原create/cleanup错误；首次exit失败则degraded |
+| retained uncertain | 0 | aclose时exit一次 | `service_in_use`零信号 | quarantine/degraded |
+| shutdown quit not-sent/timeout仍active | 不重放 | exit一次 | `service_in_use`零信号 | active/degraded |
+
+### Runtime check, schemas and capability truth
+
+- `RuntimeCheckRequest.mode`保持`static|external_connection`，本feature不增加`managed_startup`。static在external/managed配置均调用既有diagnose；managed配置请求external_connection时在worker/Runtime I/O前返回稳定`runtime_mode_mismatch/not_sent`，资源字段null、cleanup not_needed。未广告的managed_startup继续由三表面strict schema拒绝为`invalid_argument`。
+- Integrations的`RuntimeConnectionData.ownership`保持`Literal["external"]`，因为本feature不返回managed readiness connection；Runtime公共`RuntimeConnection.ownership=external|managed`不变。Session ownership继续表示`mcp|toolcall|cli`表面而非Runtime ownership。
+- `CapabilityData`不增加server mode或配置字段；它陈述产品表面能力，不复制配置/运行健康。十项工具名称、顺序、description、annotation、request/result模型与output schema均不因managed Session路径变化。
+- 十项MCP canonical inputSchema SHA-256全部保持，`appium.runtime.check`精确仍为`dbf076e1e7892a57ee7aa3a8ac641600630e7990841291246e0afef9ce8d40ee`；其余九项保持INT-CLI-01设计基线。FSQ OpenAI Responses与Gemini Interactions投射源schema及hash同步零漂移；实施必须运行两套真实投射器，任何漂移都阻断而非放宽投射。
+
+### Verification, privacy and limits
+
+- 永久测试须覆盖external回归、managed精确参数/同线程enter-exit、create retained quarantine，以及无retained create失败后的provisional删除/零tombstone/exit成功/unsafe `service_in_use`/usage-zero任意exit失败继续；confirmed quit→usage0→exit；`managed_cleanup_pending`、`operation_timeout`及非`ServiceLifecycleError`记录/清理异常的同一Runtime保留/零第二次exit/一次幂等继续；继续成功与失败均保守degraded；mode mismatch零I/O、十schema和FSQ双后端零漂移。
+- managed host/port/base path、生成URL、managed root、service记录、PID/PGID、handle、device/app/UI及异常原文不得进入stderr、status/control、日志、telemetry或默认证据；tool/output schema不新增这些值。
+- Feature Done仍需用户另行授权正式wheel、真实固定managed root和明确Android目标，完成无需外部预启动Appium的`open→status→获准observe/action→close→service stopped→lock released→clean exit`。缺少授权/环境/证据只能non-Done；不提升Automation、Integrations、平台或项目状态。
+
+### Minimum sufficient design
+
+只深化现有一个`Application`与一个`RuntimeOwner`：前者选择公开Runtime scope，后者保留安全cleanup所需的同一Runtime/scope并维护线程亲和。Contracts和Configuration只提供一个显式不可变选择。不存在第二Adapter、manager、registry、process controller或extension point。
+
+### Deferred by design
+
+- `runtime.check/managed_startup`及managed readiness output。
+- 默认/随机端口、端口扫描、模式推断、external/managed fallback。
+- 自动install/ensure/Doctor、stop/restart/adopt/recovery及usage存在时强杀。
+- 多Runtime、多Session、队列、attach、跨进程恢复或持久化handle。
+- Capability/config disclosure、新工具字段、新平台、remote/TLS或具体Host资格。
+
+完整设计、库依据、状态矩阵及已由commander合入的精确根SPEC delta全文见[已确认设计](../../docs/superpowers/specs/2026-11-13-integrations-managed-runtime-design.md)。

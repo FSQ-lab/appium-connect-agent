@@ -68,7 +68,7 @@ def test_construction_zero_io(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = LocalSettings(server_url="http://LOCALHOST:4723/")
     scope = Runtime(settings).connect()
     assert scope is not None
-    assert len(settings.__dataclass_fields__) == 7
+    assert len(settings.__dataclass_fields__) == 11
     with pytest.raises(FrozenInstanceError):
         settings.server_url = None  # type: ignore[misc]
 

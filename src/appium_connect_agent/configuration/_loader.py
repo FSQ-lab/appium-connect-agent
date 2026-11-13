@@ -5,7 +5,7 @@ import re
 import stat
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from appium_connect_agent.contracts import LocalSettings
 
@@ -25,7 +25,14 @@ _PATH_FIELDS = (
     "java_home",
     "android_sdk_root",
 )
-_FIELDS = (*_PATH_FIELDS, "server_url")
+_FIELDS = (
+    *_PATH_FIELDS,
+    "server_url",
+    "server_mode",
+    "managed_host",
+    "managed_port",
+    "managed_base_path",
+)
 _VARIABLE = re.compile(
     r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
     r"|%[A-Za-z_][A-Za-z0-9_]*%"
@@ -174,9 +181,8 @@ def _validate_fields(
     config_file: Path,
     source: Literal["file", "argument"],
     issues: list[ConfigurationIssue],
-) -> tuple[dict[str, Path], str | None]:
-    paths: dict[str, Path] = {}
-    server_url: str | None = None
+) -> dict[str, object]:
+    validated: dict[str, object] = {}
     for name in _FIELDS:
         if name not in values:
             continue
@@ -184,6 +190,34 @@ def _validate_fields(
         field = f"runtime.{name}" if source == "file" else name
         if source == "argument" and name in _PATH_FIELDS and isinstance(value, Path):
             value = str(value)
+        if name == "managed_port":
+            if type(value) is not int or not 1 <= value <= 65535:
+                issues.append(
+                    ConfigurationIssue(
+                        source,
+                        field,
+                        "invalid_type" if type(value) is not int else "invalid_value",
+                        "Use an integer from 1 through 65535 for managed_port.",
+                    )
+                )
+            else:
+                validated[name] = value
+            continue
+        if (
+            name in {"server_mode", "managed_host", "managed_base_path"}
+            and type(value) is not str
+        ):
+            issues.append(
+                ConfigurationIssue(
+                    source,
+                    field,
+                    "invalid_type",
+                    "Use a TOML string for this runtime field."
+                    if source == "file"
+                    else "Provide a string, or omit the argument.",
+                )
+            )
+            continue
         if not isinstance(value, str):
             issues.append(
                 ConfigurationIssue(
@@ -195,7 +229,7 @@ def _validate_fields(
                     else "Provide a string (or Path for tool paths), or omit the argument.",
                 )
             )
-        elif not value:
+        elif not value and name != "managed_base_path":
             issues.append(
                 ConfigurationIssue(
                     source,
@@ -206,7 +240,7 @@ def _validate_fields(
             )
         elif name == "server_url":
             try:
-                server_url = LocalSettings(server_url=value).server_url
+                validated[name] = LocalSettings(server_url=value).server_url
             except ValueError:
                 issues.append(
                     ConfigurationIssue(
@@ -214,6 +248,47 @@ def _validate_fields(
                         field,
                         "invalid_url",
                         "Use a complete HTTP loopback URL with an explicit port and safe base path.",
+                    )
+                )
+        elif name == "server_mode":
+            if value not in ("external", "managed"):
+                issues.append(
+                    ConfigurationIssue(
+                        source,
+                        field,
+                        "invalid_value",
+                        "Use exactly external or managed for server_mode.",
+                    )
+                )
+            else:
+                validated[name] = value
+        elif name == "managed_host":
+            if value not in ("127.0.0.1", "::1"):
+                issues.append(
+                    ConfigurationIssue(
+                        source,
+                        field,
+                        "invalid_value",
+                        "Use exactly 127.0.0.1 or ::1 for managed_host.",
+                    )
+                )
+            else:
+                validated[name] = value
+        elif name == "managed_base_path":
+            try:
+                validated[name] = LocalSettings(
+                    server_mode="managed",
+                    managed_host="127.0.0.1",
+                    managed_port=1,
+                    managed_base_path=value,
+                ).managed_base_path
+            except ValueError:
+                issues.append(
+                    ConfigurationIssue(
+                        source,
+                        field,
+                        "invalid_value",
+                        "Use an empty or safe absolute ASCII base path without a trailing slash.",
                     )
                 )
         elif value.startswith("~") or _VARIABLE.search(value):
@@ -232,9 +307,56 @@ def _validate_fields(
                 )
             )
         else:
-            # An absolute base preserves symlink paths and literal parent segments.
-            paths[name] = config_file.parent / Path(value)
-    return paths, server_url
+            validated[name] = config_file.parent / Path(value)
+    return validated
+
+
+def _combination_issues(
+    values: dict[str, object],
+    runtime: dict[str, object],
+    overrides: dict[str, object],
+) -> tuple[ConfigurationIssue, ...]:
+    names: set[str] = set()
+    if values["server_mode"] == "external":
+        if values["managed_host"] is not None:
+            names.add("managed_host")
+        if values["managed_port"] is not None:
+            names.add("managed_port")
+        if values["managed_base_path"] != "":
+            names.add("managed_base_path")
+    else:
+        if values["managed_host"] is None:
+            names.add("managed_host")
+        if values["managed_port"] is None:
+            names.add("managed_port")
+        for name in ("server_url", "appium_executable", "appium_home"):
+            if values[name] is not None:
+                names.add(name)
+        if names:
+            names.add("server_mode")
+    mode_source: Literal["file", "argument"] = (
+        "argument" if "server_mode" in overrides else "file"
+    )
+    result: list[ConfigurationIssue] = []
+    for name in _FIELDS:
+        if name not in names:
+            continue
+        if name in overrides:
+            source: Literal["file", "argument"] = "argument"
+        elif name in runtime:
+            source = "file"
+        else:
+            source = mode_source
+        field = f"runtime.{name}" if source == "file" else name
+        result.append(
+            ConfigurationIssue(
+                source,
+                field,
+                "invalid_combination",
+                "Choose either external settings or a complete managed host and port.",
+            )
+        )
+    return tuple(result)
 
 
 def _settings(
@@ -266,26 +388,31 @@ def _settings(
                     "file",
                     f"runtime.{key}",
                     "unknown_field",
-                    "Remove this unknown runtime field; use the documented seven fields.",
+                    "Remove this unknown runtime field; use the documented eleven fields.",
                 )
             )
-    paths, server_url = _validate_fields(runtime, config_file, "file", issues)
-    override_paths, override_url = _validate_fields(
-        overrides, config_file, "argument", issues
-    )
+    file_values = _validate_fields(runtime, config_file, "file", issues)
+    override_values = _validate_fields(overrides, config_file, "argument", issues)
+    defaults = LocalSettings()
+    values: dict[str, object] = {name: getattr(defaults, name) for name in _FIELDS}
+    values.update(file_values)
+    values.update(override_values)
+    if not issues:
+        issues.extend(_combination_issues(values, runtime, overrides))
     if issues:
         raise ConfigurationError(tuple(issues))
-    paths.update(override_paths)
-    if "server_url" in overrides:
-        server_url = override_url
     settings = LocalSettings(
-        appium_executable=paths.get("appium_executable"),
-        appium_home=paths.get("appium_home"),
-        node_executable=paths.get("node_executable"),
-        npm_executable=paths.get("npm_executable"),
-        java_home=paths.get("java_home"),
-        android_sdk_root=paths.get("android_sdk_root"),
-        server_url=server_url,
+        appium_executable=cast(Path | None, values["appium_executable"]),
+        appium_home=cast(Path | None, values["appium_home"]),
+        node_executable=cast(Path | None, values["node_executable"]),
+        npm_executable=cast(Path | None, values["npm_executable"]),
+        java_home=cast(Path | None, values["java_home"]),
+        android_sdk_root=cast(Path | None, values["android_sdk_root"]),
+        server_url=cast(str | None, values["server_url"]),
+        server_mode=cast(Literal["external", "managed"], values["server_mode"]),
+        managed_host=cast(Literal["127.0.0.1", "::1"] | None, values["managed_host"]),
+        managed_port=cast(int | None, values["managed_port"]),
+        managed_base_path=cast(str, values["managed_base_path"]),
     )
     sources = tuple(
         SettingSource(
@@ -314,6 +441,10 @@ def load_configuration(
     java_home: str | Path | _Omitted = _OMITTED,
     android_sdk_root: str | Path | _Omitted = _OMITTED,
     server_url: str | _Omitted = _OMITTED,
+    server_mode: str | _Omitted = _OMITTED,
+    managed_host: str | _Omitted = _OMITTED,
+    managed_port: int | _Omitted = _OMITTED,
+    managed_base_path: str | _Omitted = _OMITTED,
 ) -> LoadedConfiguration:
     """Load one explicit TOML file; success does not imply runtime readiness."""
     selected_file = _locate(config_file)
@@ -329,6 +460,10 @@ def load_configuration(
                 java_home,
                 android_sdk_root,
                 server_url,
+                server_mode,
+                managed_host,
+                managed_port,
+                managed_base_path,
             ),
             strict=True,
         )

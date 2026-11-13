@@ -1,6 +1,6 @@
 # Appium Connect Agent
 
-当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/usage 保护与清理、三大目标官方 driver（`uiautomator2 | xcuitest | mac2`）的显式受管维护与显式 Doctor 环境准备、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、调用方显式请求的单次 Element click、文本 send/clear/replace 与 Device back）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/显式 stop/restart/usage 保护与清理、三大目标官方 driver（`uiautomator2 | xcuitest | mac2`）的显式受管维护与显式 Doctor 环境准备、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（支持 `external` 与 `managed` 两种 Runtime 服务模式，覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、调用方显式请求的单次 Element click、文本 send/clear/replace 与 Device back）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
@@ -20,8 +20,8 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 准备配置；使用 `load_configuration("config/appium.toml")` 取得不可变结果，
 把其 `settings` 传给 Runtime。
 
-只需填写当前用途所需的 `[runtime]` 字段；空配置有效，未填写字段保持默认。
-连接已有 Appium 时必须显式填写 `server_url`；加载成功不表示环境或连接就绪。
+只需填写当前用途所需的 `[runtime]` 字段；空配置有效，默认 `server_mode = "external"` 且未填写字段保持默认。
+连接已有 Appium 时显式填写 `server_url`；使用项目受管 Appium 时显式设置 `server_mode = "managed"`、`managed_host`（`127.0.0.1` 或 `::1`）与 `managed_port`（可选 `managed_base_path`）；加载成功不表示环境或连接就绪。
 配置文件路径相对加载时的工作目录，内部工具路径相对配置文件目录。
 修改文件后重启读取配置的应用生效，不自动重启 Appium。
 
@@ -57,7 +57,7 @@ appium-connect-agent daemon stop
 9. `appium.element.text`：按显式`intent=send|clear|replace`只调用一次对应公开Element方法；send要求非空文本，replace允许空串，clear不接受text。文本不自动聚焦、提交、读回、校验、重试、重放或回滚。
 10. `appium.device.back`：对当前active handle绑定的Device发送一次back；不接受keycode/Locator，不自动观测、探活、恢复、重试、重放或追加导航。
 
-所有工具都使用 schema version 1；I/O 工具有有限总预算并把 MCP 取消桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；下层完整文档最大 65,536 UTF-8 bytes，外层完整结果有 69,632-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用与Device back都只调用一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element，但MCP不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。back成功只表示官方命令取得合法响应，不保证页面变化或到达特定页面。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常stdio shutdown会对已知active owned Session最多调用一次公开quit；终态未知时degraded退出并明确远端可能遗留。Appium 和 ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
+所有工具都使用 schema version 1；I/O 工具有有限总预算并把取消信号桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；下层完整文档最大 65,536 UTF-8 bytes，外层完整结果有 69,632-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用与Device back都只调用一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element，但Integrations不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。back成功只表示官方命令取得合法响应，不保证页面变化或到达特定页面。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常关闭会对已知active owned Session最多调用一次公开quit，随后在`server_mode="managed"`时自然有界停止本次拥有的受管Appium（在`server_mode="external"`时保持外部Appium运行）；终态未知时零信号保留在途资源并degraded退出。ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
 
 协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click、INT-MCP-05 Element text与INT-MCP-06 Device back均已在固定Android Native组合完成各自限定真实链验收；Issue #8也已通过正式wheel、官方MCP Client与固定Calculator安全链完成`observe → click → observe → replace → observe → back`限定验收。Host 资格方面，Codex CLI `0.167.2` 已在记录的精确固定组合内限定 qualified（Issue #19），OMP `18.18.3` 因不公开原始 `structuredContent` 为 not-qualified（Issue #18），Copilot CLI 与其他具体 Host 尚未资格化。进程内 Python ToolCall 表面提供 `Application(settings, adb_executable, surface="toolcall").tool_bindings()` 与 `SyncApplication`（详见 [Integrations SPEC](modules/integrations/SPEC.md)）。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，Integrations 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准调用方，不写入默认日志或证据。
 

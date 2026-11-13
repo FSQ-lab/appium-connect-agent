@@ -73,3 +73,23 @@
 - `SettingSource.source` 扩展为 `Literal["file", "override", "default"]`；override记录字段名、source=override且config_file=None，指明值来自本次调用而非文件；LoadedConfiguration.config_file仍定位所加载文件。七字段记录唯一、顺序不变。
 - 覆盖参数问题的 ConfigurationIssue.source 为 argument，field 使用对应字段名；文件问题沿既有file来源/字段定位。URL继续使用公开LocalSettings校验，所有结果/问题/来源及已确认读取/错误/快照边界保持。
 - 本步仅扩展Python调用，不修改TOML schema、不持久化覆盖、不增加其他来源，不改变应用启动加载/重启生效方式或Runtime行为；无新增依赖/平台承诺。须验证逐字段优先级、混合来源、错误不可掩盖、None/空串拒绝、相对参数路径、空文件加参数、文件不变和CFG-01回归。模块整体验收仍为真实临时配置到公开Runtime构造的接缝，不操作服务或设备。
+
+## INT-CORE-02 Managed Runtime Configuration（已确认）
+
+> **已确认合同。** 用户已在Issue #24 SPEC Gate确认本节及零新增依赖方案，并授权Issue范围内实现、聚焦验证与独立审查；不授权Runtime源码修改、设备/Appium操作或外部交付。
+
+### Schema and public loading Interface
+
+- 唯一`[runtime]`表在现有七字段后按固定顺序增加`server_mode`、`managed_host`、`managed_port`、`managed_base_path`。前三个字符串字段中的mode/host及base path分别使用TOML string；port使用TOML integer且排除bool，不把数字、bool、float或字符串互相强转。
+- 同一个`load_configuration(config_file, *, ...)`在现有七个仅关键字覆盖参数后按同序增加四参数：mode/host/base path接受str，port接受排除bool的int；均使用现有私有omitted标记。显式None、空mode/host、错误类型或非法值是argument问题，不表示省略、清除或默认。
+- 文件与参数仍先独立校验，正确override不能掩盖文件错误；之后按override→file→default优先级构造唯一`LocalSettings`执行权威跨字段校验。external与managed互斥、managed必填host/port及managed对server URL/appium路径冲突使用稳定`invalid_combination`问题，定位每个参与或缺失字段，不回显值、URL、路径或异常repr。
+- `LoadedConfiguration.sources` clean cutover为十一项：现有`appium_executable`、`appium_home`、`node_executable`、`npm_executable`、`java_home`、`android_sdk_root`、`server_url`，随后`server_mode`、`managed_host`、`managed_port`、`managed_base_path`。每项仍恰有一个`file|override|default`来源；不得保留七项别名或第二来源列表。
+- 现有显式文件、快照、来源、错误聚合、1MiB、普通文件、UTF-8、TOML、相对路径基准和字段值不落盘语义保持。空/仅注释/空runtime表加载为`LocalSettings()`，四个新来源均为default。
+
+### Zero-I/O and clean-cutover obligations
+
+- 加载只进行现有一次有界普通文件读取和纯解析/适配；不读取账号home/环境，不探测配置字段指向的文件、managed root、端口、DNS、socket、HTTP、进程、Runtime、Appium、ADB或设备，不启动线程/服务。
+- 实施须更新所有硬编码七字段的字段列表、来源tuple、位置、错误文案、`load_configuration`签名和示例；这是公开来源tuple的有意clean cutover，不新增兼容shim。
+- 继续只依赖Contracts和Python3.11标准库`tomllib`/`pathlib`/普通文件读取；不新增或升级依赖，不复制Contracts的base-path或跨字段规则。
+
+详细字段矩阵、错误与验证义务见[已确认设计](../../docs/superpowers/specs/2026-11-13-integrations-managed-runtime-design.md)。

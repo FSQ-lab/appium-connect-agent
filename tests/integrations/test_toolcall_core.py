@@ -722,6 +722,7 @@ class _FakeRuntime:
                     "Connection",
                     (),
                     {
+                        "ownership": "external",
                         "report": report,
                         "appium_version": "3.7.0",
                         "compatibility": "declared_compatible",

@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放。显式服务 stop/restart 与其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -146,6 +146,18 @@
 - 普通 managed startup 不执行 Doctor、driver install/update、npm、ADB 或 Session。Driver Doctor 属于 #13 RT-LOCAL-05 的显式、另行授权环境准备，固定 driver 名仅 `uiautomator2 | xcuitest | mac2`；Appium 3.7.0 Doctor 的 autofix 副作用不能由 `--json` 关闭。active 服务的显式 stop/restart 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
 - 复用 CPython 3.11 标准库进程、信号、selector、socket、线程和 monotonic 能力，macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及已批准 HTTPX 0.28.1、AnyIO 4.15.1、HTTPcore 1.0.9、node-semver 0.9.1 的现有用途；不新增或升级产品/开发依赖，不改变模块导入方向。
 
+
+## Local Managed Appium Explicit Stop And Restart
+
+本节定义已确认的 RT-LOCAL-06 增量；依据为[显式 stop/restart 详细设计](docs/superpowers/specs/2026-11-13-runtime-local-06-stop-restart-design.md)。契约确认不表示实现、真实服务/设备链或 Runtime 模块已经验收。
+
+- Runtime 在 active `start_managed()` scope 内增加同步 `stop_managed(connection, *, control=None) -> None` 与 `restart_managed(connection, *, control=None) -> RuntimeConnection`。参数必须是同一 Runtime 当前 scope、当前 generation 的精确 managed `RuntimeConnection`；external、伪造、过期、replaced、stopped、closed 或 closing 连接在任何信号/I/O 前明确拒绝。restart 返回全新 generation 的全新连接视图，旧视图的 `server_url` 与 `acquire_usage()` 永久 `connection_closed`。
+- 任一 managed usage lease 存在时 stop/restart 均以 `service_in_use` 零信号、零记录变化拒绝，原进程、连接和 `service.json=active` 保持不变；这与 usage>0 的 scope 提前退出转 close-requested/cleanup_pending 不同。只有 usage=0 才能撤销当前 generation 并操作本实例内存持有的真实 Popen/PGID；磁盘 PID/PGID、端口、status、进程名或空闲锁永不授权停止或接管。
+- stop 默认30秒单一 monotonic预算，写 stopping 后执行有界 SIGTERM→最多2秒→必要SIGKILL、双流排空、wait、pipe/selector close和drain thread join；全部终态证据成立后写 stopped。stop 成功后原 scope 保持持有账号 `runtime.lock` 且进入 stopped，直至 with `__exit__` 幂等释放；同一 stopped scope 不再单独 restart。
+- restart 默认90秒业务总预算，以同一 operation、cancellation和monotonic deadline在同一账号锁内原子执行 stop old→stopped→受管根/lsof复查→原 host/port/base_path 端口预检→starting→spawn new→首次 owned PID lsof LISTEN FD proof→`/status` ready且可靠Appium SemVer `3.x`→二次proof/child alive→active，并发布新连接。旧停止不能证明时 cleanup_pending且零spawn；starting前失败保持stopped；starting写入后的新启动失败按既有startup-failure最多额外30秒安全清理，成功则stopped，terminal record或清理失败则cleanup_pending；不重试、回退、换端口、恢复Session或跨进程attach。
+- cleanup_pending 保留真实句柄与账号锁，只允许同实例既有 `cleanup_managed()` 在usage=0后重试；父进程崩溃或ownership事实不足继续 recovery_required，不自动kill或晋级idle。stopped scope的 `__exit__` 不重复信号/记录；restart成功后自然退出只清理新generation进程。
+- 复用CPython3.11标准库进程/信号/selector/thread/monotonic、固定macOS `/usr/sbin/lsof`、既有HTTPX0.28.1/AnyIO4.15.1/HTTPcore1.0.9状态接缝与node-semver0.9.1严格版本能力；零新增或升级依赖，不改变模块方向。stop不发HTTP/lsof；普通stop/restart不运行Doctor、driver/npm、ADB或Session命令。
+- Feature Done另需受控stop/restart/失败/unknown矩阵、质量与发行物、独立完整审查0 open findings，以及授权固定真实受管服务完成stop、端口释放、restart双proof+ready、新旧连接视图和最终清理，并证明external服务不变。缺少服务权限时不得以受控进程替身宣称真实链或Feature Done。
 
 ## Local Managed Driver Maintenance And Official Driver Doctor
 
@@ -332,3 +344,18 @@
 - 无新增、替换或升级依赖；复用Python3.11标准库、AnyIO4.15.1 tag、Pydantic2.14.1 tag及现有serializer。Feature Done需三表面truth、描述delta、十schema零漂移、双锁/握手/framing/partial连接/cancel/shutdown/privacy矩阵、wheel/sdist双入口、静态质量及独立full审查；真实设备链仍须另行授权且不提升模块/平台Done。
 
 详细Interface、安全边界、库依据、验证矩阵与deferred范围见[已确认详细设计](docs/superpowers/specs/2026-11-13-integrations-cli-bridge-design.md)及Integrations模块SPEC的INT-CLI-01章节。
+
+## INT-CORE-02 Managed Runtime Integration Delta
+
+本节为Issue #24经用户授权与独立设计审查确认的合同；该确认不替代后续独立实现审查或真实资源边界。
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。Contracts、Configuration与Integrations增加显式`server_mode=external|managed`接缝，使MCP、FSQ ToolCall与正式CLI的同一个`Application`可选择既有external连接或已验收Runtime managed scope；不修改Runtime/Automation源码，不新增平台、设备行为或Host资格。
+- 唯一`LocalSettings`在既有七字段后增加不可变仅关键字`server_mode="external"`、`managed_host=None`、`managed_port=None`、`managed_base_path=""`。external拒绝任何managed-only值；managed要求显式`127.0.0.1|::1`和非bool整数端口`1..65535`，拒绝`server_url`、`appium_executable`、`appium_home`。base path为空或使用既有ASCII安全段规则且无尾斜线。全部为零I/O纯值校验，默认`LocalSettings()`和静态diagnose行为不变。
+- Configuration的唯一`[runtime]`表及`load_configuration`关键字覆盖按固定顺序增加同四字段；文件/参数类型严格、不强转，显式None不是省略。`LoadedConfiguration.sources` clean cutover为现有七字段后接四个新字段的十一项完整来源；加载仍只读一个显式TOML文件，不探测文件目标、端口、服务、Runtime或设备。
+- `session.open`在external模式继续`Runtime.connect`，managed模式精确调用`Runtime.start_managed(host,port,base_path,control)`；两者沿同一专用单线程Runtime owner、同一Session Registry、预算、错误和三壳同源路径。confirmed `Session.quit`先确认删除并释放usage，之后owner才退出scope；managed在usage为零时自然有界停止并写`service.json=stopped`、释放账号锁。
+- retained uncertain Session保持usage和quarantine；shutdown不补设备命令，managed scope退出得到`service_in_use`时零TERM/KILL、零cleanup重试并报告degraded，MCP与CLI沿现有映射exit4。usage已证明为零时，首次managed退出的任何其他异常（不限于`managed_cleanup_pending`）都使owner保留同一Runtime/scope且不重复`__exit__`；`Application.aclose()`不读取Runtime私有pending状态，只通过同一Runtime公开幂等`cleanup_managed`进行一次30秒安全继续。首次退出已失败，因此继续成功或失败均保持shutdown degraded；成功只表示资源继续清理完成。
+- `runtime.check`本feature保持`static|external_connection`，不新增`managed_startup`；static在两模式均可用，managed配置请求external_connection在Runtime I/O前稳定`runtime_mode_mismatch/not_sent`。`RuntimeConnectionData.ownership`及`CapabilityData`不变，十项MCP inputSchema SHA-256（含runtime.check）和FSQ OpenAI/Gemini投射schema全部零漂移；managed启动可观测性由显式Session生命周期提供。
+- 零新增或升级依赖。复用Python3.11标准库、现有Contracts校验、Configuration `tomllib`、公开Runtime `start_managed/cleanup_managed`、Automation usage/Session Interface、AnyIO/Pydantic/MCP既有批准用途；禁止复制进程、锁、记录、usage、Session或错误状态机，禁止端口扫描、默认端点、fallback、retry、restart、隐式install/ensure/Doctor或强杀未知在途资源。
+- Feature实现门槛包括十一字段Contracts/Configuration合同、external回归、managed正常/失败/uncertain/cleanup-pending完整矩阵、三壳同源、十schema与FSQ双后端投射、静态质量/发行验证、获准真实受管根与明确Android目标开箱链及全新独立full审查0 open findings。缺少真实授权或证据时保持non-Done；Integrations、Automation、平台与项目状态不被本feature自动提升。
+
+详细Interface、状态矩阵、复用依据、验证义务及deferred范围见[已确认详细设计](docs/superpowers/specs/2026-11-13-integrations-managed-runtime-design.md)和三个模块SPEC的INT-CORE-02章节。

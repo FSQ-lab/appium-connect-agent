@@ -9,12 +9,12 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from threading import Event, Lock, get_ident
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import anyio
 from anyio.abc import TaskStatus
 
-from appium_connect_agent.runtime import OperationControl, RuntimeConnection
+from appium_connect_agent.runtime import OperationControl, Runtime, RuntimeConnection
 
 _LOGGER = logging.getLogger("appium_connect_agent.integrations")
 _ResultT = TypeVar("_ResultT")
@@ -66,7 +66,9 @@ class RuntimeOwner:
             thread_name_prefix="appium-runtime-owner",
         )
         self._lock = Lock()
+        self._runtime: Runtime | None = None
         self._scope: AbstractContextManager[RuntimeConnection] | None = None
+        self._ownership: Literal["external", "managed"] | None = None
         self._thread_id: int | None = None
         self._stopped = False
 
@@ -76,6 +78,7 @@ class RuntimeOwner:
 
     def enter(
         self,
+        runtime: Runtime,
         scope: AbstractContextManager[RuntimeConnection],
     ) -> RuntimeConnection:
         def invoke() -> RuntimeConnection:
@@ -86,7 +89,9 @@ class RuntimeOwner:
                 raise RuntimeError("Runtime owner thread changed")
             connection = scope.__enter__()
             with self._lock:
+                self._runtime = runtime
                 self._scope = scope
+                self._ownership = connection.ownership
             return connection
 
         with self._lock:
@@ -94,9 +99,21 @@ class RuntimeOwner:
                 raise RuntimeError("Runtime owner cannot enter another scope")
         return self._wait(self._executor.submit(invoke))
 
+    @property
+    def ownership(self) -> Literal["external", "managed"] | None:
+        with self._lock:
+            return self._ownership
+
+    def _clear(self) -> None:
+        with self._lock:
+            self._runtime = None
+            self._scope = None
+            self._ownership = None
+
     def exit(self) -> None:
         with self._lock:
             scope = self._scope
+            ownership = self._ownership
             if scope is None:
                 return
 
@@ -105,9 +122,26 @@ class RuntimeOwner:
                 raise RuntimeError("Runtime exit left its owner thread")
             try:
                 scope.__exit__(None, None, None)
-            finally:
-                with self._lock:
-                    self._scope = None
+            except BaseException:
+                if ownership == "external":
+                    self._clear()
+                raise
+            self._clear()
+
+        self._wait(self._executor.submit(invoke))
+
+    def cleanup_managed(self, control: OperationControl) -> None:
+        with self._lock:
+            runtime = self._runtime
+            ownership = self._ownership
+        if runtime is None or ownership != "managed":
+            return
+
+        def invoke() -> None:
+            if self._thread_id != get_ident():
+                raise RuntimeError("Runtime cleanup left its owner thread")
+            runtime.cleanup_managed(control=control)
+            self._clear()
 
         self._wait(self._executor.submit(invoke))
 

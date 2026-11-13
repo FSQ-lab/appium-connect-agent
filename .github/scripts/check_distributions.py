@@ -78,8 +78,9 @@ if sys.platform == 'darwin':
     from appium_connect_agent.automation import Device, Element, Session
     assert RuntimeSettings is LocalSettings
     assert callable(Runtime) and hasattr(Runtime, 'start_managed') and hasattr(Runtime, 'cleanup_managed')
+    assert hasattr(Runtime, 'stop_managed') and hasattr(Runtime, 'restart_managed')
     assert hasattr(Runtime, 'ensure_managed_driver') and hasattr(Runtime, 'run_driver_doctor')
-    assert RuntimeUsage is not None and issubclass(ServiceLifecycleError, Exception)
+    assert RuntimeSettings().server_mode == 'external'
     assert DriverComponent is not None and DriverMaintenanceResult is not None and DriverDoctorResult is not None
     assert OfficialDriver is not None
     assert issubclass(DriverMaintenanceError, Exception) and issubclass(DriverDoctorError, Exception)

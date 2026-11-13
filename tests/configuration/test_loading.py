@@ -17,15 +17,23 @@ from appium_connect_agent.configuration import (
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import Runtime
 
-FIELDS = (
+PATH_FIELDS = (
     "appium_executable",
     "appium_home",
     "node_executable",
     "npm_executable",
     "java_home",
     "android_sdk_root",
-    "server_url",
 )
+FIELDS = (
+    *PATH_FIELDS,
+    "server_url",
+    "server_mode",
+    "managed_host",
+    "managed_port",
+    "managed_base_path",
+)
+STRING_FIELDS = (*PATH_FIELDS, "server_url", "server_mode", "managed_host")
 
 
 def write_config(tmp_path: Path, text: str) -> Path:
@@ -50,23 +58,31 @@ def test_minimal_example_and_sources() -> None:
     example = Path(__file__).parents[2] / "examples/configuration/minimal.toml"
     loaded = load_configuration(example)
     assert loaded.settings == LocalSettings(server_url="http://127.0.0.1:4723")
-    assert loaded.sources[-1] == SettingSource("server_url", "file", example)
-    assert all(source.source == "default" for source in loaded.sources[:-1])
+    assert loaded.sources[6] == SettingSource("server_url", "file", example)
+    assert all(
+        source.source == ("file" if source.field == "server_url" else "default")
+        for source in loaded.sources
+    )
 
 
 def test_full_file_paths_and_url(tmp_path: Path) -> None:
     text = "[runtime]\n" + "\n".join(
-        f'{name} = "./missing/{name}"' for name in FIELDS[:-1]
+        f'{name} = "./missing/{name}"' for name in PATH_FIELDS
     )
     config = write_config(
         tmp_path, text + '\nserver_url = "HTTP://LOCALHOST:4723/wd/hub/"'
     )
     loaded = load_configuration(str(config))
-    for name in FIELDS[:-1]:
+    for name in PATH_FIELDS:
         assert getattr(loaded.settings, name) == tmp_path / "missing" / name
     assert loaded.settings.server_url == "http://127.0.0.1:4723/wd/hub"
     assert loaded.sources == tuple(
-        SettingSource(name, "file", config) for name in FIELDS
+        SettingSource(
+            name,
+            "file" if name in (*PATH_FIELDS, "server_url") else "default",
+            config if name in (*PATH_FIELDS, "server_url") else None,
+        )
+        for name in FIELDS
     )
 
 
@@ -152,7 +168,7 @@ def test_bad_file_argument(value: Any) -> None:
 
 
 @pytest.mark.parametrize("value", ["0", "true", "[]", "{}", "1979-05-27"])
-@pytest.mark.parametrize("field", FIELDS)
+@pytest.mark.parametrize("field", STRING_FIELDS)
 def test_fields_require_strings(tmp_path: Path, field: str, value: str) -> None:
     config = write_config(tmp_path, f"[runtime]\n{field} = {value}\n")
     with pytest.raises(ConfigurationError) as caught:
@@ -162,12 +178,56 @@ def test_fields_require_strings(tmp_path: Path, field: str, value: str) -> None:
     ]
 
 
-@pytest.mark.parametrize("field", FIELDS)
+@pytest.mark.parametrize("field", STRING_FIELDS)
 def test_empty_strings_are_not_defaults(tmp_path: Path, field: str) -> None:
     config = write_config(tmp_path, f'[runtime]\n{field} = ""')
     with pytest.raises(ConfigurationError) as caught:
         load_configuration(config)
     assert caught.value.issues[0].code == "empty_value"
+
+
+@pytest.mark.parametrize("value", ['"4723"', "true", "4723.0", "[]", "{}"])
+def test_managed_port_requires_toml_integer(tmp_path: Path, value: str) -> None:
+    config = write_config(tmp_path, f"[runtime]\nmanaged_port = {value}")
+    with pytest.raises(ConfigurationError) as caught:
+        load_configuration(config)
+    assert caught.value.issues[0].code == "invalid_type"
+
+
+def test_managed_file_and_fixed_sources(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        '[runtime]\nserver_mode = "managed"\nmanaged_host = "127.0.0.1"\n'
+        'managed_port = 4723\nmanaged_base_path = "/wd/hub"\n',
+    )
+    loaded = load_configuration(config)
+    assert loaded.settings == LocalSettings(
+        server_mode="managed",
+        managed_host="127.0.0.1",
+        managed_port=4723,
+        managed_base_path="/wd/hub",
+    )
+    assert tuple(source.field for source in loaded.sources) == FIELDS
+    assert loaded.sources[-4:] == tuple(
+        SettingSource(name, "file", config) for name in FIELDS[-4:]
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[runtime]\nserver_mode = "managed"',
+        '[runtime]\nmanaged_host = "127.0.0.1"',
+        "[runtime]\nmanaged_port = 4723",
+        '[runtime]\nmanaged_base_path = "/wd/hub"',
+        '[runtime]\nserver_mode = "managed"\nmanaged_host = "127.0.0.1"\n'
+        'managed_port = 4723\nserver_url = "http://127.0.0.1:4723"',
+    ],
+)
+def test_mode_combinations_fail_without_fallback(tmp_path: Path, text: str) -> None:
+    with pytest.raises(ConfigurationError) as caught:
+        load_configuration(write_config(tmp_path, text))
+    assert {issue.code for issue in caught.value.issues} == {"invalid_combination"}
 
 
 @pytest.mark.parametrize(
