@@ -125,10 +125,10 @@ def create_server(application: Application) -> MCPServer[Application]:
         version="0.1.0",
         instructions=(
             "Local readiness, explicit Session lifecycle, Native observation, caller-requested "
-            "Element single, double, or long click, Element text send, clear, or replace, "
-            "Element IME action, Element swipe, scroll, restricted scroll-to, or drag-and-drop, "
-            "and Device back; no automatic observation, verification, navigation, action chain, "
-            "retry, replay, rollback, attach, recovery, or HTTP tools."
+            "Element click, text, IME action, and gesture tools, Device back, keycode, keyboard, "
+            "clipboard, alert, and status-bar controls, and application lifecycle, install, and "
+            "remove tools; no automatic observation, verification, navigation, action chain, retry, "
+            "replay, rollback, attach, recovery, clear-app, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,

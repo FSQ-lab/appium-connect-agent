@@ -1,10 +1,10 @@
 # Appium Connect Agent
 
-当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/显式 stop/restart/usage 保护与清理、三大目标官方 driver（`uiautomator2 | xcuitest | mac2`）的显式受管维护与显式 Doctor 环境准备、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（支持 `external` 与 `managed` 两种 Runtime 服务模式，覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、调用方显式请求的单次 Element click、文本 send/clear/replace 与 Device back）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
+当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/显式 stop/restart/usage 保护与清理、三大目标官方 driver（`uiautomator2 | xcuitest | mac2`）的显式受管维护与显式 Doctor 环境准备、Automation 公开能力，以及 Integrations 同源 ToolCatalog 驱动的本地 stdio MCP、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（支持 `external` 与 `managed` 两种 Runtime 服务模式，覆盖 readiness/discovery、显式 Session lifecycle、Native 只读观测、Element 动作、Device 系统控制、应用生命周期与本地 APK 安装/包卸载）；各能力的实际验收状态以对应交付台账、Issue 和模块 SPEC 为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、tree/attributes/structure 三种 Native 只读观测、单次 Element click、显式 send/clear/replace 文本意图与一次调用方显式请求的 Device back；不提供其他 UI 动作、自动动作链、动作后观测、自动导航、聚焦/提交/校验、重试、fallback、回滚、HTTP、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入设备操作实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、Native 只读观测、Element click/text/IME/gesture、Device back/keycode/keyboard/clipboard/alert/status-bar，以及应用 activate/terminate/query-state/install/remove；不提供自动动作链、动作后观测、自动导航、重试、fallback、回滚、HTTP、`clear_app`、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入设备操作实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -31,7 +31,7 @@ Configuration 提供显式项目 TOML 加载，当前验收状态见
 不提供临时清除，显式 `None` 或空字符串报错；参数不写回文件。
 通过 `loaded.sources` 查询 `file`、`override` 或 `default` 来源。
 
-## 本地 stdio MCP、进程内 ToolCall 与正式产品 CLI（同源 12 工具）
+## 本地 stdio MCP、进程内 ToolCall 与正式产品 CLI（同源 19 工具）
 
 安装制品同时提供本地 stdio MCP 启动入口与基于当前账号私有 Unix domain socket（默认 `/private/tmp/appium-connect-agent-<uid>/bridge.sock`）的正式产品 CLI：
 
@@ -44,7 +44,7 @@ appium-connect-agent daemon stop
 
 两个必选启动长 option（`--config` 与 `--adb-executable`）都必须且只能提供一次；不支持短名、位置参数、默认路径或环境变量、PATH、TOML、SDK root 回退。`--config` 只加载一次不可变 Configuration 快照；ADB 路径由 Integrations 独立持有，每次设备列举仍由 Automation 公开入口重新校验。`appium-connect-agent-mcp` 的 stdout 专用于 MCP framing；`appium-connect-agent` CLI 的 `start/status/stop/catalog/call` stdout 输出单个规范 JSON 文档；两者运维与参数/桥接错误均只写入脱敏 stderr。
 
-当前固定注册十二个 MCP tool，顺序如下：
+当前固定注册十九个 MCP tool，顺序如下：
 
 1. `appium.capabilities.get`：返回固定平台、协议目标、工具和限制，不代表运行健康。
 2. `appium.runtime.check`：以 `static` 或 `external_connection` 模式执行一次有界 Runtime 检查；Session/Runtime scope存在时在任何下层调用前拒绝。
@@ -58,12 +58,22 @@ appium-connect-agent daemon stop
 10. `appium.device.back`：对当前active handle绑定的Device发送一次back；不接受keycode/Locator，不自动观测、探活、恢复、重试、重放或追加导航。
 11. `appium.element.ime_action`：对显式Locator执行一次明确的Android editor action；不自动选择action、读回文本、验证业务结果或失败重放。
 12. `appium.element.gesture`：按必填`intent=swipe|scroll|scroll_to|drag_and_drop`调用一次对应公开Element手势；scroll原样返回能否继续滚动，scroll-to仅接受受限的id/accessibility子定位，且不公开坐标或把手势响应解释为业务成功。
+13. `appium.device.key`：按显式 `kind=press|long_press` 发送一次 Android keycode，可选 `metastate` 与 `flags`，不解释页面效果。
+14. `appium.device.keyboard_hide`：调用一次公开 keyboard hide，并原样返回官方 `hidden` bool。
+15. `appium.device.clipboard`：按 `intent=get|set` 读取或替换 plaintext clipboard；set 文本最多 65,536 UTF-8 bytes、label 最多 1,024 UTF-8 bytes，set 结果不回显文本或 label。
+16. `appium.device.alert`：按 `action=accept|dismiss` 处理一次官方 alert，可选精确 `button_label`，不自动查找或重试。
+17. `appium.device.status_bar`：显式执行 `expandNotifications|expandSettings|collapse`，只把最多 65,536 UTF-8 bytes 的官方 output 返回当前调用方。
+18. `appium.app.lifecycle`：按 `intent=activate|terminate|query_state` 操作一个严格 package id；结果不回显 `app_id`，query 只返回官方状态 `0|1|3|4`。
+19. `appium.app.package`：从宿主绝对小写 `.apk` 路径安装，或按严格 package id 卸载；安装固定 replace，卸载只原样返回官方 bool，不承诺删除数据。
+
 
 所有工具都使用 schema version 1；I/O 工具有有限总预算并把取消信号桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；下层完整文档最大 65,536 UTF-8 bytes，外层完整结果有 69,632-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用、IME action、每个gesture与Device back都只进入一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element或执行该公开方法合同内的必要步骤，但Integrations不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。click/IME/gesture/back成功只表示对应公开Automation调用取得合法成功响应，不保证页面变化、键盘状态、到达特定页面或其他业务结果。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常关闭会对已知active owned Session最多调用一次公开quit，随后在`server_mode="managed"`时自然有界停止本次拥有的受管Appium（在`server_mode="external"`时保持外部Appium运行）；终态未知时零信号保留在途资源并degraded退出。ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
+新增 Device/App 工具同样只进入一次对应 Automation 公开方法，共享既有 Session gate、原始 deadline/cancellation、错误映射和 canonical serializer。clipboard 文本和 status-bar output 只返回当前获准调用方；clipboard set 的文本/label 不进入成功结果、验证错误、日志、stderr 或持久证据。Integrations 只把 `app_path` 转为 `Path` 交给 `Device.install_app`，不自行读取越界文件。install 外层预算最大 360 秒、remove 最大 180 秒，分别容纳下层 300,000 ms 与 100,000 ms 的五倍内部上限；这不是自动重试或多次安装/卸载。
+
 
 协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click、INT-MCP-05 Element text与INT-MCP-06 Device back均已在固定Android Native组合完成各自限定真实链验收；Issue #8也已通过正式wheel、官方MCP Client与固定Calculator安全链完成`observe → click → observe → replace → observe → back`限定验收。Host 资格方面，Codex CLI `0.167.2` 已在记录的精确固定组合内限定 qualified（Issue #19），OMP `18.18.3` 因不公开原始 `structuredContent` 为 not-qualified（Issue #18），Copilot CLI 与其他具体 Host 尚未资格化。进程内 Python ToolCall 表面提供 `Application(settings, adb_executable, surface="toolcall").tool_bindings()` 与 `SyncApplication`（详见 [Integrations SPEC](modules/integrations/SPEC.md)）。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，Integrations 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准调用方，不写入默认日志或证据。
 
-INT-TOOLS-01 的12工具schema、FSQ双转换器与受控协议链属于当前实现证据；IME与gesture尚未在本feature中取得另行授权的代表性真机验收，不提升Integrations、Automation或平台Done，也不关闭AIF-06既有真机drag-and-drop验证缺口。
+INT-TOOLS-01 的原12工具 schema 与 INT-TOOLS-02 的19工具 clean cutover、FSQ 双转换器及受控协议链属于当前实现证据；本次未获授权运行真实设备或服务命令，新增 Device/App 工具不据此取得代表性真机验收，也不提升 Integrations、Automation 或平台 Done，不关闭 AIF-06 既有真机 drag-and-drop 验证缺口。
 
 ## Automation Element 接口
 

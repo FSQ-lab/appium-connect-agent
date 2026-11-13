@@ -541,3 +541,89 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - 关闭Automation AIF-06真机drag历史缺口或提升任何模块/平台Done。
 
 完整已确认设计、库复用、FSQ双转换器实证及已由commander合入的精确根SPEC delta全文见[INT-TOOLS-01设计](../../docs/superpowers/specs/2026-11-13-integrations-element-tools-design.md)。
+
+## INT-TOOLS-02 Device System Controls And Application Lifecycle
+
+> **已确认合同。** 根 `SPEC.md` 的 `INT-TOOLS-02` delta 与本节共同定义 Issue #26 实现边界；真实设备/服务操作仍需另行明确授权。
+
+### Scope, dependencies and single-source cutover
+
+- 当前组合保持macOS宿主 / Android Native / Appium3.7.0 / UiAutomator2 8.7.0 / CPython3.11。精确下层依赖为已分别限定Done且无开放finding的Automation AIF-07公开`Device.press_keycode/long_press_keycode/hide_keyboard/get_clipboard_text/set_clipboard_text/accept_alert/dismiss_alert`、AIF-08公开`Device.status_bar`、AIF-09公开`Device.activate_app/terminate_app/query_app_state`与AIF-10公开`Device.install_app/remove_app`；上层依赖为INT-CORE-01唯一catalog/Application、INT-CLI-01正式CLI、INT-CORE-02同一Runtime owner路径及INT-TOOLS-01十二项基线。
+- Automation继续`device_validation_blocked_known_clean`、`module_done=false`、`automatic_retry_authorized=false`。Integrations只消费逐项公开Interface和限定资格，不把Automation模块、平台或真实设备链提升为Done。
+- 唯一不可变`TOOL_CATALOG`从12项clean cutover为19项，并同时驱动MCP、FSQ Python ToolCall和CLI。既有1～12项名称、顺序、description、request model和MCP `inputSchema` canonical bytes全部保持；固定追加Device/App七项。禁止第二tool表、第二request模型、第二Registry/gate/预算/错误状态机、shell专用dispatch、Automation私有入口、raw WebDriver/Appium/HTTP/ADB/script、fallback、retry或replay。
+- 无新增、替换或升级依赖。继续在已批准版本/用途内复用Pydantic2.14.1 strict/frozen模型、MCP2.3.0高层注册/annotation、AnyIO4.15.1既有worker路径、Python3.11标准库`pathlib.Path`、既有FSQ fail-closed投射和公开Automation Interface；Configuration、Runtime、Contracts、Automation及依赖/lock no-delta。
+- 如需下层未验收行为、private/raw入口、第二Device通道、任意payload、文件内容读取/上传、APK解析、数据清理、自动恢复或新依赖用途，立即停止并返回对应SPEC/选型gate。
+
+### Exact nineteen-tool surface and catalog metadata
+
+- MCP固定顺序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe, appium.element.click, appium.element.text, appium.device.back, appium.element.ime_action, appium.element.gesture, appium.device.key, appium.device.keyboard_hide, appium.device.clipboard, appium.device.alert, appium.device.status_bar, appium.app.lifecycle, appium.app.package]`。ToolCall/CLI对应顺序只将点号替换为下划线，固定为`[appium_capabilities_get, appium_runtime_check, appium_devices_list, appium_session_open, appium_session_status, appium_session_close, appium_ui_observe, appium_element_click, appium_element_text, appium_device_back, appium_element_ime_action, appium_element_gesture, appium_device_key, appium_device_keyboard_hide, appium_device_clipboard, appium_device_alert, appium_device_status_bar, appium_app_lifecycle, appium_app_package]`。
+- 新增`handler_symbol`依序固定为`device_key`、`device_keyboard_hide`、`device_clipboard`、`device_alert`、`device_status_bar`、`app_lifecycle`、`app_package`。`ToolCatalog`构造不变量改为`len(specs)==19`；名称tuple、MCP注册、FSQ binding、CLI catalog/call及capability tools必须从同一catalog按上述顺序产生，不维护副本。
+- 七项`ToolSpec.description`逐字固定为：`Send one press or long-press Android keycode command to the bound Device.`、`Hide the keyboard for the bound Device and return the official boolean.`、`Read or replace the bound Device plaintext clipboard.`、`Accept or dismiss one official alert on the bound Device.`、`Expand or collapse one Android system panel on the bound Device.`、`Activate, terminate, or query one explicit application package.`、`Install one local APK or remove one explicit application package.`。MCP tools/list、FSQ `ToolBinding.description`与CLI catalog从同一ToolSpec原样暴露。
+- 七项annotation均固定`readOnly=false, destructive=true, idempotent=false, openWorld=true`（`_WRITE_OPEN`）。剪贴板和生命周期含只读分支，但tool级hint须按同一工具的写入分支保守声明；annotation不构成设备/App授权、失败重放或业务效果保证。
+
+### Common strict request, result and lifecycle contract
+
+- 所有新增request/result及嵌套对象继续strict/frozen、JSON Schema2020-12 closed object、`additionalProperties=false`。每个request required `schema_version=1`和现有`session_handle`；数值只接受actual finite int/float并拒绝bool，strict-int字段拒绝bool。除package分支外，`timeout_seconds=90.0`且`0 < value <= 120.0`。
+- 成功沿既有共同envelope：新`call_id`、`execution=completed`、`operation_id=null`、`request_state=null`、`warnings=[]`、原`automation_module_status`及typed data。每个data branch均固定`session_state=active`、`busy=false`；Automation成功不公开operation_id，Integrations不得伪造。
+- 每个handler只创建一个absolute deadline和Event，只调用一次既有`WorkerRegistry.run_budget`。Registry准入后锁外取得同一Session的零I/O绑定`session.device`，按已校验分支恰好调用一个公开Device方法并传一个remaining `OperationControl`，finally只用公开`session_info()`同步entry。成功须最终active/idle。
+- unknown/closed/uncertain/closing/busy/provisional/tombstone、AutomationError、response unknown/quarantine、cancel/late/EOF/broken pipe/no-abandon/no-replay及external/managed shutdown沿既有合同。任何分支不后置query/observe、不补恢复动作、不改参数重试、不退出Runtime或自动quit。
+
+### Device key and keyboard hide
+
+- `appium.device.key` / `appium_device_key`的`DeviceKeyRequest` required `kind=press|long_press`、strict `keycode: int`范围`0..2_147_483_647`，optional nullable `metastate`与`flags`默认null且非null时各为strict int `-2_147_483_648..2_147_483_647`，总预算默认90秒、最大120秒。按kind恰好调用一次`Device.press_keycode`或`Device.long_press_keycode`；不公开duration/source/Home别名。结果只返回kind与active/idle，不回显三个整数。
+- `appium.device.keyboard_hide` / `appium_device_keyboard_hide`只含共同字段，恰好调用一次`Device.hide_keyboard`并以`hidden: bool`保留官方结果。false是成功，不追加Back/ESC、重试、观测或键盘已隐藏断言。
+
+### Clipboard, alerts and status bar
+
+- `appium.device.clipboard` / `appium_device_clipboard`为required `intent`判别联合。`get`分支不拥有或接受text/label，恰好调用`Device.get_clipboard_text`并返回strict text；`set`分支required strict UTF-8 `text`最多65,536 bytes、optional nullable `label=null`最多1,024 UTF-8 bytes，恰好调用`Device.set_clipboard_text`，结果分支不含text/label。合法空text和空非null label保留；不normalize/trim/truncate/Base64暴露/粘贴/聚焦/提交。
+- `appium.device.alert` / `appium_device_alert` required `action=accept|dismiss`及optional nullable `button_label=null`最多1,024 UTF-8 bytes；按分支恰好调用一次公开accept/dismiss。结果只含action，不回显label；不等待、模糊匹配、自定义对话框Element fallback或推断授权语义。
+- `appium.device.status_bar` / `appium_device_status_bar` required `command=expandNotifications|expandSettings|collapse`，恰好调用一次`Device.status_bar`。结果携带`output: str`，允许空串且strict UTF-8最多65,536 bytes；不trim/解释输出，不声明面板已可见/收起，不自动collapse/back。
+
+### Application lifecycle
+
+- `appium.app.lifecycle` / `appium_app_lifecycle`使用一个closed `AppLifecycleRequest`：required `intent=activate|terminate|query_state`、required `app_id`和共同timeout。三个intent字段完全相同，无需复制三份request branch；app_id必须是actual ASCII string、1..255字符并完整匹配`[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*`，不strip/lower/normalize/推断Session target或检查安装事实。
+- activate/terminate/query分别恰好调用公开`Device.activate_app`、`terminate_app`、`query_app_state`一次。result data使用intent判别联合：activate分支不含`terminated/app_state`；terminate分支只增加`terminated: bool`；query_state分支只增加`app_state: 0|1|3|4`。不回显app_id。false和0均为成功事实，不等于Session close；不自动后置query、验证页面、reset/restart或改Session target。
+- AIF-09显式Control的terminate内部timeout仍最多500ms且必须严格小于发送前剩余总预算；Integrations不公开、计算或补充第二个terminate timeout。
+
+### Local APK installation and package removal
+
+- `appium.app.package` / `appium_app_package`为required `intent`判别联合。install分支required strict UTF-8 `app_path`字符串，其schema/validator要求词法绝对路径及精确小写`.apk`后缀；optional actual-bool `allow_test_packages=false`；`timeout_seconds=180.0`且`0 < value <= 360.0`。Adapter仅执行`Path(app_path)`并调用一次`Device.install_app`，不resolve/canonicalize/open/hash/parse/upload/download或读取文件内容；实际存在、可读、普通文件和TOCTOU由Automation/Appium公开链权威验证。结果只含`intent=install`及active/idle，不回显路径。
+- remove分支required同上package grammar的`app_id`，`timeout_seconds=90.0`且`0 < value <= 180.0`，恰好调用一次`Device.remove_app`并返回`removed: bool`；不回显app_id。false是成功，不自动query、重装或改换分支。
+- install/remove更高总预算上限分别为360/180秒，以容纳AIF-10内部`T <= 300_000/100_000ms`且`T/1000 < remaining`的严格关系及Adapter开销。默认180/90秒会自然产生更小内部timeout；五倍cap不是上游默认、整个命令或硬实时完成保证。Integrations不重置预算或强制达到cap。
+- install固定继承`replace=true`；remove固定继承`keepData=false`，但公开承诺仅为包卸载官方bool。removed true/false、query0或包absent均不保证app-private、共享、备份、keystore、profile或OEM数据删除，也不保证重装不恢复；不支持`clear_app`或任何同义入口。
+
+### FSQ projection and twelve-schema zero drift
+
+- canonical request继续来自同一Pydantic TypeAdapter。clipboard与package各由required literal discriminator产生互斥const；既有`_verify_disjoint_one_of`必须先证明branch disjoint，随后才允许`oneOf→anyOf`并移除discriminator metadata。lifecycle因三intent字段相同使用单model，不增加无收益union。不得新增投射例外、conditional schema、任意dict、provider专用模型或约束删除。
+- 七项最终实现schema已用实际`_project_schema`、FSQ OpenAI `ensure_strict_json_schema`与Gemini `google_schema`验证为0 error并锁定hash。OpenAI strict会将全部advertised properties列为required，因此FSQ调用须输出defaulted timeout及nullable/default字段；直接MCP/CLI/Pydantic仍可使用model default。Gemini将const改为单项enum并删除default；branch互斥由tag保持。clipboard strict RootModel在MCP、ToolCall与CLI共用同一判别联合；其wrap validator只把失败转为无message、无原输入的专用validation signal，schema与合法值不变，防止MCP SDK在预分派错误中回显剪贴板文本。
+- 既有1～12项MCP `inputSchema` canonical SHA-256必须逐项保持：`f53a26611f0f62347fe10b6e09ebea6a17d1040b5d069dc0af2d2d632b7818c4`、`dbf076e1e7892a57ee7aa3a8ac641600630e7990841291246e0afef9ce8d40ee`、`0965356f84e112a1670527d6186c0f47ad95fb44c978343dfb163d363a219f55`、`2fa7e03371dfe7b559de922759fe53a75db222bc4cb4c8360c021e5670bef7d5`、`e7d106bc945981291193fd8ff9509cfc92f51d73cde71db5169b18422e3c66de`、`702d080d90efbe49179f282489e8cc1ae537700c121f0479401ed69c04488ace`、`310d885d7f095ed9c96624852413d1b6c8495abbd24088809aa492e669314cf9`、`212fbc6fdc56cf45acc2e82b33e1c811f6aec7f40470983cf1f157458c8049b0`、`109542fda082a344ed20ad2249f5eb66cadad88aeee5e51c136fb9380632dbd6`、`f5b1986f683b37b974a549156afb4907bc66539228fc6930e10c2cb3bea6455d`、`725369e79e3051381adabf720817b605f4ef2c82bfd1458c5e7150886e9497be`、`1d56c60870092cda6912fefba06ca799f00cf7aa847629680b60693462194b34`。现有12项OpenAI/Gemini转换hash也须零漂移；新增七项只从最终实现class重锁raw/projected/双转换器hash。
+- 新增13～19项最终MCP `inputSchema` canonical SHA-256依次为：`975afe85c6e2ae1b8ec57b9b3e5a53e37349e3ead7fae9c25cf85e54748f6277`、`4204b2bcb9adc9457f999294d2a231a7102c9147ae1f6e39b66500fc19e3a6c0`、`08c28bde9b44d4667fec26ebf6ab4489e5fa87f5642e51552013c94f011e2605`、`ecf0bd44087e78bdaa63eaeca8ba8d580cabb8ea2421d51d98b14d4da607e130`、`ec0834f42c093373f428c8bc163720862f1f455811e73c613a3a646336594e45`、`c360c6afe13a1e1154e4e4580d46d01aa88b252bd49d4e8ffb11e644cc6be1b8`、`778bf1f60b7ba92ead5e9557f2583149da76cfec339244b3ac0d834349021f34`。最终OpenAI/Gemini hash由永久`test_toolcall_core.py`逐项锁定并调用真实转换器复核。
+
+### Capability truth, instructions and privacy
+
+- `CapabilityLimitations`固定有序为`[native_observation_element_actions_device_system_controls_and_app_management, no_automatic_post_action_observation, clipboard_current_caller_only, status_bar_output_current_caller_only, local_apk_path_only, package_remove_no_data_deletion_guarantee, ime_requires_explicit_element_and_action, gesture_coordinates_not_exposed, no_automatic_navigation, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。
+- MCP instructions逐字固定为`Local readiness, explicit Session lifecycle, Native observation, caller-requested Element click, text, IME action, and gesture tools, Device back, keycode, keyboard, clipboard, alert, and status-bar controls, and application lifecycle, install, and remove tools; no automatic observation, verification, navigation, action chain, retry, replay, rollback, attach, recovery, clear-app, or HTTP tools.`。
+- clipboard text/label、status output、APK path、app/package ID、handle、device标识、keycode metadata、alert label及Automation/Appium ID均为敏感数据，只供发起且获准的当前caller使用。clipboard get text与status output仅可进入该次canonical tool result；clipboard set不得回显内容。结果不回显APK path、app/package ID、keycode值或alert label。
+- stderr、日志、telemetry、Registry snapshot、manifest、异常message/repr/traceback、默认测试/审查及持久证据不得记录上述原文或hash；禁止“脱敏后落盘”复制内容。只允许既有tool/intent/kind/command/code/call_id/operation_id/phase/duration/request_state/state/count allowlist。MCP stdout仍仅协议framing；CLI/ToolCall canonical current-call result是获准返回，不是日志。
+
+### Verification, status and limits
+
+- 永久合同覆盖19项顺序/名称/symbol/description/annotation、完整limitations/instructions、七项request/result schema、branch无关字段拒绝、strict数字/UTF-8/package/path/timeout边界、schema拒绝零Registry/下层请求、typed result及canonical最大值。
+- 使用锁定真实Appium/Selenium client到受控HTTP协议服务，覆盖每分支恰好一次公开Device调用、精确下层route/payload/strict返回、500ms与300,000/100,000ms适配、known/unknown/partial effect、预算/cancel/late、同Session action/close竞态、active/uncertain shutdown、no-replay及privacy canary；mock不能单独证明接缝。
+- MCP官方Client、FSQ真实双转换器/ToolBinding callback和CLI catalog/daemon call须证明三壳同源。既有12项MCP input及OpenAI/Gemini转换hash逐字节零漂移；新增七项和最终19项从实现锁定。聚焦Integrations测试、Ruff/format、strict mypy、import-linter、wheel/sdist隔离安装及全新独立full实现审查0 open findings为实施门槛。
+- 代表性真机验收另需明确设备/服务、安全keycode/面板/弹窗/剪贴板数据、安全App/package/APK、安装/卸载/force-stop与潜在数据副作用、证据保留和基线恢复授权。controlled protocol不冒充真机；固定场景失败保持device-validation-blocked，不换应用/动作拼接通过。
+- 本feature通过也不交付clear_app、数据删除保证、任意shell/script、自动导航/验证/恢复、HTTP、其他平台或具体Host资格，不提升Automation、Integrations、当前平台或项目Done。
+
+### Minimum sufficient design
+
+只扩展一个`ToolCatalog`和一个深`Application` Module：七个新ToolSpec隐藏三壳注册、strict union、Registry、预算、分派、错误和隐私复杂度。绑定Device继续来自现有Session；APK字符串只转`Path`后委托Automation。不存在第二manager、factory、registry、protocol、文件读取Module或extension point。
+
+### Deferred by design
+
+- `clear_app`、keep-data、数据删除/安全擦除、cache reset、权限、user/profile、包metadata或安装后验证。
+- URL/APK集、上传下载、路径搜索/resolve、APK解析/签名验证、Integrations文件内容读取或新增大小策略。
+- 任意key名/source/duration、shell/script、弹窗Element fallback、通知/磁贴API、键盘状态验证、自动粘贴或面板恢复。
+- 自动App/package选择、导航、后观测/query、业务验证、retry/replay/rollback/fallback/recovery。
+- 多Session/队列、attach/persistence、第二Registry/gate、HTTP/remote、provider专用模型、通用Agent插件或新平台/Host资格。
+
+完整已确认设计、库复用、FSQ双转换器实证、隐私/五倍timeout边界及已由commander合入的精确根SPEC delta全文见[INT-TOOLS-02设计](../../docs/superpowers/specs/2026-11-13-integrations-device-app-tools-design.md)。

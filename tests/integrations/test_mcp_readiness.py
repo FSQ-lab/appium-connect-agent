@@ -48,9 +48,9 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "58e124913faaa89874e610973ff7262698b3e901d9ff7174c32446f66c3ea313"
+    "52d5d369bd0f0173fe18918a7ababa47a8aad7f85356163aa890ca9d75178c57"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3403
+CAPABILITY_MAX_CANONICAL_BYTES = 3720
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
@@ -75,6 +75,13 @@ ERROR_WIRE_BYTES = {
     TOOL_NAMES[9]: 6886,
     TOOL_NAMES[10]: 6893,
     TOOL_NAMES[11]: 6890,
+    TOOL_NAMES[12]: 6885,
+    TOOL_NAMES[13]: 6895,
+    TOOL_NAMES[14]: 6891,
+    TOOL_NAMES[15]: 6887,
+    TOOL_NAMES[16]: 6892,
+    TOOL_NAMES[17]: 6888,
+    TOOL_NAMES[18]: 6886,
 }
 
 
@@ -470,8 +477,12 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                 },
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "native_observation_element_click_text_ime_gestures_and_device_back",
+                    "native_observation_element_actions_device_system_controls_and_app_management",
                     "no_automatic_post_action_observation",
+                    "clipboard_current_caller_only",
+                    "status_bar_output_current_caller_only",
+                    "local_apk_path_only",
+                    "package_remove_no_data_deletion_guarantee",
                     "ime_requires_explicit_element_and_action",
                     "gesture_coordinates_not_exposed",
                     "no_automatic_navigation",

@@ -48,18 +48,50 @@ from ._bridge import (
 from ._catalog import TOOL_CATALOG, JsonValue, ToolSpec
 from ._models import (
     AUTOMATION_MODULE_STATUS,
+    AppLifecycleActivateData,
+    AppLifecycleData,
+    AppLifecycleQueryStateData,
+    AppLifecycleRequest,
+    AppLifecycleResult,
+    AppLifecycleTerminateData,
+    AppPackageData,
+    AppPackageInstallData,
+    AppPackageInstallRequest,
+    AppPackageRemoveData,
+    AppPackageRemoveRequest,
+    AppPackageRequest,
+    AppPackageResult,
     AttributesObserveRequest,
     AutomationModuleStatus,
     CapabilityLimitations,
     CapabilityResult,
     CliCapabilityData,
     CliCapabilityResult,
+    DeviceAlertData,
+    DeviceAlertRequest,
+    DeviceAlertResult,
     DeviceBackData,
     DeviceBackRequest,
     DeviceBackResult,
+    DeviceClipboardBranch,
+    DeviceClipboardData,
+    DeviceClipboardGetData,
+    DeviceClipboardGetRequest,
+    DeviceClipboardResult,
+    DeviceClipboardSetData,
+    DeviceClipboardSetRequest,
     DeviceData,
+    DeviceKeyboardHideData,
+    DeviceKeyboardHideRequest,
+    DeviceKeyboardHideResult,
+    DeviceKeyData,
+    DeviceKeyRequest,
+    DeviceKeyResult,
     DeviceListData,
     DeviceListResult,
+    DeviceStatusBarData,
+    DeviceStatusBarRequest,
+    DeviceStatusBarResult,
     DoubleClickRequest,
     ElementClickData,
     ElementClickRequest,
@@ -93,6 +125,7 @@ from ._models import (
     ObservationResult,
     ObserveRequest,
     PlatformData,
+    PrivateRequestValidationError,
     RuntimeCheck,
     RuntimeCheckData,
     RuntimeCheckResult,
@@ -250,7 +283,7 @@ class Application:
             raise ApplicationError(self.invalid_argument()) from None
         try:
             request = spec.request_adapter.validate_python(arguments, strict=True)
-        except (TypeError, ValueError, ValidationError):
+        except (TypeError, ValueError, ValidationError, PrivateRequestValidationError):
             raise ApplicationError(self.invalid_argument()) from None
         return await self._invoke_validated(spec, request, surface=self._surface)
 
@@ -345,8 +378,12 @@ class Application:
             host="macos", target="android_native", driver="uiautomator2"
         )
         limitations: CapabilityLimitations = (
-            "native_observation_element_click_text_ime_gestures_and_device_back",
+            "native_observation_element_actions_device_system_controls_and_app_management",
             "no_automatic_post_action_observation",
+            "clipboard_current_caller_only",
+            "status_bar_output_current_caller_only",
+            "local_apk_path_only",
+            "package_remove_no_data_deletion_guarantee",
             "ime_requires_explicit_element_and_action",
             "gesture_coordinates_not_exposed",
             "no_automatic_navigation",
@@ -999,6 +1036,295 @@ class Application:
             call_id,
             entry,
         )
+
+    @staticmethod
+    def _assert_device_action_complete(session: Session, action: str) -> None:
+        info = session.session_info()
+        if info.state != "active" or info.busy:
+            raise RuntimeError(
+                f"successful {action} did not leave Session active and idle"
+            )
+
+    async def device_key(self, request: DeviceKeyRequest) -> DeviceKeyResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def key_once(budget: OperationBudget) -> DeviceKeyResult:
+            try:
+                method = (
+                    session.device.press_keycode
+                    if request.kind == "press"
+                    else session.device.long_press_keycode
+                )
+                method(
+                    request.keycode,
+                    metastate=request.metastate,
+                    flags=request.flags,
+                    control=budget.control(),
+                )
+                self._assert_device_action_complete(session, "key action")
+                return DeviceKeyResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceKeyData(
+                        kind=request.kind,
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, key_once, call_id, entry)
+
+    async def device_keyboard_hide(
+        self, request: DeviceKeyboardHideRequest
+    ) -> DeviceKeyboardHideResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def hide_once(budget: OperationBudget) -> DeviceKeyboardHideResult:
+            try:
+                hidden = session.device.hide_keyboard(control=budget.control())
+                self._assert_device_action_complete(session, "keyboard hide")
+                return DeviceKeyboardHideResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceKeyboardHideData(
+                        hidden=hidden,
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, hide_once, call_id, entry)
+
+    async def device_clipboard(
+        self, request: DeviceClipboardBranch
+    ) -> DeviceClipboardResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def clipboard_once(budget: OperationBudget) -> DeviceClipboardResult:
+            try:
+                control = budget.control()
+                data: DeviceClipboardData
+                if isinstance(request, DeviceClipboardGetRequest):
+                    text = session.device.get_clipboard_text(control=control)
+                    data = DeviceClipboardGetData(
+                        intent="get",
+                        text=text,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, DeviceClipboardSetRequest):
+                    session.device.set_clipboard_text(
+                        request.text,
+                        label=request.label,
+                        control=control,
+                    )
+                    data = DeviceClipboardSetData(
+                        intent="set",
+                        session_state="active",
+                        busy=False,
+                    )
+                else:
+                    raise AssertionError("unsupported Device clipboard request")
+                self._assert_device_action_complete(session, "clipboard action")
+                return DeviceClipboardResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=data,
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, clipboard_once, call_id, entry)
+
+    async def device_alert(self, request: DeviceAlertRequest) -> DeviceAlertResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def alert_once(budget: OperationBudget) -> DeviceAlertResult:
+            try:
+                method = (
+                    session.device.accept_alert
+                    if request.action == "accept"
+                    else session.device.dismiss_alert
+                )
+                method(button_label=request.button_label, control=budget.control())
+                self._assert_device_action_complete(session, "alert action")
+                return DeviceAlertResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceAlertData(
+                        action=request.action,
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, alert_once, call_id, entry)
+
+    async def device_status_bar(
+        self, request: DeviceStatusBarRequest
+    ) -> DeviceStatusBarResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def status_bar_once(budget: OperationBudget) -> DeviceStatusBarResult:
+            try:
+                output = session.device.status_bar(
+                    request.command, control=budget.control()
+                )
+                self._assert_device_action_complete(session, "status bar action")
+                return DeviceStatusBarResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceStatusBarData(
+                        command=request.command,
+                        output=output,
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, status_bar_once, call_id, entry)
+
+    async def app_lifecycle(self, request: AppLifecycleRequest) -> AppLifecycleResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def lifecycle_once(budget: OperationBudget) -> AppLifecycleResult:
+            try:
+                control = budget.control()
+                data: AppLifecycleData
+                if request.intent == "activate":
+                    session.device.activate_app(request.app_id, control=control)
+                    data = AppLifecycleActivateData(
+                        intent="activate", session_state="active", busy=False
+                    )
+                elif request.intent == "terminate":
+                    terminated = session.device.terminate_app(
+                        request.app_id, control=control
+                    )
+                    data = AppLifecycleTerminateData(
+                        intent="terminate",
+                        terminated=terminated,
+                        session_state="active",
+                        busy=False,
+                    )
+                else:
+                    app_state = cast(
+                        Literal[0, 1, 3, 4],
+                        session.device.query_app_state(request.app_id, control=control),
+                    )
+                    data = AppLifecycleQueryStateData(
+                        intent="query_state",
+                        app_state=app_state,
+                        session_state="active",
+                        busy=False,
+                    )
+                self._assert_device_action_complete(
+                    session, "application lifecycle action"
+                )
+                return AppLifecycleResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=data,
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, lifecycle_once, call_id, entry)
+
+    async def app_package(self, request: AppPackageRequest) -> AppPackageResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def package_once(budget: OperationBudget) -> AppPackageResult:
+            try:
+                control = budget.control()
+                data: AppPackageData
+                if isinstance(request, AppPackageInstallRequest):
+                    session.device.install_app(
+                        Path(request.app_path),
+                        allow_test_packages=request.allow_test_packages,
+                        control=control,
+                    )
+                    data = AppPackageInstallData(
+                        intent="install", session_state="active", busy=False
+                    )
+                elif isinstance(request, AppPackageRemoveRequest):
+                    removed = session.device.remove_app(request.app_id, control=control)
+                    data = AppPackageRemoveData(
+                        intent="remove",
+                        removed=removed,
+                        session_state="active",
+                        busy=False,
+                    )
+                else:
+                    raise AssertionError("unsupported application package request")
+                self._assert_device_action_complete(
+                    session, "application package action"
+                )
+                return AppPackageResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=data,
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, package_once, call_id, entry)
 
     def _reserve_open(self, request: SessionOpenRequest, call_id: str) -> _SessionEntry:
         if not self._runtime_gate.acquire(blocking=False):

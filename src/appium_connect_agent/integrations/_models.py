@@ -7,7 +7,7 @@ import math
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from pydantic import (
     AfterValidator,
@@ -15,8 +15,11 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    ModelWrapValidatorHandler,
+    RootModel,
     SerializerFunctionWrapHandler,
     SkipValidation,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -46,6 +49,24 @@ def _element_text(value: str) -> str:
     if value.endswith("\\n"):
         raise ValueError("text must not end with literal backslash-n")
     return value
+
+
+def _bounded_utf8(value: str, *, maximum: int, label: str) -> str:
+    if len(value.encode("utf-8", errors="strict")) > maximum:
+        raise ValueError(f"{label} exceeds {maximum:,} UTF-8 bytes")
+    return value
+
+
+def _clipboard_text(value: str) -> str:
+    return _bounded_utf8(value, maximum=65_536, label="clipboard text")
+
+
+def _status_output(value: str) -> str:
+    return _bounded_utf8(value, maximum=65_536, label="status bar output")
+
+
+def _device_label(value: str) -> str:
+    return _bounded_utf8(value, maximum=1_024, label="label")
 
 
 StrictUtf8 = Annotated[str, AfterValidator(_strict_utf8)]
@@ -85,7 +106,12 @@ def _safe_identifier(value: str, label: str) -> str:
 
 
 class _StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        frozen=True,
+        hide_input_in_errors=True,
+    )
 
     @field_validator("schema_version", mode="before", check_fields=False)
     @classmethod
@@ -154,6 +180,13 @@ McpToolNames: TypeAlias = tuple[
     Literal["appium.device.back"],
     Literal["appium.element.ime_action"],
     Literal["appium.element.gesture"],
+    Literal["appium.device.key"],
+    Literal["appium.device.keyboard_hide"],
+    Literal["appium.device.clipboard"],
+    Literal["appium.device.alert"],
+    Literal["appium.device.status_bar"],
+    Literal["appium.app.lifecycle"],
+    Literal["appium.app.package"],
 ]
 ToolCallToolNames: TypeAlias = tuple[
     Literal["appium_capabilities_get"],
@@ -168,10 +201,23 @@ ToolCallToolNames: TypeAlias = tuple[
     Literal["appium_device_back"],
     Literal["appium_element_ime_action"],
     Literal["appium_element_gesture"],
+    Literal["appium_device_key"],
+    Literal["appium_device_keyboard_hide"],
+    Literal["appium_device_clipboard"],
+    Literal["appium_device_alert"],
+    Literal["appium_device_status_bar"],
+    Literal["appium_app_lifecycle"],
+    Literal["appium_app_package"],
 ]
 CapabilityLimitations: TypeAlias = tuple[
-    Literal["native_observation_element_click_text_ime_gestures_and_device_back"],
+    Literal[
+        "native_observation_element_actions_device_system_controls_and_app_management"
+    ],
     Literal["no_automatic_post_action_observation"],
+    Literal["clipboard_current_caller_only"],
+    Literal["status_bar_output_current_caller_only"],
+    Literal["local_apk_path_only"],
+    Literal["package_remove_no_data_deletion_guarantee"],
     Literal["ime_requires_explicit_element_and_action"],
     Literal["gesture_coordinates_not_exposed"],
     Literal["no_automatic_navigation"],
@@ -727,6 +773,126 @@ class DeviceBackRequest(_StrictModel):
         return _finite_number(value)
 
 
+_DEVICE_LABEL = Annotated[StrictUtf8, AfterValidator(_device_label)]
+_CLIPBOARD_TEXT = Annotated[StrictUtf8, AfterValidator(_clipboard_text)]
+_STATUS_OUTPUT = Annotated[StrictUtf8, AfterValidator(_status_output)]
+_KEYCODE = Annotated[int, Field(ge=0, le=2_147_483_647)]
+_SIGNED_INT32 = Annotated[int, Field(ge=-2_147_483_648, le=2_147_483_647)]
+_APP_ID = Annotated[
+    StrictUtf8,
+    Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*$",
+    ),
+]
+_APK_PATH = Annotated[StrictUtf8, Field(pattern=r"^/[\s\S]*[.]apk$")]
+
+
+class _DeviceActionRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=120.0)
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class DeviceKeyRequest(_DeviceActionRequest):
+    kind: Literal["press", "long_press"]
+    keycode: _KEYCODE
+    metastate: _SIGNED_INT32 | None = None
+    flags: _SIGNED_INT32 | None = None
+
+
+class DeviceKeyboardHideRequest(_DeviceActionRequest):
+    pass
+
+
+class DeviceClipboardGetRequest(_DeviceActionRequest):
+    intent: Literal["get"]
+
+
+class DeviceClipboardSetRequest(_DeviceActionRequest):
+    intent: Literal["set"]
+    text: _CLIPBOARD_TEXT
+    label: _DEVICE_LABEL | None = None
+
+
+class PrivateRequestValidationError(Exception):
+    """Signal private request rejection without attaching the rejected value."""
+
+
+DeviceClipboardBranch: TypeAlias = Annotated[
+    DeviceClipboardGetRequest | DeviceClipboardSetRequest,
+    Field(discriminator="intent"),
+]
+
+
+class DeviceClipboardRequest(RootModel[DeviceClipboardBranch]):
+    model_config = ConfigDict(strict=True, frozen=True, hide_input_in_errors=True)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _redact_invalid_input(
+        cls, value: Any, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
+        try:
+            return handler(value)
+        except ValidationError:
+            raise PrivateRequestValidationError from None
+
+
+class DeviceAlertRequest(_DeviceActionRequest):
+    action: Literal["accept", "dismiss"]
+    button_label: _DEVICE_LABEL | None = None
+
+
+class DeviceStatusBarRequest(_DeviceActionRequest):
+    command: Literal["expandNotifications", "expandSettings", "collapse"]
+
+
+class AppLifecycleRequest(_DeviceActionRequest):
+    intent: Literal["activate", "terminate", "query_state"]
+    app_id: _APP_ID
+
+
+class _AppPackageRequest(_StrictModel):
+    schema_version: Literal[1]
+    session_handle: SessionHandle
+
+
+class AppPackageInstallRequest(_AppPackageRequest):
+    intent: Literal["install"]
+    app_path: _APK_PATH
+    allow_test_packages: bool = False
+    timeout_seconds: float = Field(default=180.0, gt=0.0, le=360.0)
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+class AppPackageRemoveRequest(_AppPackageRequest):
+    intent: Literal["remove"]
+    app_id: _APP_ID
+    timeout_seconds: float = Field(default=90.0, gt=0.0, le=180.0)
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+
+AppPackageRequest: TypeAlias = Annotated[
+    AppPackageInstallRequest | AppPackageRemoveRequest,
+    Field(discriminator="intent"),
+]
+
+
 class AutomationLocatorDocument(_StrictModel):
     by: Literal["id", "accessibility id", "xpath"]
     value: Annotated[StrictUtf8, Field(min_length=1, max_length=4096)]
@@ -1263,6 +1429,125 @@ class DeviceBackResult(_StrictModel):
         if len(value) != len(set(value)):
             raise ValueError("warnings must be unique")
         return value
+
+
+class _DeviceToolData(_StrictModel):
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
+class DeviceKeyData(_DeviceToolData):
+    kind: Literal["press", "long_press"]
+
+
+class DeviceKeyboardHideData(_DeviceToolData):
+    hidden: bool
+
+
+class DeviceClipboardGetData(_DeviceToolData):
+    intent: Literal["get"]
+    text: _CLIPBOARD_TEXT
+
+
+class DeviceClipboardSetData(_DeviceToolData):
+    intent: Literal["set"]
+
+
+DeviceClipboardData: TypeAlias = Annotated[
+    DeviceClipboardGetData | DeviceClipboardSetData,
+    Field(discriminator="intent"),
+]
+
+
+class DeviceAlertData(_DeviceToolData):
+    action: Literal["accept", "dismiss"]
+
+
+class DeviceStatusBarData(_DeviceToolData):
+    command: Literal["expandNotifications", "expandSettings", "collapse"]
+    output: _STATUS_OUTPUT
+
+
+class AppLifecycleActivateData(_DeviceToolData):
+    intent: Literal["activate"]
+
+
+class AppLifecycleTerminateData(_DeviceToolData):
+    intent: Literal["terminate"]
+    terminated: bool
+
+
+class AppLifecycleQueryStateData(_DeviceToolData):
+    intent: Literal["query_state"]
+    app_state: Literal[0, 1, 3, 4]
+
+
+AppLifecycleData: TypeAlias = Annotated[
+    AppLifecycleActivateData | AppLifecycleTerminateData | AppLifecycleQueryStateData,
+    Field(discriminator="intent"),
+]
+
+
+class AppPackageInstallData(_DeviceToolData):
+    intent: Literal["install"]
+
+
+class AppPackageRemoveData(_DeviceToolData):
+    intent: Literal["remove"]
+    removed: bool
+
+
+AppPackageData: TypeAlias = Annotated[
+    AppPackageInstallData | AppPackageRemoveData,
+    Field(discriminator="intent"),
+]
+
+
+class _DeviceToolResult(_StrictModel):
+    schema_version: Literal[1]
+    call_id: CallId
+    execution: Literal["completed"]
+    operation_id: None
+    request_state: None
+    warnings: tuple[StableCode, ...] = Field(
+        max_length=16, json_schema_extra={"uniqueItems": True}
+    )
+    automation_module_status: AutomationModuleStatus
+
+    @field_validator("warnings")
+    @classmethod
+    def _unique_warnings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("warnings must be unique")
+        return value
+
+
+class DeviceKeyResult(_DeviceToolResult):
+    data: DeviceKeyData
+
+
+class DeviceKeyboardHideResult(_DeviceToolResult):
+    data: DeviceKeyboardHideData
+
+
+class DeviceClipboardResult(_DeviceToolResult):
+    data: DeviceClipboardData
+
+
+class DeviceAlertResult(_DeviceToolResult):
+    data: DeviceAlertData
+
+
+class DeviceStatusBarResult(_DeviceToolResult):
+    data: DeviceStatusBarData
+
+
+class AppLifecycleResult(_DeviceToolResult):
+    data: AppLifecycleData
+
+
+class AppPackageResult(_DeviceToolResult):
+    data: AppPackageData
 
 
 class SessionOpenRequest(_StrictModel):

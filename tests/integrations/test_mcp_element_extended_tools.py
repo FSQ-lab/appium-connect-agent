@@ -79,7 +79,7 @@ async def _close(client: Client, handle: str) -> None:
     assert closed["data"]["session_state"] == "closed"
 
 
-def test_ime_and_gesture_are_final_destructive_tools_with_disjoint_schemas(
+def test_ime_and_gesture_remain_destructive_with_disjoint_schemas(
     mcp_harness: McpHarness,
 ) -> None:
     async def scenario() -> list[Tool]:
@@ -88,8 +88,8 @@ def test_ime_and_gesture_are_final_destructive_tools_with_disjoint_schemas(
 
     tools = anyio.run(scenario)
     assert tuple(tool.name for tool in tools) == TOOL_NAMES
-    assert len(tools) == 12
-    for tool in tools[10:]:
+    assert len(tools) == 19
+    for tool in tools[10:12]:
         assert tool.annotations is not None
         assert tool.annotations.model_dump(
             mode="json", by_alias=True, exclude_none=False

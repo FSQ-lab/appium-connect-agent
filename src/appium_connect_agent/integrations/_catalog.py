@@ -10,15 +10,29 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from ._models import (
+    AppLifecycleRequest,
+    AppLifecycleResult,
+    AppPackageRequest,
+    AppPackageResult,
     AttributesObserveRequest,
     CapabilitiesRequest,
+    DeviceAlertRequest,
+    DeviceAlertResult,
     DeviceBackRequest,
     DeviceBackResult,
+    DeviceClipboardRequest,
+    DeviceClipboardResult,
+    DeviceKeyboardHideRequest,
+    DeviceKeyboardHideResult,
+    DeviceKeyRequest,
+    DeviceKeyResult,
     DeviceListRequest,
     DeviceListResult,
+    DeviceStatusBarRequest,
+    DeviceStatusBarResult,
     ElementClickRequest,
     ElementClickResult,
     ElementGestureRequest,
@@ -125,11 +139,11 @@ class ToolSpec:
 
 
 class ToolCatalog:
-    """Immutable declarations and deterministic schema projections for twelve tools."""
+    """Immutable declarations and deterministic schema projections for nineteen tools."""
 
     def __init__(self, specs: tuple[ToolSpec, ...]) -> None:
-        if len(specs) != 12:
-            raise ValueError("tool catalog must contain exactly twelve tools")
+        if len(specs) != 19:
+            raise ValueError("tool catalog must contain exactly nineteen tools")
         if len({spec.mcp_name for spec in specs}) != len(specs):
             raise ValueError("MCP tool names must be unique")
         if len({spec.tool_name for spec in specs}) != len(specs):
@@ -516,6 +530,47 @@ async def _gesture(application: Application, request: BaseModel) -> BaseModel:
     return await application.gesture(cast(ElementGestureRequest, request))
 
 
+async def _device_key(application: Application, request: BaseModel) -> BaseModel:
+    return await application.device_key(cast(DeviceKeyRequest, request))
+
+
+async def _device_keyboard_hide(
+    application: Application, request: BaseModel
+) -> BaseModel:
+    return await application.device_keyboard_hide(
+        cast(DeviceKeyboardHideRequest, request)
+    )
+
+
+async def _device_clipboard(application: Application, request: BaseModel) -> BaseModel:
+    value = cast(DeviceClipboardRequest, request)
+    return await application.device_clipboard(value.root)
+
+
+async def _device_alert(application: Application, request: BaseModel) -> BaseModel:
+    return await application.device_alert(cast(DeviceAlertRequest, request))
+
+
+async def _device_status_bar(application: Application, request: BaseModel) -> BaseModel:
+    return await application.device_status_bar(cast(DeviceStatusBarRequest, request))
+
+
+async def _app_lifecycle(application: Application, request: BaseModel) -> BaseModel:
+    return await application.app_lifecycle(cast(AppLifecycleRequest, request))
+
+
+async def _app_package(application: Application, request: BaseModel) -> BaseModel:
+    return await application.app_package(cast(AppPackageRequest, request))
+
+
+def _request_adapter(request_annotation: Any) -> TypeAdapter[Any]:
+    if isinstance(request_annotation, type) and issubclass(
+        request_annotation, BaseModel
+    ):
+        return TypeAdapter(request_annotation)
+    return TypeAdapter(request_annotation, config=ConfigDict(hide_input_in_errors=True))
+
+
 def _spec(
     mcp_name: str,
     tool_name: str,
@@ -532,7 +587,7 @@ def _spec(
         handler_symbol=handler_symbol,
         description=description,
         request_annotation=request_annotation,
-        request_adapter=TypeAdapter(request_annotation),
+        request_adapter=_request_adapter(request_annotation),
         result_model=result_model,
         annotations=annotations,
         invoke_validated=invoke_validated,
@@ -664,6 +719,76 @@ TOOL_CATALOG = ToolCatalog(
             ElementGestureResult,
             _WRITE_OPEN,
             _gesture,
+        ),
+        _spec(
+            "appium.device.key",
+            "appium_device_key",
+            "device_key",
+            "Send one press or long-press Android keycode command to the bound Device.",
+            DeviceKeyRequest,
+            DeviceKeyResult,
+            _WRITE_OPEN,
+            _device_key,
+        ),
+        _spec(
+            "appium.device.keyboard_hide",
+            "appium_device_keyboard_hide",
+            "device_keyboard_hide",
+            "Hide the keyboard for the bound Device and return the official boolean.",
+            DeviceKeyboardHideRequest,
+            DeviceKeyboardHideResult,
+            _WRITE_OPEN,
+            _device_keyboard_hide,
+        ),
+        _spec(
+            "appium.device.clipboard",
+            "appium_device_clipboard",
+            "device_clipboard",
+            "Read or replace the bound Device plaintext clipboard.",
+            DeviceClipboardRequest,
+            DeviceClipboardResult,
+            _WRITE_OPEN,
+            _device_clipboard,
+        ),
+        _spec(
+            "appium.device.alert",
+            "appium_device_alert",
+            "device_alert",
+            "Accept or dismiss one official alert on the bound Device.",
+            DeviceAlertRequest,
+            DeviceAlertResult,
+            _WRITE_OPEN,
+            _device_alert,
+        ),
+        _spec(
+            "appium.device.status_bar",
+            "appium_device_status_bar",
+            "device_status_bar",
+            "Expand or collapse one Android system panel on the bound Device.",
+            DeviceStatusBarRequest,
+            DeviceStatusBarResult,
+            _WRITE_OPEN,
+            _device_status_bar,
+        ),
+        _spec(
+            "appium.app.lifecycle",
+            "appium_app_lifecycle",
+            "app_lifecycle",
+            "Activate, terminate, or query one explicit application package.",
+            AppLifecycleRequest,
+            AppLifecycleResult,
+            _WRITE_OPEN,
+            _app_lifecycle,
+        ),
+        _spec(
+            "appium.app.package",
+            "appium_app_package",
+            "app_package",
+            "Install one local APK or remove one explicit application package.",
+            AppPackageRequest,
+            AppPackageResult,
+            _WRITE_OPEN,
+            _app_package,
         ),
     )
 )

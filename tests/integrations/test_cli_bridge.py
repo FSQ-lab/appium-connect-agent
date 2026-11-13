@@ -53,6 +53,9 @@ from appium_connect_agent.integrations._endpoint import (
     validate_socket_path,
 )
 from appium_connect_agent.integrations._models import ToolErrorData
+from tests.automation.test_device_actions import DeviceProtocolService
+
+from .conftest import McpHarness
 
 
 def _secure_directory(path: Path) -> None:
@@ -862,6 +865,104 @@ def test_subprocess_clients_share_one_daemon_and_stop_cleans_endpoint(
         assert application.close_count == 1
 
     anyio.run(scenario)
+
+
+def test_new_device_tool_calls_through_actual_cli_daemon(
+    mcp_harness: McpHarness, short_root: Path
+) -> None:
+    with DeviceProtocolService() as service:
+
+        async def scenario() -> None:
+            account = short_root / "device-account"
+            _secure_directory(account)
+            endpoint = account / "bridge.sock"
+            outcome: list[int] = []
+
+            def factory(*args: object, **kwargs: object) -> Application:
+                del args, kwargs
+                return Application(
+                    LocalSettings(server_url=service.url),
+                    mcp_harness.adb,
+                    surface="cli",
+                )
+
+            async def daemon() -> None:
+                result = await create_and_serve_daemon(
+                    LocalSettings(),
+                    mcp_harness.adb,
+                    endpoint,
+                    30.0,
+                    application_factory=factory,
+                    account_directory=account,
+                    watch_signals=False,
+                )
+                outcome.append(result.exit_code)
+
+            async with anyio.create_task_group() as group:
+                group.start_soon(daemon)
+                with anyio.fail_after(2):
+                    while not endpoint.exists():
+                        await anyio.sleep(0.01)
+
+                opened = await anyio.to_thread.run_sync(
+                    _run_cli,
+                    "call",
+                    "appium_session_open",
+                    "--json-args",
+                    '{"schema_version":1,"device_id":"cli-device-tools"}',
+                    "--socket",
+                    os.fspath(endpoint),
+                )
+                assert opened.returncode == 0
+                handle = json.loads(opened.stdout)["data"]["session_handle"]
+
+                pressed = await anyio.to_thread.run_sync(
+                    _run_cli,
+                    "call",
+                    "appium_device_key",
+                    "--json-args",
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "session_handle": handle,
+                            "kind": "press",
+                            "keycode": 4,
+                        }
+                    ),
+                    "--socket",
+                    os.fspath(endpoint),
+                )
+                assert pressed.returncode == 0
+                assert json.loads(pressed.stdout)["data"] == {
+                    "busy": False,
+                    "kind": "press",
+                    "session_state": "active",
+                }
+
+                closed = await anyio.to_thread.run_sync(
+                    _run_cli,
+                    "call",
+                    "appium_session_close",
+                    "--json-args",
+                    json.dumps({"schema_version": 1, "session_handle": handle}),
+                    "--socket",
+                    os.fspath(endpoint),
+                )
+                assert closed.returncode == 0
+                stopped = await anyio.to_thread.run_sync(
+                    _run_cli, "daemon", "stop", "--socket", os.fspath(endpoint)
+                )
+                assert stopped.returncode == 0
+
+            assert outcome == [0]
+            assert not endpoint.exists()
+
+        anyio.run(scenario)
+
+    assert service.of_kind("press_keycode")[0].body == {
+        "script": "mobile: pressKey",
+        "args": [{"keycode": 4}],
+    }
 
 
 def test_idle_timeout_closes_application_and_removes_socket(

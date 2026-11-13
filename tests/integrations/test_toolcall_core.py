@@ -62,6 +62,13 @@ _TOOL_NAMES = (
     "appium_device_back",
     "appium_element_ime_action",
     "appium_element_gesture",
+    "appium_device_key",
+    "appium_device_keyboard_hide",
+    "appium_device_clipboard",
+    "appium_device_alert",
+    "appium_device_status_bar",
+    "appium_app_lifecycle",
+    "appium_app_package",
 )
 _INPUT_SCHEMA_SHA256 = {
     "appium.capabilities.get": "f53a26611f0f62347fe10b6e09ebea6a17d1040b5d069dc0af2d2d632b7818c4",
@@ -76,6 +83,13 @@ _INPUT_SCHEMA_SHA256 = {
     "appium.device.back": "f5b1986f683b37b974a549156afb4907bc66539228fc6930e10c2cb3bea6455d",
     "appium.element.ime_action": "725369e79e3051381adabf720817b605f4ef2c82bfd1458c5e7150886e9497be",
     "appium.element.gesture": "1d56c60870092cda6912fefba06ca799f00cf7aa847629680b60693462194b34",
+    "appium.device.key": "975afe85c6e2ae1b8ec57b9b3e5a53e37349e3ead7fae9c25cf85e54748f6277",
+    "appium.device.keyboard_hide": "4204b2bcb9adc9457f999294d2a231a7102c9147ae1f6e39b66500fc19e3a6c0",
+    "appium.device.clipboard": "08c28bde9b44d4667fec26ebf6ab4489e5fa87f5642e51552013c94f011e2605",
+    "appium.device.alert": "ecf0bd44087e78bdaa63eaeca8ba8d580cabb8ea2421d51d98b14d4da607e130",
+    "appium.device.status_bar": "ec0834f42c093373f428c8bc163720862f1f455811e73c613a3a646336594e45",
+    "appium.app.lifecycle": "c360c6afe13a1e1154e4e4580d46d01aa88b252bd49d4e8ffb11e644cc6be1b8",
+    "appium.app.package": "778bf1f60b7ba92ead5e9557f2583149da76cfec339244b3ac0d834349021f34",
 }
 _OPENAI_SCHEMA_SHA256 = {
     "appium_capabilities_get": "5adb3919717cd87cc52ba5d526ac4ef34fe0980531f4b0f6e23a0fae09be46da",
@@ -90,6 +104,13 @@ _OPENAI_SCHEMA_SHA256 = {
     "appium_device_back": "ed7a312d325d4adb48c05de9a3d16fb85eb6251c097f050267d0df59f34e0557",
     "appium_element_ime_action": "fd711080afdcca3847dc3a760df94341d1c316adaf36df8c74d187e3862fd77e",
     "appium_element_gesture": "c8921fc233c267e31540bbc694b97c1088090b26b03369f2601b19979465ade2",
+    "appium_device_key": "b2493f91ca851bfa6ac36e0316942df7a951a1898f794e30c4872e631680c87a",
+    "appium_device_keyboard_hide": "517f151ac6fc4054c09b48ac705d20ea2529071c52ff79d74db80631df0cdd92",
+    "appium_device_clipboard": "c5b99023d9a2200ca4af1314a321599b074b9ebb46f9e27d554a7997e801d373",
+    "appium_device_alert": "08aedeb04edbeda19a75e9825df814f988593ddb9a1d9e1cbd906069d1601c69",
+    "appium_device_status_bar": "506c7ec54c81d51f25383b102977bc281051c7a0dc56aeca6ea90b9143ef8596",
+    "appium_app_lifecycle": "6784e6f2bd0e7a3e1e41febd11ac77c27084d069d649c3cdf9c24e63c4d54ad7",
+    "appium_app_package": "55f9baa4308b580e4a13783dbb8d5b05142040d0876c2cdac10ef6a74821ef38",
 }
 _GOOGLE_SCHEMA_SHA256 = {
     "appium_capabilities_get": "9c74a083afb10b3e5f05f989dccd9ac4097be39a3916ada18093b1ad237eba67",
@@ -104,6 +125,13 @@ _GOOGLE_SCHEMA_SHA256 = {
     "appium_device_back": "65b4a1222ea4b9c70e1ee14d045ea2a142d80f8c36ea747f9e4f5b89e7dbad7a",
     "appium_element_ime_action": "e03c3579b11aace2d9334cbd4d8acf81142ccc88553fe64f38d7ef63a6c1fdb9",
     "appium_element_gesture": "5341d64927df1c63a8ca195a432c8575bf486201ef010c3451dc10556c7313fc",
+    "appium_device_key": "48cdaaa20e68e9903a25993f6129811e01fee32957b9bd8cd42beaaf5ca823a7",
+    "appium_device_keyboard_hide": "486675a363f75e0c80464f4a32deb951f0f59b715ac93c1562812ff3968d5628",
+    "appium_device_clipboard": "48c83deda17090ed26e1e5c6c0edf91b8752d737bd857d2a77a92958f1693ae1",
+    "appium_device_alert": "2a307eae505f638ee5733bb00ab2ccf6c9a921b2576be5a80044666f37f16463",
+    "appium_device_status_bar": "6bef373e89e268af26fd44fae847be6c2cf1c71d372250ad5cd66f7da9998572",
+    "appium_app_lifecycle": "098ac6715906aa90e29ffe3496e357c2693510746dac47293645e3fa896bf70c",
+    "appium_app_package": "d9d4a2a6f2e0fe5f507d02b35cfb70622fe5b3ae4d790e3abb392b27bd6c95fd",
 }
 _OPENAI_KEYWORDS = {
     "$defs",
@@ -291,7 +319,7 @@ def _payload(value: str) -> dict[str, Any]:
 
 def test_catalog_is_fixed_and_fsq_projection_is_safe_and_fresh() -> None:
     assert TOOL_CATALOG.tool_names == _TOOL_NAMES
-    assert len(TOOL_CATALOG.mcp_names) == 12
+    assert len(TOOL_CATALOG.mcp_names) == 19
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in _TOOL_NAMES)
 
     for name in _TOOL_NAMES:
@@ -449,7 +477,7 @@ def test_tool_bindings_execute_capability_and_use_surface_truth(tmp_path: Path) 
         application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
         bindings = application.tool_bindings()
         assert tuple(binding.name for binding in bindings) == _TOOL_NAMES
-        assert len({id(binding.parameters_schema) for binding in bindings}) == 12
+        assert len({id(binding.parameters_schema) for binding in bindings}) == 19
 
         result = _payload(
             await bindings[0].invoke(
@@ -1035,10 +1063,54 @@ _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
         "wait_timeout_seconds": 15.0,
         "timeout_seconds": 90.0,
     },
+    "appium_device_key": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "kind": "press",
+        "keycode": 4,
+        "timeout_seconds": 90.0,
+    },
+    "appium_device_keyboard_hide": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "timeout_seconds": 90.0,
+    },
+    "appium_device_clipboard": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "intent": "get",
+        "timeout_seconds": 90.0,
+    },
+    "appium_device_alert": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "action": "accept",
+        "timeout_seconds": 90.0,
+    },
+    "appium_device_status_bar": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "command": "collapse",
+        "timeout_seconds": 90.0,
+    },
+    "appium_app_lifecycle": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "intent": "query_state",
+        "app_id": "com.example",
+        "timeout_seconds": 90.0,
+    },
+    "appium_app_package": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "intent": "remove",
+        "app_id": "com.example",
+        "timeout_seconds": 90.0,
+    },
 }
 
 
-def test_real_toolcall_lifecycle_runs_all_twelve_state_machines(
+def test_real_toolcall_lifecycle_runs_original_twelve_state_machines(
     mcp_harness: McpHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     state = _LowerState()

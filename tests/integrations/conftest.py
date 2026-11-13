@@ -25,6 +25,13 @@ TOOL_NAMES = (
     "appium.device.back",
     "appium.element.ime_action",
     "appium.element.gesture",
+    "appium.device.key",
+    "appium.device.keyboard_hide",
+    "appium.device.clipboard",
+    "appium.device.alert",
+    "appium.device.status_bar",
+    "appium.app.lifecycle",
+    "appium.app.package",
 )
 AUTOMATION_STATUS = {
     "feature_qualification": "aif_01_to_10_individually_done",
