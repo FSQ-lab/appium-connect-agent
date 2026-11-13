@@ -42,7 +42,7 @@ appium-connect-agent call appium_capabilities_get --json-args '{"schema_version"
 appium-connect-agent daemon stop
 ```
 
-两个长 option 都必须且只能提供一次；不支持短名、位置参数、默认路径或环境变量、PATH、TOML、SDK root 回退。`--config` 只加载一次不可变 Configuration 快照；ADB 路径由 Integrations 独立持有，每次设备列举仍由 Automation 公开入口重新校验。stdout 专用于 MCP framing，运维错误写入脱敏 stderr。
+两个必选启动长 option（`--config` 与 `--adb-executable`）都必须且只能提供一次；不支持短名、位置参数、默认路径或环境变量、PATH、TOML、SDK root 回退。`--config` 只加载一次不可变 Configuration 快照；ADB 路径由 Integrations 独立持有，每次设备列举仍由 Automation 公开入口重新校验。`appium-connect-agent-mcp` 的 stdout 专用于 MCP framing；`appium-connect-agent` CLI 的 `start/status/stop/catalog/call` stdout 输出单个规范 JSON 文档；两者运维与参数/桥接错误均只写入脱敏 stderr。
 
 当前固定注册十个 MCP tool，顺序如下：
 
