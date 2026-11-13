@@ -4,17 +4,18 @@
 
 本模块维护 MCP、CLI、SDK 等接入形式的适配边界。
 
-当前确认首个接入形式为本地stdio MCP；公共合同含INT-MCP-01 readiness/discovery、INT-MCP-02 explicit Session lifecycle与INT-MCP-03 Native read-only observation。UI动作及CLI/SDK/HTTP不因模块定位自动承诺。
+当前确认接入形式为本地stdio MCP，以及与其十项能力同源、前期只面向FSQ的进程内Python ToolCall；CLI、HTTP和其他Agent/Host不因模块定位自动承诺。
 
 ## Responsibilities
 
 - 维护后续确认的 Agent 与开发者接入适配职责。
 - 使不同接入形式复用其他模块提供的能力。
+- 以唯一ToolCatalog/Application内核向MCP与FSQ ToolCall暴露同一strict schema、参数校验、SessionRegistry、生命周期和错误语义。
 
 ## Non-Responsibilities
 
 - 不重复实现配置、运行管理、Session、设备操作或观测能力。
-- 不表示 MCP、CLI 和 SDK 已承诺同时交付。
+- 不表示CLI、HTTP、其他Agent Adapter或具体FSQ模型Host资格已承诺交付。
 
 ## Module Relationships
 
@@ -22,7 +23,7 @@
 
 ## Current Status
 
-INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04与INT-MCP-05分别由Issue #5和#11完成限定验收并进入`master`。INT-MCP-06精确合同已经确认；其授权与交付状态以Issue #2为准，SPEC本身不派生产品实现、设备操作、提交、push或发布授权。Integrations模块、Automation模块、当前平台与项目整体仍non-Done。
+INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；INT-MCP-03真实Android Native UI链已由Issue #12完成限定验收，INT-MCP-04与INT-MCP-05分别由Issue #5和#11完成限定验收并进入`master`。INT-MCP-06精确合同已经确认，其状态以Issue #2为准。INT-CORE-01同源内核与FSQ ToolCall合同已经确认，其实施、验证与审查状态以Issue #22为准。SPEC本身不派生设备、提交、push、merge或发布授权。Integrations、Automation、当前平台与项目整体仍non-Done。
 
 ## INT-MCP-01 Local Readiness
 
@@ -57,7 +58,7 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - `CapabilitiesRequest`只含required `schema_version`。`RuntimeCheckRequest`含required `schema_version`、required `mode: static|external_connection`、optional `timeout_seconds` default `10.0`且`0 < value <= 60.0`。`DeviceListRequest`含required `schema_version`、optional `timeout_seconds` default `30.0`且`0 < value <= 60.0`。
 - 每个进入handler的调用在任何下层操作前用`secrets.token_urlsafe(16)`生成一次`call_id`，wire固定24个ASCII字符、pattern `^c_[A-Za-z0-9_-]{22}$`；schema/SDK在handler前拒绝的调用没有项目call_id。共同成功字段全部required：`schema_version=1`、`call_id`、`execution=completed`、`operation_id: string(1..128)|null`、`request_state:null`、`warnings`、`automation_module_status`和tool-specific `data`。warnings是按发生顺序、无重复的0..16项stable code，每项pattern `^[a-z0-9_]{1,128}$`。
 - `automation_module_status`固定required object且四字段required：`feature_qualification=aif_01_to_10_individually_done`、`module_state=device_validation_blocked_known_clean`、`module_done=false`、`automatic_retry_authorized=false`。不得使用斜线拼值或把feature资格提升为模块Done。
-- `CapabilityResult`的共同`operation_id=null`。data固定required object：`integration_form=mcp`、`transport=stdio`、`protocol_target=2026-07-28`、`host_compatibility=unqualified`、`adb_configured=true`、required platform object `{host:macos,target:android_native,driver:uiautomator2}`、tools和limitations。tools固定有序数组`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations固定有序数组`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`；两数组不接受其他项。
+- `CapabilityResult`的共同`operation_id=null`。data固定required object：`integration_form=mcp`、`transport=stdio`、`protocol_target=2026-07-28`、`host_compatibility=unqualified`、`adb_configured=true`、required platform object `{host:macos,target:android_native,driver:uiautomator2}`、tools和limitations。tools固定有序数组`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations固定有序数组`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`；两数组不接受其他项。
 - `RuntimeCheckResult.data`固定required `mode`、`report`和`connection`。report字段全部required：`operation_id:string(1..128)`、`observed_at`（UTC aware ISO8601，固定`+00:00`）、`host=macOS`、`target=Android`、`driver=UiAutomator2`、`checks`和`observer_errors`。checks是0..32项有序对象：required `check_id`/`reason_code` pattern `^[a-z0-9_]{1,128}$`、required `status=pass|fail|unknown|not_applicable`、required evidence 0..8项（每段最多512 Unicode code points）和required nullable remediation（null或最多512 code points）。observer_errors是0..8项、每项最多512 code points。共同operation_id必须等于report.operation_id。static时connection=null；external_connection时connection为三字段required object `{ownership:external,appium_version:string(1..128)|null,compatibility:declared_compatible|unverified}`，不含server_url。
 - `DeviceListResult`共同operation_id=null。data固定required `count`和`devices`；count是0..256并等于数组长度。devices是Automation原排序的0..256项对象，三个字段均required：`id`为1..1024 code points且无空白/control，`name`为null或最多1024 code points且无control，`connection_state=connected|offline|unauthorized|unknown`。
 - 已知项目错误JSON字段全部required：`schema_version=1`、`call_id`、`code`（`^[a-z0-9_]{1,128}$`）、`operation_id:string|null`（null或`^[A-Za-z0-9_-]{1,128}$`）、`request_state=not_sent|response_received|response_unknown|null`、`completed_steps`（按下层顺序、无重复、0..32项、每项`^[a-z0-9_]{1,128}$`）、`cleanup_status=not_needed|completed|failed|unknown`、`cleanup_error_count`（integer 0..32）、`warnings`（同成功约束），以及required nullable `session_handle`与`session_state`。三项MCP-01工具的两个Session字段恒为null；INT-MCP-02与INT-MCP-03的非null资源矩阵见下文。
@@ -106,7 +107,7 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 
 ### Tool Requests, Capability Surface And Strict Input
 
-- 当前工具固定有序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations完整固定有序为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。server instructions明确readiness、显式Session lifecycle与Native只读观测，并保持no UI actions/retry/attach/recovery/HTTP。
+- 当前工具固定有序为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。limitations完整固定有序为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。server instructions明确readiness、显式Session lifecycle与Native只读观测，并保持no UI actions/retry/attach/recovery/HTTP。
 - tools/list annotation wire值固定：capabilities `(readOnly=true, destructive=false, idempotent=true, openWorld=false)`；runtime check和devices list `(true,false,true,true)`；session open `(false,false,false,true)`；session status `(true,false,true,false)`；session close `(false,true,true,true)`；ui observe `(true,false,true,true)`。annotation是Host hint而非授权；close的idempotent只陈述同handle tombstone重复调用，observe的idempotent不保证动态UI结果相同，二者均不承诺失败/unknown重试安全。
 - 所有新增request/result及嵌套对象继续strict/frozen、JSON Schema2020-12、`additionalProperties=false`、required`schema_version=1`。数值wire接受实际JSON integer或number但排除bool，进入handler前规范为有限float再校验；NaN/Inf、非法Unicode、未知字段及边界在handler前拒绝并零registry lookup/下层请求。锁定SDK的request JSON-object字符串兼容保持，`60`与`60.0`语义等价。
 - 统一`SessionHandle`为actual string、34 ASCII字符、pattern`^s_[A-Za-z0-9_-]{32}$`；request/result/error的所有非null handle均复用该类型。非法空串、33/35字符、Unicode或非法字符在handler前拒绝；只有合法但不存在/已淘汰handle进入`session_not_found/not_sent`。
@@ -163,7 +164,7 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 ### Tool Surface And Strict Request Union
 
 - 固定工具顺序clean cutover为`[appium.capabilities.get, appium.runtime.check, appium.devices.list, appium.session.open, appium.session.status, appium.session.close, appium.ui.observe]`。`appium.ui.observe` annotations固定为`readOnly=true, destructive=false, idempotent=true, openWorld=true`；idempotent只表示重复读取不增加项目动作副作用，不保证动态UI结果相同，annotation也不构成读取真实UI的授权。
-- capabilities limitations完整固定顺序clean cutover为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_sdk_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。移除`no_ui_tools`；server instructions改为readiness、显式Session生命周期和Native只读观测，仍明确no UI actions/retry/attach/recovery/HTTP。
+- capabilities limitations完整固定顺序clean cutover为`[ui_observation_only, no_node_cache, observation_document_65536_bytes, single_session_capacity, opaque_handle_process_local, no_session_attach_recovery, no_cli_product, no_http_transport, no_clear_app, automation_module_e2e_unqualified, no_specific_host_qualification]`。移除`no_ui_tools`；server instructions改为readiness、显式Session生命周期和Native只读观测，仍明确no UI actions/retry/attach/recovery/HTTP。
 - tool仍只有一个必填顶层`request`；公开input schema为按required `mode`判别的三个strict/frozen object联合，每个分支JSON Schema2020-12且`additionalProperties=false`。共同required字段为`schema_version=1`、现有`session_handle`、`mode`；optional `timeout_seconds=90.0`为actual finite number、排除bool且`0 < value <= 120.0`。锁定SDK的JSON-object字符串request兼容、并列顶层extra忽略及内部strict规则保持。
 - `mode=tree`分支只增加required nullable `locator`；显式`null`表示root，非null表示该Element范围，不接受attributes或structure_scope。`mode=attributes`分支要求non-null locator和required attributes数组；数组1..18、无重复、保留顺序，只接受`id/text/desc/type/package/enabled/focused/checkable/checked/selected/clickable/focusable/long_clickable/password/scrollable/displayed/bounds/window_id`，不接受structure_scope。`mode=structure`分支要求non-null locator和required `structure_scope=target|declared_parent`，不接受attributes；MCP不静默继承下层默认以避免无意扩大结构披露范围。
 - `LocatorV1`为递归strict object：required `by=id|accessibility_id|xpath`、required strict UTF-8 `value`（1..4096 code points、禁NUL）、optional nullable `package=null`（strict UTF-8、最多255 code points）、optional actual-bool `raw_id=false`、optional nullable `parent=null`；整链最多16层，17层在handler前拒绝。Adapter只把`accessibility_id`映射为Automation公开拼写`accessibility id`，从最老parent到leaf调用公开`Session.element`；不trim/normalize/补package/解析ID/换strategy/选择首个匹配。package/raw ID/parent+XPath/unresolved ID的语义校验仍由Automation工厂权威执行。
@@ -296,3 +297,46 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - 使用锁定真实Appium/Selenium client到受控HTTP服务覆盖一次公开`Device.back`调用、精确单次`POST /session/{sid}/back`与空body、合法None、有效错误/response_unknown、总预算与cancel/late、同Session并发竞态、active/uncertain shutdown、no-replay及隐私canary。安装wheel官方MCP2.3.0 Client consumer覆盖正式stdio schema/双通道/错误、active clean shutdown与uncertain degraded；只能称controlled-protocol。
 - Feature Done另需用户单独授权固定真实组合、明确无敏感安全页面、back前后允许观测的范围、预期导航和恢复方式。正式安装wheel＋官方Client须完成`open→status active→显式observe baseline→back一次→显式observe after→status active→close→status closed→Runtime释放→stdio自然exit0`；两次observe均为客户端独立调用，back工具不自动观测。back调用一次、retry/replay/fallback为0且无unknown、uncertain、non-closed entry或敏感证据复制；观察结果不作为back工具成功条件。页面、安全性、恢复方式或权限不成立即`device-validation-blocked`，不得换页面拼接通过。
 - 产品代码接近或超过约1200行churn时必须复查是否混入多个可独立验收行为；不得按模型、Adapter、测试或文档等技术层拆开同一back纵向行为。完整质量/发行/consumer、获准真实链及全新独立full实现审查通过后才可判INT-MCP-06限定Done；Integrations、Automation、平台与项目整体仍non-Done，不自动推进gesture、整体链或具体Host兼容。
+
+## INT-CORE-01 Shared ToolCatalog And FSQ ToolCall
+
+本节是Issue #22已确认的clean-cutover合同。历史INT-MCP章节中“无CLI/SDK”或`no_cli_sdk_product`只描述当时feature边界；本节对当前进程内ToolCall产品事实和capabilities限制具有后续优先级，但不改写其设备验收历史。
+
+### Scope, dependency and architecture
+
+- 当前组合保持macOS/Android Native/Appium3.7.0/UiAutomator2 8.7.0/CPython3.11。本feature提炼十项现有能力的协议无关`ToolCatalog`与`Application`，新增前期只面向FSQ的进程内Python ToolCall，并把MCP注册迁移为catalog生成；不新增设备行为、CLI、HTTP、远程transport、其他Agent Adapter或Host兼容声明。
+- 精确依赖为现有十项Integrations工具、公开Runtime/Automation Interface及其限定验收。Automation继续`device_validation_blocked_known_clean`、module non-Done、无自动重试；ToolCall不得提升其状态。
+- 无新增、替换或升级依赖。继续复用已批准`mcp==2.3.0`、`pydantic==2.14.1`、`anyio==4.15.1`和Python3.11标准库。项目包不得import `fsq_agent`；FSQ仅作为只读合同依据和下游wiring owner。Configuration、Runtime、Automation、Contracts no-delta。
+- `ToolCatalog`固定恰好十项immutable `ToolSpec`，唯一声明MCP点号名、ToolCall无点号名、handler symbol、description、request annotation/TypeAdapter、MCP result model、annotation与validated invocation。禁止动态插件、第二份tool表、第二Registry、第二错误映射、Automation私有入口、raw协议、fallback、retry或replay。
+- `Application(settings, adb_executable, surface="mcp"|"toolcall")`唯一持有WorkerRegistry、Runtime owner、Session entry/tombstone、预算和错误映射；单实例不得混合两表面。支持async context manager与幂等shielded`aclose()`。`SyncApplication`独占一个AnyIO blocking portal和一个ToolCall Application；context退出必须关闭Application后关闭portal。
+
+### Fixed ToolCall interface and FSQ wiring
+
+- ToolCall名称固定有序为`[appium_capabilities_get, appium_runtime_check, appium_devices_list, appium_session_open, appium_session_status, appium_session_close, appium_ui_observe, appium_element_click, appium_element_text, appium_device_back]`，每项匹配`^[a-z0-9_]{1,32}$`。点号MCP名称、顺序和description保持既有合同。
+- `Application.dispatch(tool_name, arguments)`只接受精确ToolCall名和JSON mapping；通过catalog中同一个strict/frozen Pydantic request adapter验证后调用同一Application method。未知名、extra、错误类型、bool-as-number、NaN/Inf、非法Unicode、union冲突和边界错误必须在Registry/Runtime/Automation前返回`invalid_argument`。
+- `Application.tool_bindings()`返回fresh immutable tuple；每项仅含`name`、`description`、deep-copy `parameters_schema`、async `invoke`和async `on_invalid_input`，结构精确可手工构造FSQ `ToolBinding(strict=True)`。不提供自动monkey patch、框架注册、副作用导入或`fsq_agent`类型依赖。
+- FSQ callback只返回canonical JSON string。成功沿现有typed result DTO；provider validation failure、name mismatch或Application strict failure返回新项目call ID的`invalid_argument/not_sent/not_needed`；关闭后为`application_closed`；已知Application/lower failure保留现有code/resource matrix；未知`Exception`脱敏为`internal_error`。provider call ID/message、异常文本、path、serial、handle、UI不得复制。
+- `asyncio.CancelledError`、`KeyboardInterrupt`、`SystemExit`及其他`BaseException`中断必须传播，不得转换为JSON、成功或普通internal error。callback不得自动重试、重放、status探活、quit、observe或恢复。
+
+### FSQ schema projection
+
+- canonical request model和MCP schema来源保持Pydantic JSON Schema2020-12；FSQ参数schema直接展开request model，不含MCP顶层`request`包装。每次导出deep copy，调用方mutation不得污染catalog或其他binding。
+- 允许关键字严格固定为FSQ OpenAI Responses `ensure_strict_json_schema`与Google Gemini Interactions `google_schema`实际交集；未列入交集的关键字或非法shape必须`SchemaProjectionError` fail closed。不得静默删除任意约束、替换为任意dict、建立provider专用request model或把失败延迟到模型调用。
+- `oneOf`只在同节点存在有效discriminator、每一branch可解析且discriminator property具有互异`const`时转换为`anyOf`并移除discriminator metadata；branch overlap、坏ref、缺const或同时含anyOf必须拒绝。
+- `uniqueItems:true`只允许在`$defs.AttributesObserveRequest.properties.attributes`删除，且每次投射先实际构造重复attributes输入证明Pydantic validator仍拒绝。其他路径/value必须拒绝。
+- 十项投射必须用FSQ真实源码函数双后端执行通过。MCP十项pre-cutover `inputSchema` canonical SHA-256逐项固定且零漂移；MCP继续唯一顶层required`request`包装。
+
+### Surface truth, result and MCP boundary
+
+- capabilities按surface返回typed data。MCP固定`integration_form=mcp/transport=stdio/protocol_target=2026-07-28`及点号工具名；ToolCall固定`integration_form=toolcall/transport=in_process/protocol_target=null`及无点号名。两者`host_compatibility=unqualified`且limitations将`no_cli_sdk_product` clean-cutover为`no_cli_product`，不宣称FSQ资格。
+- Session data ownership扩为`mcp|toolcall`并始终等于Application surface；opaque handle仍process-local，不得跨Application/表面attach、恢复、持久化或共享。
+- protocol-neutral Application只抛含`ToolErrorData`的`ApplicationError`，不得import MCP。MCP生成handler在唯一边界转为既有`ToolError("ACA_ERROR ...")`；ToolCall callback转为canonical JSON string。成功、资源状态、cleanup、uncertain quarantine、预算和隐私语义保持同源。
+- MCP `create_server`按catalog顺序生成十个stable handler，并在注册前恢复精确request annotation、MCP result model、symbol、description和annotations。MCP input schema bytes、工具wire、structured/text双通道、stdio bootstrap、cancel/no-abandon、shutdown和日志过滤保持；capability output仅按本节真实表面delta更新。
+
+### Verification and limits
+
+- 永久测试覆盖catalog唯一性/固定顺序/命名、fresh schema、union与unique转换、十项MCP input hash、ToolCall成功/strict invalid/provider invalid/name mismatch/closed/internal/cancel、async/sync幂等关闭及MCP capability/output delta。
+- 聚焦验证必须执行FSQ双后端真实schema函数、既有MCP schema/canonical-size/error/cancel/shutdown及十项受控协议回归、Ruff、strict mypy、import-linter和diff check。公共Interface与生命周期变更须独立full审查。
+- 本feature不授权真实设备、Appium服务、安装、敏感数据保留、commit、push、merge或release。无FSQ真实模型调用时只能声明schema/callback合同通过，不声明具体FSQ模型Host资格；Integrations、Automation、平台与项目仍non-Done。
+
+详细设计与FSQ手工wiring见[确认文档](../../docs/superpowers/specs/2026-11-13-integrations-fsq-toolcall-core-design.md)。

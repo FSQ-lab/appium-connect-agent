@@ -12,11 +12,10 @@ from typing import Any, cast
 import anyio
 import pytest
 from mcp import Client
-from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, Tool
 
 from appium_connect_agent.contracts import LocalSettings
-from appium_connect_agent.integrations._application import McpApplication
+from appium_connect_agent.integrations._application import Application, ApplicationError
 from appium_connect_agent.integrations._models import DeviceBackRequest
 from tests.automation._action_protocol import ResponsePlan, w3c_error
 from tests.automation.test_device_actions import DeviceProtocolService
@@ -517,7 +516,7 @@ def test_back_timeout_budget_starts_before_registry_admission(
     mcp_harness: McpHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    application = McpApplication(LocalSettings(), mcp_harness.adb)
+    application = Application(LocalSettings(), mcp_harness.adb, surface="mcp")
     lower_calls: list[object] = []
     entry = SimpleNamespace(
         handle="s_" + ("a" * 32),
@@ -540,13 +539,10 @@ def test_back_timeout_budget_starts_before_registry_admission(
     )
 
     async def scenario() -> dict[str, Any]:
-        with pytest.raises(ToolError) as caught:
+        with pytest.raises(ApplicationError) as caught:
             await application.back(request)
-        await application.shutdown()
-        return cast(
-            dict[str, Any],
-            json.loads(str(caught.value).split("ACA_ERROR ", 1)[1]),
-        )
+        await application.aclose()
+        return caught.value.data.model_dump(mode="json")
 
     error = anyio.run(scenario)
     assert error["code"] == "operation_timeout"
@@ -561,7 +557,7 @@ def test_back_pre_start_cancel_does_zero_lower_calls(
     mcp_harness: McpHarness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    application = McpApplication(LocalSettings(), mcp_harness.adb)
+    application = Application(LocalSettings(), mcp_harness.adb, surface="mcp")
     lower_calls: list[object] = []
     entry = SimpleNamespace(
         handle="s_" + ("a" * 32),
@@ -594,13 +590,10 @@ def test_back_pre_start_cancel_does_zero_lower_calls(
     )
 
     async def scenario() -> dict[str, Any]:
-        with pytest.raises(ToolError) as caught:
+        with pytest.raises(ApplicationError) as caught:
             await application.back(request)
-        await application.shutdown()
-        return cast(
-            dict[str, Any],
-            json.loads(str(caught.value).split("ACA_ERROR ", 1)[1]),
-        )
+        await application.aclose()
+        return caught.value.data.model_dump(mode="json")
 
     error = anyio.run(scenario)
     assert error["code"] == "operation_cancelled"

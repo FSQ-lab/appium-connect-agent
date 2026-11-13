@@ -106,10 +106,8 @@ class RuntimeCheckRequest(_StrictModel):
 
     @field_validator("timeout_seconds", mode="before")
     @classmethod
-    def _actual_float(cls, value: object) -> object:
-        if type(value) is not float:
-            raise ValueError("timeout_seconds must be a float")
-        return value
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
 
 
 class DeviceListRequest(_StrictModel):
@@ -118,10 +116,8 @@ class DeviceListRequest(_StrictModel):
 
     @field_validator("timeout_seconds", mode="before")
     @classmethod
-    def _actual_float(cls, value: object) -> object:
-        if type(value) is not float:
-            raise ValueError("timeout_seconds must be a float")
-        return value
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
 
 
 class AutomationModuleStatus(_StrictModel):
@@ -145,41 +141,74 @@ class PlatformData(_StrictModel):
     driver: Literal["uiautomator2"]
 
 
-class CapabilityData(_StrictModel):
+McpToolNames: TypeAlias = tuple[
+    Literal["appium.capabilities.get"],
+    Literal["appium.runtime.check"],
+    Literal["appium.devices.list"],
+    Literal["appium.session.open"],
+    Literal["appium.session.status"],
+    Literal["appium.session.close"],
+    Literal["appium.ui.observe"],
+    Literal["appium.element.click"],
+    Literal["appium.element.text"],
+    Literal["appium.device.back"],
+]
+ToolCallToolNames: TypeAlias = tuple[
+    Literal["appium_capabilities_get"],
+    Literal["appium_runtime_check"],
+    Literal["appium_devices_list"],
+    Literal["appium_session_open"],
+    Literal["appium_session_status"],
+    Literal["appium_session_close"],
+    Literal["appium_ui_observe"],
+    Literal["appium_element_click"],
+    Literal["appium_element_text"],
+    Literal["appium_device_back"],
+]
+CapabilityLimitations: TypeAlias = tuple[
+    Literal["native_observation_single_click_element_text_and_device_back"],
+    Literal["no_automatic_post_action_observation"],
+    Literal["no_automatic_focus_submit_or_verify"],
+    Literal["no_automatic_navigation"],
+    Literal["no_node_cache"],
+    Literal["observation_document_65536_bytes"],
+    Literal["single_session_capacity"],
+    Literal["opaque_handle_process_local"],
+    Literal["no_session_attach_recovery"],
+    Literal["no_cli_product"],
+    Literal["no_http_transport"],
+    Literal["no_clear_app"],
+    Literal["automation_module_e2e_unqualified"],
+    Literal["no_specific_host_qualification"],
+]
+
+
+class McpCapabilityData(_StrictModel):
     integration_form: Literal["mcp"]
     transport: Literal["stdio"]
     protocol_target: Literal["2026-07-28"]
     host_compatibility: Literal["unqualified"]
     adb_configured: Literal[True]
     platform: PlatformData
-    tools: tuple[
-        Literal["appium.capabilities.get"],
-        Literal["appium.runtime.check"],
-        Literal["appium.devices.list"],
-        Literal["appium.session.open"],
-        Literal["appium.session.status"],
-        Literal["appium.session.close"],
-        Literal["appium.ui.observe"],
-        Literal["appium.element.click"],
-        Literal["appium.element.text"],
-        Literal["appium.device.back"],
-    ]
-    limitations: tuple[
-        Literal["native_observation_single_click_element_text_and_device_back"],
-        Literal["no_automatic_post_action_observation"],
-        Literal["no_automatic_focus_submit_or_verify"],
-        Literal["no_automatic_navigation"],
-        Literal["no_node_cache"],
-        Literal["observation_document_65536_bytes"],
-        Literal["single_session_capacity"],
-        Literal["opaque_handle_process_local"],
-        Literal["no_session_attach_recovery"],
-        Literal["no_cli_sdk_product"],
-        Literal["no_http_transport"],
-        Literal["no_clear_app"],
-        Literal["automation_module_e2e_unqualified"],
-        Literal["no_specific_host_qualification"],
-    ]
+    tools: McpToolNames
+    limitations: CapabilityLimitations
+
+
+class ToolCallCapabilityData(_StrictModel):
+    integration_form: Literal["toolcall"]
+    transport: Literal["in_process"]
+    protocol_target: None
+    host_compatibility: Literal["unqualified"]
+    adb_configured: Literal[True]
+    platform: PlatformData
+    tools: ToolCallToolNames
+    limitations: CapabilityLimitations
+
+
+CapabilityData: TypeAlias = Annotated[
+    McpCapabilityData | ToolCallCapabilityData,
+    Field(discriminator="integration_form"),
+]
 
 
 class CapabilityResult(_StrictModel):
@@ -200,6 +229,14 @@ class CapabilityResult(_StrictModel):
         if len(value) != len(set(value)):
             raise ValueError("warnings must be unique")
         return value
+
+
+class McpCapabilityResult(CapabilityResult):
+    data: McpCapabilityData
+
+
+class ToolCallCapabilityResult(CapabilityResult):
+    data: ToolCallCapabilityData
 
 
 class RuntimeCheck(_StrictModel):
@@ -1074,7 +1111,7 @@ class SessionCloseRequest(_StrictModel):
 
 
 class SessionData(_StrictModel):
-    ownership: Literal["mcp"]
+    ownership: Literal["mcp", "toolcall"]
     session_handle: SessionHandle
     session_state: Literal["active", "uncertain", "closing", "closed"]
     device_id: Annotated[

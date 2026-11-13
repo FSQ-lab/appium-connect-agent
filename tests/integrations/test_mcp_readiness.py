@@ -19,7 +19,7 @@ from pydantic import BaseModel, ValidationError
 from appium_connect_agent.automation import CommandError, DeviceInfo
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.integrations import _application
-from appium_connect_agent.integrations._application import McpApplication
+from appium_connect_agent.integrations._application import Application, ApplicationError
 from appium_connect_agent.integrations._models import (
     CapabilityResult,
     DeviceBackResult,
@@ -46,9 +46,9 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "1bc5434767493afcb365126dd0824adde33c2af1e828dec9d6e826181cc48864"
+    "3fa4e9798ab47ac448670aaca41a6f63976da7feb514cb9a0855db814c106f3c"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3326
+CAPABILITY_MAX_CANONICAL_BYTES = 3322
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
@@ -438,7 +438,7 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                     "single_session_capacity",
                     "opaque_handle_process_local",
                     "no_session_attach_recovery",
-                    "no_cli_sdk_product",
+                    "no_cli_product",
                     "no_http_transport",
                     "no_clear_app",
                     "automation_module_e2e_unqualified",
@@ -514,7 +514,7 @@ def test_runtime_and_devices_delegate_once_with_one_finite_control(
                     "request": {
                         "schema_version": 1,
                         "mode": "static",
-                        "timeout_seconds": 4.5,
+                        "timeout_seconds": 4.0,
                     }
                 },
             )
@@ -530,7 +530,7 @@ def test_runtime_and_devices_delegate_once_with_one_finite_control(
             )
             device_result = await client.call_tool(
                 TOOL_NAMES[2],
-                {"request": {"schema_version": 1, "timeout_seconds": 6.5}},
+                {"request": {"schema_version": 1, "timeout_seconds": 6.0}},
             )
 
         static = structured(static_result)
@@ -567,11 +567,11 @@ def test_runtime_and_devices_delegate_once_with_one_finite_control(
         "runtime_connect_exit",
         "list_devices",
     ]
-    assert_remaining_budget(events[0]["timeout"], 4.5)
+    assert_remaining_budget(events[0]["timeout"], 4.0)
     assert_remaining_budget(events[1]["timeout"], 5.5)
     assert events[2]["timeout"] == events[1]["timeout"]
     assert "timeout" not in events[3]
-    assert_remaining_budget(events[4]["timeout"], 6.5)
+    assert_remaining_budget(events[4]["timeout"], 6.0)
     assert all(
         event["has_cancellation"] is True
         for event in events
@@ -598,10 +598,6 @@ def test_inner_strict_validation_rejects_before_every_lower_call(
         (
             TOOL_NAMES[1],
             {"schema_version": 1, "mode": "static", "timeout_seconds": True},
-        ),
-        (
-            TOOL_NAMES[1],
-            {"schema_version": 1, "mode": "static", "timeout_seconds": 10},
         ),
         (
             TOOL_NAMES[1],
@@ -988,7 +984,7 @@ def test_cancel_wait_preserves_late_success_and_one_lower_call(
     monkeypatch.setattr(_application, "list_devices", late_success)
 
     async def scenario() -> Any:
-        application = McpApplication(LocalSettings(), mcp_harness.adb)
+        application = Application(LocalSettings(), mcp_harness.adb, surface="mcp")
         results: list[Any] = []
 
         async def invoke() -> None:
@@ -999,7 +995,7 @@ def test_cancel_wait_preserves_late_success_and_one_lower_call(
             while not calls:
                 await anyio.sleep(0.001)
             group.cancel_scope.cancel()
-        await application.shutdown()
+        await application.aclose()
         assert len(results) == 1
         return results[0]
 
@@ -1040,14 +1036,14 @@ def test_cancel_wait_preserves_known_lower_error_and_cleanup(
 
     monkeypatch.setattr(_application, "list_devices", known_error)
 
-    async def scenario() -> str:
-        application = McpApplication(LocalSettings(), mcp_harness.adb)
-        errors: list[ToolError] = []
+    async def scenario() -> tuple[dict[str, Any], str]:
+        application = Application(LocalSettings(), mcp_harness.adb, surface="mcp")
+        errors: list[ApplicationError] = []
 
         async def invoke() -> None:
             try:
                 await application.devices_list(10.0)
-            except ToolError as error:
+            except ApplicationError as error:
                 errors.append(error)
 
         async with anyio.create_task_group() as group:
@@ -1055,14 +1051,13 @@ def test_cancel_wait_preserves_known_lower_error_and_cleanup(
             while not calls:
                 await anyio.sleep(0.001)
             group.cancel_scope.cancel()
-        await application.shutdown()
+        await application.aclose()
         assert len(errors) == 1
-        return str(errors[0])
+        return errors[0].data.model_dump(mode="json"), str(errors[0])
 
-    message = anyio.run(scenario)
+    payload, message = anyio.run(scenario)
     assert len(calls) == 1
     assert calls[0].is_set()
-    payload = json.loads(message.split("ACA_ERROR ", 1)[1])
     assert payload["code"] == "adb_command_failed"
     assert payload["operation_id"] == "op_known_after_cancel"
     assert payload["request_state"] == "response_received"
@@ -1070,6 +1065,7 @@ def test_cancel_wait_preserves_known_lower_error_and_cleanup(
     assert payload["cleanup_status"] == "failed"
     assert payload["cleanup_error_count"] == 1
     assert "private cleanup" not in message
+    assert "private cleanup" not in canonical(payload)
     assert "cancelled_worker_stalled" not in caplog.text
 
 

@@ -1,1 +1,32 @@
-"""Local stdio MCP integration package; the console script is the product surface."""
+"""MCP and in-process ToolCall surfaces over one Integrations application."""
+
+from ._application import Application, ApplicationError
+from ._catalog import (
+    TOOL_CATALOG,
+    JsonValue,
+    SchemaProjectionError,
+    ToolAnnotations,
+    ToolCatalog,
+    ToolSpec,
+)
+from ._toolcall import (
+    SyncApplication,
+    ToolBindingExport,
+    ToolCallLike,
+    ToolInputFailureLike,
+)
+
+__all__ = [
+    "TOOL_CATALOG",
+    "Application",
+    "ApplicationError",
+    "JsonValue",
+    "SchemaProjectionError",
+    "SyncApplication",
+    "ToolAnnotations",
+    "ToolBindingExport",
+    "ToolCallLike",
+    "ToolCatalog",
+    "ToolInputFailureLike",
+    "ToolSpec",
+]
