@@ -4,10 +4,10 @@
 
 ## 当前任务与定位
 
-- 更新日期：2026-10-22；TaskID `CFG-DESIGN-01`；主会话 `/root` 承担 Tech Lead，工具为 Codex，本机 worktree `/Users/qunmi/Documents/FSQ_LAB/Appium_connect_agent`，分支 `master`。
-- 初始设计授权：`$requirements-to-design 按本次访谈已确认范围，整理 Configuration 整体设计、CFG-01/CFG-02 拆分及台账计划，不扩展范围`。后续显式 spec-driven 的产品实施授权与 SPEC 确认见下方记录。
+- 更新日期：2026-11-13；主会话承担 Tech Lead，本机 worktree `/Users/qunmi/Documents/FSQ_LAB/Appium_connect_agent`，分支 `master`。
+- 初始设计授权：`$requirements-to-design 按本次访谈已确认范围，整理 Configuration 整体设计、CFG-01/CFG-02 拆分及台账计划，不扩展范围`。后续显式 spec-driven 的产品实施授权与 SPEC 确认见下方记录；2026-11-13 另经 Issue #24（`INT-CORE-02`）SPEC gate 确认扩展 `[runtime]` 表与 `load_configuration` 覆盖参数的受管服务四字段（`server_mode`、`managed_host`、`managed_port`、`managed_base_path`，共 11 项有序 `sources`，默认 `server_mode="external"` 零破坏兼容）。
 - 文档基线：`75c1737d95cacad2a8a104337fa988bed48aeb17`；已跟踪内容干净，已有未跟踪 Runtime 库迁移设计属于其他任务，保留且不混入交付。
-- 当前状态：**F01/F02及CFG-01包身份阻塞已关闭，Configuration/CFG-M01验收恢复**。修复交付身份为包含下方“修复提交交接”记录的提交，可用 `git log -1 --format=%H -- tests/configuration/test_parser_limits.py` 定位；其父基线为 `c97600bcaf778a343f8793faa5d2da43c10dd6f3`（CFG-02），再前为 `9b49d0a58f851d30d47345a2a8f913e2f4ff64c5`（CFG-01）。本轮修复经240配置/637全回归、包验证及独立repair-only/pass，用户已明确要求提交；不推送，不把基线旧缺陷描述成已修复。
+- 当前状态：**CFG-01、CFG-02、CFG-M01 及 Issue #24 十一字段受管配置增量均已通过契约回归与独立审查**。历史七字段交付身份见下方记录，十一字段增量见 [受管运行时接入设计](../superpowers/specs/2026-11-13-integrations-managed-runtime-design.md) 与 [Configuration SPEC](../../modules/configuration/SPEC.md)。
 - 文件负责人：工程师仅修复Configuration解析适配与回归测试，Tech Lead拥有台账/设计记录与包证据恢复；Runtime任务外内容保持不变。用户此前分别要求提交CFG-01和CFG-02，已照办；本次修复不自动提交/推送。独审新上下文只读。
 
 ## 平台、范围与顺序
