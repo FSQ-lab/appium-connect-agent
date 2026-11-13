@@ -73,7 +73,7 @@ appium-connect-agent daemon stop
 
 协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click、INT-MCP-05 Element text与INT-MCP-06 Device back均已在固定Android Native组合完成各自限定真实链验收；Issue #8也已通过正式wheel、官方MCP Client与固定Calculator安全链完成`observe → click → observe → replace → observe → back`限定验收。Host 资格方面，Codex CLI `0.167.2` 已在记录的精确固定组合内限定 qualified（Issue #19），OMP `18.18.3` 因不公开原始 `structuredContent` 为 not-qualified（Issue #18），Copilot CLI 与其他具体 Host 尚未资格化。进程内 Python ToolCall 表面提供 `Application(settings, adb_executable, surface="toolcall").tool_bindings()` 与 `SyncApplication`（详见 [Integrations SPEC](modules/integrations/SPEC.md)）。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，Integrations 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准调用方，不写入默认日志或证据。
 
-INT-TOOLS-01 的原12工具 schema 与 INT-TOOLS-02 的19工具 clean cutover、FSQ 双转换器及受控协议链属于当前实现证据；本次未获授权运行真实设备或服务命令，新增 Device/App 工具不据此取得代表性真机验收，也不提升 Integrations、Automation 或平台 Done，不关闭 AIF-06 既有真机 drag-and-drop 验证缺口。
+INT-TOOLS-01（#25）与 INT-TOOLS-02（#26）已完成 19 工具同源 clean cutover、FSQ 双转换器 19+19 SHA-256 实测、受控 HTTP 协议全矩阵及正式 wheel 三壳代表性安全真机验收（覆盖 Calculator 上的 `double`/`long` click、`ime_action("done")`、`swipe` 手势并恢复空基线，以及 `app.lifecycle` `1→4→3→1` 状态闭环、`device.key` Home、`keyboard_hide`、`status_bar` `expandSettings`/`collapse` 与不存在包的无副作用 `app.package(remove) -> false`）；其余高副作用分支（剪贴板读写、真实弹窗点击、真实 APK 安装与已安装包卸载、`scroll`/`scroll_to`/`drag_and_drop`）由受控协议测试与下层既有 AIF feature 限定证据守护，不在本次代表性 smoke 重复执行，且不提升 Integrations、Automation 或平台整体 Done，亦不关闭 AIF-06 既有真机 drag-and-drop 验证缺口。
 
 ## Automation Element 接口
 
