@@ -56,11 +56,21 @@ scripts = [
 assert len(scripts) == 1
 assert scripts[0].value == 'appium_connect_agent.integrations._server:main'
 if sys.platform == 'darwin':
-    from appium_connect_agent.runtime import InstallRequest, LocalSettings as RuntimeSettings
-    from appium_connect_agent.runtime import Runtime, supported_combinations
+    from appium_connect_agent.integrations import Application, SyncApplication, TOOL_CATALOG
+    from appium_connect_agent.runtime import (
+        InstallRequest,
+        LocalSettings as RuntimeSettings,
+        Runtime,
+        RuntimeUsage,
+        ServiceLifecycleError,
+        supported_combinations,
+    )
     from appium_connect_agent.automation import Device, Element, Session
     assert RuntimeSettings is LocalSettings
-    assert callable(Runtime)
+    assert callable(Runtime) and hasattr(Runtime, 'start_managed') and hasattr(Runtime, 'cleanup_managed')
+    assert RuntimeUsage is not None and issubclass(ServiceLifecycleError, Exception)
+    assert len(TOOL_CATALOG.specs) == 10
+    assert callable(Application) and callable(SyncApplication)
     assert InstallRequest().combination_id is None
     combinations = supported_combinations()
     assert len(combinations) == 1

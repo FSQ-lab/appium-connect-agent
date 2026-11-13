@@ -13,8 +13,11 @@ import pytest
 from mcp import Client
 from mcp.types import CallToolResult, Tool
 
+from appium_connect_agent.contracts import LocalSettings
+from appium_connect_agent.integrations import Application
 from appium_connect_agent.integrations._models import (
     ObservationResult,
+    ObserveRequest,
     canonical_json,
 )
 from appium_connect_agent.integrations._server import create_server
@@ -714,19 +717,17 @@ def test_document_size_lower_failure_no_cache_and_outer_defensive_limit(
 
     assert len(service.of_kind("source")) == 8
 
-    class MaximumApplication:
+    class MaximumApplication(Application):
         def __init__(self, models: list[ObservationResult]) -> None:
+            super().__init__(LocalSettings(), mcp_harness.adb, surface="mcp")
             self.models = iter(models)
 
-        async def observe(self, request: object) -> ObservationResult:
+        async def observe(self, request: ObserveRequest) -> ObservationResult:
             del request
             return next(self.models)
 
-        async def shutdown(self) -> None:
-            return None
-
     async def send_maximum_models() -> None:
-        server = create_server(cast(Any, MaximumApplication(maximum_models)))
+        server = create_server(MaximumApplication(maximum_models))
         async with Client(server) as client:
             for mode, model in zip(
                 ("tree", "attributes", "structure"), maximum_models, strict=True

@@ -4,7 +4,7 @@
 
 本文件记录项目级已确认事实及模块索引，模块细节由对应模块 SPEC 维护。开发流程由 [AGENTS.md](AGENTS.md) 和相关技能定义，不在此重复。
 
-本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断、已有本地 Appium 连接和受管 Appium 启动/usage/自然清理契约；实现与兼容性以实际验收证据为准。项目目标是让 Appium 以更方便、友好的形式接入主流 AI Agent；这不表示已经支持任何具体接入方式或设备平台。
+本项目已确认 Python 工程基线，以及 Runtime 本地静态诊断、已有本地 Appium 连接和受管 Appium 启动/usage/自然清理契约；实现与兼容性以实际验收证据为准。当前 Integrations 产品接入包含本地 stdio MCP 与面向 FSQ 的进程内 Python ToolCall 表面；这不自动承诺其他 Agent、CLI、HTTP、设备平台或具体 Host 兼容。
 
 ## Module Table
 
@@ -26,9 +26,9 @@
 
 ## Development Rules
 
-- Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。目标 Agent 和其他产品接入形式尚未确定。
+- Python 工程基线已确认；Runtime 首批为 macOS/Android/UiAutomator2，同步 Python 调用。当前首要目标 Agent 为 FSQ，接入形式为既有本地 stdio MCP 与进程内 Python ToolCall；其他 Agent 和产品接入形式尚未确定。
 - 产品直接运行依赖为无 extras 的 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1、Appium-Python-Client==6.0.8、selenium==4.51.0 与 defusedxml==0.7.1。HTTPX/AnyIO/HTTPcore 保持已有 Runtime 用途，node-semver 保持已有版本识别用途；Appium Python Client 与 Selenium 仅供 Automation Session/WebDriver/Appium 命令及其传输使用，不启用 AppiumService、浏览器、Selenium Manager 或 BiDi；defusedxml 仅用于 Automation AIF-03 page-source XML 安全解析。其余传递依赖由 uv.lock 固定；发行元数据固定上述直接版本，不以本地 lock 代替消费者版本约束。兼容性只按实际验证证据声明。
-- Runtime、Contracts、Configuration及Automation的当前公开契约由对应模块SPEC维护；Integrations当前公开契约已包含Host中立的本地stdio MCP readiness/discovery、显式Session lifecycle与下述Native observation合同。契约确认或feature限定Done均不等于模块、平台或设备链路已验收。
+- Runtime、Contracts、Configuration及Automation的当前公开契约由对应模块SPEC维护；Integrations当前公开契约包含Host中立的本地stdio MCP，以及与其同源、前期只面向FSQ的进程内Python ToolCall表面。契约确认或feature限定Done均不等于模块、平台、FSQ Host资格或设备链路已验收。
 - 新的架构、公共接口或兼容性承诺须经用户确认后纳入相应 SPEC。
 
 ## Python Architecture
@@ -288,3 +288,20 @@
 - 观测错误保留下层code/request_state/completed_steps/cleanup及匹配handle最终state。response unknown或Settings恢复不明导致Session uncertain时，沿既有quarantine只允许status，不补发、探活、恢复、quit或重建；同Session重叠由Automation非阻塞gate立即busy。UI、locator、handle、设备/应用标识和异常原文不得进入stderr、telemetry、Registry或默认证据。
 - 无新增、替换或升级依赖。继续复用已批准`mcp==2.3.0`、`pydantic==2.14.1`、Python3.11标准库JSON及Automation公开结果；Configuration、Runtime、Contracts、Automation no-delta。MCP-03不交付任何UI/App动作、HTTP、CLI/SDK产品或具体Host兼容。
 - Feature Done需要永久合同、完整质量/发行、安装wheel官方MCP Client受控stdio链、全新独立full差异审查，以及用户另行授权的明确设备/无敏感页面真实观测链全部通过。当前`/spec-driven`不授权真实UI读取；缺少授权或固定页面/Locator不成立时只能`device-validation-blocked`/non-Done，不换场景拼接通过。即使feature通过，Integrations、Automation、当前平台与项目整体仍non-Done，且不自动推进MCP-04。
+
+## INT-CORE-01 Shared ToolCatalog And FSQ ToolCall Delta
+
+本节为 Issue #22 已确认合同；只授权同源内核、进程内 ToolCall、MCP clean cutover、非设备验证与直接文档，不授权真实设备/Appium操作、依赖变化、提交、push、merge或发布。
+
+- Integrations 十项能力固定由唯一 `ToolCatalog`/`Application` 内核声明和执行。MCP、ToolCall及后续另行确认的CLI只能消费同一 request model、strict Pydantic校验、SessionRegistry、Runtime owner、预算、错误映射和canonical JSON；不得复制工具表、第二Registry、第二错误状态机或Automation私有入口。
+- 当前Python ToolCall只精准服务 `FSQ/fsq_agent.agent_engine.ToolBinding`，项目包零`fsq_agent`反向依赖。公开无点号名称固定为`appium_capabilities_get`、`appium_runtime_check`、`appium_devices_list`、`appium_session_open`、`appium_session_status`、`appium_session_close`、`appium_ui_observe`、`appium_element_click`、`appium_element_text`、`appium_device_back`，并直接导出展开后的request参数schema、async `invoke`和`on_invalid_input`。
+- 长期Agent接入边界只登记三条独立资格线：当前FSQ进程内ToolCall、后续另行gate的GitHub Copilot CLI MCP Host、后续另行gate的OpenAI Codex CLI MCP Host。该路线图不表示三者同时交付；Issue #22只实现FSQ，且FSQ的OpenAI/Gemini schema转换通过不等于任一具体模型Host已资格化。
+- FSQ schema投射只允许实际OpenAI Responses与Google Gemini Interactions交集关键字；判别`oneOf`仅在各分支discriminator const互斥时改为`anyOf`，attributes唯一性仅在运行时Pydantic validator已验证时移除`uniqueItems`。其他不支持关键字、引用或形状必须fail closed，不得放宽为任意dict。十项投射必须通过FSQ真实`ensure_strict_json_schema`与`google_schema`。
+- ToolCall成功和已知错误使用与MCP相同typed DTO、资源矩阵和canonical JSON；callback固定返回JSON字符串。无效输入返回新项目call ID的`invalid_argument`，未知普通异常脱敏为`internal_error`；`CancelledError`、`KeyboardInterrupt`、`SystemExit`等中断不得吞并。provider call ID/message、异常文本、路径、serial、handle或UI原文不得复制到输出或日志。
+- `Application(surface=mcp|toolcall)`一次只能拥有一个表面，支持async context manager与幂等shielded `aclose()`；`SyncApplication`独占一个AnyIO blocking portal和一个ToolCall Application。MCP/ToolCall不得共享同一Application或Session handle。Session结果ownership按实际表面为`mcp|toolcall`。
+- capabilities按表面报告真实`integration_form`、`transport`、`protocol_target`和工具名；两表面均移除过时`no_cli_sdk_product`并固定`no_cli_product`，不宣称FSQ Host资格。Automation `device_validation_blocked_known_clean`、module non-Done及无自动重试保持。
+- MCP由ToolCatalog生成十项注册，但点号名称、顺序、description、annotation、顶层required `request`包装、十项pre-cutover `inputSchema` bytes、structured/text双通道、stdio、取消、shutdown、隐私与错误wire合同保持。能力输出仅按上述真实表面delta更新；协议无关Application不得导入MCP。
+- 无新增、替换或升级依赖；继续复用已批准`mcp==2.3.0`、`pydantic==2.14.1`、`anyio==4.15.1`和Python3.11标准库。Configuration、Runtime、Automation、Contracts no-delta。
+- 完成门槛包括十项MCP input hash零漂移、FSQ双后端schema实测、ToolCall strict/error/cancel/lifecycle合同、既有MCP聚焦回归、Ruff/mypy/import-linter与独立审查。Issue #22不要求或授权真实设备链；缺少FSQ真实模型调用只限制具体Host资格，不得冒充已通过。
+
+详细接口、投射算法和手工FSQ wiring见[已确认设计](docs/superpowers/specs/2026-11-13-integrations-fsq-toolcall-core-design.md)，模块级合同见Integrations SPEC的INT-CORE-01章节。

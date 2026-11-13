@@ -1,4 +1,4 @@
-"""Stateful local MCP application over public Runtime and Automation interfaces."""
+"""Stateful protocol-neutral application over public Runtime and Automation interfaces."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ import logging
 import secrets
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
 from threading import Event, Lock
-from typing import Any, Literal, Never, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, Never, TypeVar, cast
 
 import anyio
-from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, ValidationError
 
 from appium_connect_agent.automation import (
     AutomationError,
@@ -45,11 +45,12 @@ from ._bridge import (
     RuntimeOwner,
     WorkerRegistry,
 )
+from ._catalog import TOOL_CATALOG, JsonValue, ToolSpec
 from ._models import (
     AUTOMATION_MODULE_STATUS,
     AttributesObserveRequest,
     AutomationModuleStatus,
-    CapabilityData,
+    CapabilityLimitations,
     CapabilityResult,
     DeviceBackData,
     DeviceBackRequest,
@@ -67,6 +68,8 @@ from ._models import (
     ElementTextResult,
     ElementTextSendRequest,
     LocatorV1,
+    McpCapabilityData,
+    McpCapabilityResult,
     ObservationData,
     ObservationDocument,
     ObservationResult,
@@ -83,13 +86,35 @@ from ._models import (
     SessionOpenResult,
     SessionStatusResult,
     StructureObserveRequest,
+    ToolCallCapabilityData,
+    ToolCallCapabilityResult,
     ToolErrorData,
-    canonical_json,
 )
+
+if TYPE_CHECKING:
+    from ._toolcall import ToolBindingExport
 
 SessionState = Literal["active", "uncertain", "closing", "closed"]
 _ResultT = TypeVar("_ResultT")
 _LOGGER = logging.getLogger("appium_connect_agent.integrations")
+
+
+class ApplicationError(Exception):
+    """Protocol-neutral structured application failure with a redacted message."""
+
+    def __init__(self, data: ToolErrorData) -> None:
+        super().__init__(f"application_error:{data.code}")
+        self._data = data
+
+    @property
+    def data(self) -> ToolErrorData:
+        return self._data
+
+    def __repr__(self) -> str:
+        return (
+            f"ApplicationError(code={self._data.code!r}, "
+            f"call_id={self._data.call_id!r})"
+        )
 
 
 @dataclass(slots=True)
@@ -110,26 +135,131 @@ class _Tombstone:
     target_app_id: str | None
 
 
-class McpApplication:
+class Application:
     """Own one Runtime scope, one Session entry, and bounded closed history."""
 
-    def __init__(self, settings: LocalSettings, adb_executable: Path) -> None:
+    def __init__(
+        self,
+        settings: LocalSettings,
+        adb_executable: Path,
+        *,
+        surface: Literal["mcp", "toolcall"],
+    ) -> None:
         self._settings = settings
         self._adb_executable = adb_executable
+        self._surface = surface
         self._workers = WorkerRegistry()
         self._runtime_owner = RuntimeOwner()
         self._runtime_gate = Lock()
         self._registry_lock = Lock()
+        self._close_lock = anyio.Lock()
         self._entry: _SessionEntry | None = None
         self._tombstones: OrderedDict[str, _Tombstone] = OrderedDict()
         self._runtime_active = False
         self._runtime_cleanup_failed = False
         self._shutdown_degraded = False
         self._close_in_flight = False
+        self._closed = False
 
     @property
     def shutdown_degraded(self) -> bool:
         return self._shutdown_degraded
+
+    @property
+    def surface(self) -> Literal["mcp", "toolcall"]:
+        return self._surface
+
+    async def __aenter__(self) -> Application:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        del exc_info
+        await self.aclose()
+
+    @classmethod
+    def new_call_id(cls) -> str:
+        return cls._call_id()
+
+    def invalid_argument(self) -> ToolErrorData:
+        return self._simple_error("invalid_argument")
+
+    def _simple_error(self, code: str) -> ToolErrorData:
+        return ToolErrorData(
+            schema_version=1,
+            call_id=self._call_id(),
+            code=code,
+            operation_id=None,
+            request_state="not_sent",
+            completed_steps=(),
+            cleanup_status="not_needed",
+            cleanup_error_count=0,
+            warnings=(),
+            session_handle=None,
+            session_state=None,
+        )
+
+    def internal_error(self) -> ToolErrorData:
+        return ToolErrorData(
+            schema_version=1,
+            call_id=self._call_id(),
+            code="internal_error",
+            operation_id=None,
+            request_state=None,
+            completed_steps=(),
+            cleanup_status="unknown",
+            cleanup_error_count=0,
+            warnings=(),
+            session_handle=None,
+            session_state=None,
+        )
+
+    async def dispatch(
+        self, tool_name: str, arguments: Mapping[str, JsonValue]
+    ) -> BaseModel:
+        if self._surface != "toolcall":
+            raise ValueError("ToolCall dispatch requires surface='toolcall'")
+        if self._closed:
+            raise ApplicationError(self._simple_error("application_closed"))
+        if not isinstance(arguments, dict):
+            raise ApplicationError(self.invalid_argument())
+        try:
+            spec = TOOL_CATALOG.by_tool_name(tool_name)
+        except KeyError:
+            raise ApplicationError(self.invalid_argument()) from None
+        try:
+            request = spec.request_adapter.validate_python(arguments, strict=True)
+        except (TypeError, ValueError, ValidationError):
+            raise ApplicationError(self.invalid_argument()) from None
+        return await self._invoke_validated(spec, request, surface="toolcall")
+
+    async def _dispatch_mcp(self, spec: ToolSpec, request: BaseModel) -> BaseModel:
+        return await self._invoke_validated(spec, request, surface="mcp")
+
+    async def _invoke_validated(
+        self,
+        spec: ToolSpec,
+        request: BaseModel,
+        *,
+        surface: Literal["mcp", "toolcall"],
+    ) -> BaseModel:
+        if self._surface != surface:
+            raise ValueError(f"application surface is not {surface!r}")
+        result = await spec.invoke_validated(self, request)
+        expected = (
+            ToolCallCapabilityResult
+            if surface == "toolcall" and spec.tool_name == "appium_capabilities_get"
+            else spec.result_model
+        )
+        if not isinstance(result, expected):
+            raise ApplicationError(self.internal_error())
+        return result
+
+    def tool_bindings(self) -> tuple[ToolBindingExport, ...]:
+        if self._surface != "toolcall":
+            raise ValueError("ToolCall bindings require surface='toolcall'")
+        from ._toolcall import build_tool_bindings
+
+        return build_tool_bindings(self)
 
     @staticmethod
     def _call_id() -> str:
@@ -160,7 +290,7 @@ class McpApplication:
 
     def _session_data(self, entry: _SessionEntry) -> SessionData:
         return SessionData(
-            ownership="mcp",
+            ownership=self._surface,
             session_handle=entry.handle,
             session_state=entry.state,
             device_id=entry.device_id,
@@ -188,7 +318,46 @@ class McpApplication:
         return SessionStatusResult(**values)
 
     def capabilities(self) -> CapabilityResult:
-        return CapabilityResult(
+        platform = PlatformData(
+            host="macos", target="android_native", driver="uiautomator2"
+        )
+        limitations: CapabilityLimitations = (
+            "native_observation_single_click_element_text_and_device_back",
+            "no_automatic_post_action_observation",
+            "no_automatic_focus_submit_or_verify",
+            "no_automatic_navigation",
+            "no_node_cache",
+            "observation_document_65536_bytes",
+            "single_session_capacity",
+            "opaque_handle_process_local",
+            "no_session_attach_recovery",
+            "no_cli_product",
+            "no_http_transport",
+            "no_clear_app",
+            "automation_module_e2e_unqualified",
+            "no_specific_host_qualification",
+        )
+        if self._surface == "mcp":
+            return McpCapabilityResult(
+                schema_version=1,
+                call_id=self._call_id(),
+                execution="completed",
+                operation_id=None,
+                request_state=None,
+                warnings=(),
+                automation_module_status=self._module_status(),
+                data=McpCapabilityData(
+                    integration_form="mcp",
+                    transport="stdio",
+                    protocol_target="2026-07-28",
+                    host_compatibility="unqualified",
+                    adb_configured=True,
+                    platform=platform,
+                    tools=TOOL_CATALOG.mcp_names,
+                    limitations=limitations,
+                ),
+            )
+        return ToolCallCapabilityResult(
             schema_version=1,
             call_id=self._call_id(),
             execution="completed",
@@ -196,43 +365,15 @@ class McpApplication:
             request_state=None,
             warnings=(),
             automation_module_status=self._module_status(),
-            data=CapabilityData(
-                integration_form="mcp",
-                transport="stdio",
-                protocol_target="2026-07-28",
+            data=ToolCallCapabilityData(
+                integration_form="toolcall",
+                transport="in_process",
+                protocol_target=None,
                 host_compatibility="unqualified",
                 adb_configured=True,
-                platform=PlatformData(
-                    host="macos", target="android_native", driver="uiautomator2"
-                ),
-                tools=(
-                    "appium.capabilities.get",
-                    "appium.runtime.check",
-                    "appium.devices.list",
-                    "appium.session.open",
-                    "appium.session.status",
-                    "appium.session.close",
-                    "appium.ui.observe",
-                    "appium.element.click",
-                    "appium.element.text",
-                    "appium.device.back",
-                ),
-                limitations=(
-                    "native_observation_single_click_element_text_and_device_back",
-                    "no_automatic_post_action_observation",
-                    "no_automatic_focus_submit_or_verify",
-                    "no_automatic_navigation",
-                    "no_node_cache",
-                    "observation_document_65536_bytes",
-                    "single_session_capacity",
-                    "opaque_handle_process_local",
-                    "no_session_attach_recovery",
-                    "no_cli_sdk_product",
-                    "no_http_transport",
-                    "no_clear_app",
-                    "automation_module_e2e_unqualified",
-                    "no_specific_host_qualification",
-                ),
+                platform=platform,
+                tools=TOOL_CATALOG.tool_names,
+                limitations=limitations,
             ),
         )
 
@@ -802,7 +943,7 @@ class McpApplication:
                 if tombstone is None:
                     self._raise_not_sent(call_id, "session_not_found")
                 data = SessionData(
-                    ownership="mcp",
+                    ownership=self._surface,
                     session_handle=tombstone.handle,
                     session_state="closed",
                     device_id=tombstone.device_id,
@@ -835,7 +976,7 @@ class McpApplication:
             while len(self._tombstones) > 256:
                 self._tombstones.popitem(last=False)
         return SessionData(
-            ownership="mcp",
+            ownership=self._surface,
             session_handle=tombstone.handle,
             session_state="closed",
             device_id=tombstone.device_id,
@@ -861,7 +1002,7 @@ class McpApplication:
             tombstone = self._tombstones.get(handle)
             if tombstone is not None:
                 return SessionData(
-                    ownership="mcp",
+                    ownership=self._surface,
                     session_handle=tombstone.handle,
                     session_state="closed",
                     device_id=tombstone.device_id,
@@ -980,55 +1121,62 @@ class McpApplication:
             entry.busy = info.busy
         return state
 
-    async def shutdown(self) -> None:
-        await self._workers.shutdown()
-        with self._registry_lock:
-            entry = self._entry
+    async def aclose(self) -> None:
+        with anyio.CancelScope(shield=True):
+            async with self._close_lock:
+                if self._closed:
+                    return
+                await self._workers.shutdown()
+                with self._registry_lock:
+                    entry = self._entry
 
-        if entry is not None:
-            if entry.published and entry.state == "active" and not entry.busy:
-                session = entry.session
-                if session is None:
-                    self._shutdown_degraded = True
-                else:
-                    control = OperationControl(
-                        timeout_seconds=60.0, cancellation=Event()
-                    )
-                    try:
-                        await anyio.to_thread.run_sync(
-                            lambda: session.quit(control=control),
-                            abandon_on_cancel=False,
-                        )
-                    except BaseException:
-                        state = self._restore_close_snapshot(
-                            entry, keep_closing_if_closed=True
-                        )
-                        if state == "closed":
-                            self._finish_confirmed_close(entry)
-                        self._shutdown_degraded = True
-                    else:
-                        info = session.session_info()
-                        if info.state == "closed":
-                            _, cleanup = self._finish_confirmed_close(entry)
-                            if cleanup is not None:
-                                self._shutdown_degraded = True
-                        else:
+                if entry is not None:
+                    if entry.published and entry.state == "active" and not entry.busy:
+                        session = entry.session
+                        if session is None:
                             self._shutdown_degraded = True
-            else:
-                self._shutdown_degraded = True
+                        else:
+                            control = OperationControl(
+                                timeout_seconds=60.0, cancellation=Event()
+                            )
+                            try:
+                                await anyio.to_thread.run_sync(
+                                    lambda: session.quit(control=control),
+                                    abandon_on_cancel=False,
+                                )
+                            except BaseException:
+                                state = self._restore_close_snapshot(
+                                    entry, keep_closing_if_closed=True
+                                )
+                                if state == "closed":
+                                    self._finish_confirmed_close(entry)
+                                self._shutdown_degraded = True
+                            else:
+                                info = session.session_info()
+                                if info.state == "closed":
+                                    _, cleanup = self._finish_confirmed_close(entry)
+                                    if cleanup is not None:
+                                        self._shutdown_degraded = True
+                                else:
+                                    self._shutdown_degraded = True
+                    else:
+                        self._shutdown_degraded = True
 
-        cleanup = self._exit_runtime()
-        if cleanup is not None or self._runtime_cleanup_failed:
-            self._shutdown_degraded = True
-        try:
-            await anyio.to_thread.run_sync(
-                self._runtime_owner.stop,
-                abandon_on_cancel=False,
-            )
-        except Exception:
-            self._shutdown_degraded = True
-        if self._shutdown_degraded:
-            _LOGGER.warning("shutdown_degraded remote_resources_may_remain=true")
+                cleanup = self._exit_runtime()
+                if cleanup is not None or self._runtime_cleanup_failed:
+                    self._shutdown_degraded = True
+                try:
+                    await anyio.to_thread.run_sync(
+                        self._runtime_owner.stop,
+                        abandon_on_cancel=False,
+                    )
+                except Exception:
+                    self._shutdown_degraded = True
+                self._closed = True
+                if self._shutdown_degraded:
+                    _LOGGER.warning(
+                        "shutdown_degraded remote_resources_may_remain=true"
+                    )
 
     @staticmethod
     def _report(report: DiagnosticReport) -> RuntimeReport:
@@ -1066,7 +1214,7 @@ class McpApplication:
 
     @staticmethod
     def _raise_error(error: ToolErrorData) -> Never:
-        raise ToolError(f"ACA_ERROR {canonical_json(error)}")
+        raise ApplicationError(error)
 
     def _raise_not_sent(
         self,

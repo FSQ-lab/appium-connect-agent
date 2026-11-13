@@ -2,46 +2,27 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import stat
 import sys
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel
 
 from appium_connect_agent.configuration import ConfigurationError, load_configuration
 
-from ._application import McpApplication
-from ._models import (
-    CapabilitiesRequest,
-    CapabilityResult,
-    DeviceBackRequest,
-    DeviceBackResult,
-    DeviceListRequest,
-    DeviceListResult,
-    ElementClickRequest,
-    ElementClickResult,
-    ElementTextRequest,
-    ElementTextResult,
-    ObservationResult,
-    ObserveRequest,
-    RuntimeCheckRequest,
-    RuntimeCheckResult,
-    SessionCloseRequest,
-    SessionCloseResult,
-    SessionOpenRequest,
-    SessionOpenResult,
-    SessionStatusRequest,
-    SessionStatusResult,
-    canonical_value_and_json,
-)
+from ._application import Application, ApplicationError
+from ._catalog import TOOL_CATALOG, ToolSpec
+from ._models import canonical_json, canonical_value_and_json
 
 _LOGGER_NAME = "appium_connect_agent.integrations"
 
@@ -126,18 +107,20 @@ def _success(model: BaseModel) -> CallToolResult:
     )
 
 
-def create_server(application: McpApplication) -> MCPServer[McpApplication]:
+def create_server(application: Application) -> MCPServer[Application]:
     """Construct the fixed server without starting Runtime, ADB, or transport I/O."""
+    if application.surface != "mcp":
+        raise ValueError("MCP server requires surface='mcp'")
     _configure_logging()
 
     @asynccontextmanager
-    async def lifespan(_: MCPServer[McpApplication]) -> AsyncIterator[McpApplication]:
+    async def lifespan(_: MCPServer[Application]) -> AsyncIterator[Application]:
         try:
             yield application
         finally:
-            await application.shutdown()
+            await application.aclose()
 
-    server = MCPServer[McpApplication](
+    server = MCPServer[Application](
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
@@ -152,198 +135,59 @@ def create_server(application: McpApplication) -> MCPServer[McpApplication]:
         subscriptions=False,
     )
 
-    @server.tool(
-        name="appium.capabilities.get",
-        description="Return fixed integration capabilities and qualification limits.",
-        structured_output=True,
-        annotations=ToolAnnotations(
-            read_only_hint=True,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=False,
-        ),
-    )
-    async def capabilities_get(
-        request: CapabilitiesRequest,
-        ctx: Context[McpApplication],
-    ) -> CapabilityResult:
-        del request
-        result = ctx.request_context.lifespan_context.capabilities()
-        return cast(CapabilityResult, _success(result))
+    def build_handler(
+        spec: ToolSpec,
+    ) -> Callable[[BaseModel, Context[Application]], Awaitable[BaseModel]]:
+        async def handler(
+            request: BaseModel,
+            ctx: Context[Application],
+        ) -> BaseModel:
+            try:
+                result = await ctx.request_context.lifespan_context._dispatch_mcp(
+                    spec, request
+                )
+            except ApplicationError as error:
+                raise ToolError(f"ACA_ERROR {canonical_json(error.data)}") from None
+            return cast(BaseModel, _success(result))
 
-    @server.tool(
-        name="appium.runtime.check",
-        description="Run one bounded static or external Runtime readiness check.",
-        structured_output=True,
-        annotations=ToolAnnotations(
-            read_only_hint=True,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=True,
-        ),
-    )
-    async def runtime_check(
-        request: RuntimeCheckRequest,
-        ctx: Context[McpApplication],
-    ) -> RuntimeCheckResult:
-        result = await ctx.request_context.lifespan_context.runtime_check(
-            request.mode,
-            request.timeout_seconds,
+        handler.__name__ = spec.handler_symbol
+        handler.__qualname__ = spec.handler_symbol
+        handler.__annotations__ = {
+            "request": spec.request_annotation,
+            "ctx": Context[Application],
+            "return": spec.result_model,
+        }
+        cast(Any, handler).__signature__ = inspect.Signature(
+            parameters=(
+                inspect.Parameter(
+                    "request",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=spec.request_annotation,
+                ),
+                inspect.Parameter(
+                    "ctx",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=Context[Application],
+                ),
+            ),
+            return_annotation=spec.result_model,
         )
-        return cast(RuntimeCheckResult, _success(result))
+        return handler
 
-    @server.tool(
-        name="appium.devices.list",
-        description="List Android devices through the bootstrapped ADB executable.",
-        structured_output=True,
-        annotations=ToolAnnotations(
-            read_only_hint=True,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=True,
-        ),
-    )
-    async def devices_list(
-        request: DeviceListRequest,
-        ctx: Context[McpApplication],
-    ) -> DeviceListResult:
-        result = await ctx.request_context.lifespan_context.devices_list(
-            request.timeout_seconds
+    for spec in TOOL_CATALOG.specs:
+        hints = spec.annotations
+        server.add_tool(
+            build_handler(spec),
+            name=spec.mcp_name,
+            description=spec.description,
+            structured_output=True,
+            annotations=ToolAnnotations(
+                read_only_hint=hints.read_only,
+                destructive_hint=hints.destructive,
+                idempotent_hint=hints.idempotent,
+                open_world_hint=hints.open_world,
+            ),
         )
-        return cast(DeviceListResult, _success(result))
-
-    @server.tool(
-        name="appium.session.open",
-        description="Open the single MCP-owned Android Session.",
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=False,
-            idempotent_hint=False,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def session_open(
-        request: SessionOpenRequest,
-        ctx: Context[McpApplication],
-    ) -> SessionOpenResult:
-        result = await ctx.request_context.lifespan_context.session_open(request)
-        return cast(SessionOpenResult, _success(result))
-
-    @server.tool(
-        name="appium.session.status",
-        description="Return the local snapshot for one opaque Session handle.",
-        annotations=ToolAnnotations(
-            read_only_hint=True,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=False,
-        ),
-        structured_output=True,
-    )
-    async def session_status(
-        request: SessionStatusRequest,
-        ctx: Context[McpApplication],
-    ) -> SessionStatusResult:
-        result = ctx.request_context.lifespan_context.session_status(
-            request.session_handle
-        )
-        return cast(SessionStatusResult, _success(result))
-
-    @server.tool(
-        name="appium.session.close",
-        description="Close one MCP-owned Session or its retained tombstone.",
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=True,
-            idempotent_hint=True,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def session_close(
-        request: SessionCloseRequest,
-        ctx: Context[McpApplication],
-    ) -> SessionCloseResult:
-        result = await ctx.request_context.lifespan_context.session_close(
-            request.session_handle,
-            request.timeout_seconds,
-        )
-        return cast(SessionCloseResult, _success(result))
-
-    @server.tool(
-        name="appium.ui.observe",
-        description=(
-            "Observe one Native tree, Element attribute set, or raw structure scope."
-        ),
-        annotations=ToolAnnotations(
-            read_only_hint=True,
-            destructive_hint=False,
-            idempotent_hint=True,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def ui_observe(
-        request: ObserveRequest,
-        ctx: Context[McpApplication],
-    ) -> ObservationResult:
-        result = await ctx.request_context.lifespan_context.observe(request)
-        return cast(ObservationResult, _success(result))
-
-    @server.tool(
-        name="appium.element.click",
-        description="Click one explicitly located Native Element once.",
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=True,
-            idempotent_hint=False,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def element_click(
-        request: ElementClickRequest,
-        ctx: Context[McpApplication],
-    ) -> ElementClickResult:
-        result = await ctx.request_context.lifespan_context.click(request)
-        return cast(ElementClickResult, _success(result))
-
-    @server.tool(
-        name="appium.element.text",
-        description="Send, clear, or replace text on one explicitly located Element.",
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=True,
-            idempotent_hint=False,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def element_text(
-        request: ElementTextRequest,
-        ctx: Context[McpApplication],
-    ) -> ElementTextResult:
-        result = await ctx.request_context.lifespan_context.text(request)
-        return cast(ElementTextResult, _success(result))
-
-    @server.tool(
-        name="appium.device.back",
-        description="Send one caller-requested back command to the bound Device.",
-        annotations=ToolAnnotations(
-            read_only_hint=False,
-            destructive_hint=True,
-            idempotent_hint=False,
-            open_world_hint=True,
-        ),
-        structured_output=True,
-    )
-    async def device_back(
-        request: DeviceBackRequest,
-        ctx: Context[McpApplication],
-    ) -> DeviceBackResult:
-        result = await ctx.request_context.lifespan_context.back(request)
-        return cast(DeviceBackResult, _success(result))
 
     return server
 
@@ -364,7 +208,7 @@ def main() -> int:
         logging.getLogger(_LOGGER_NAME).error("startup_error code=%s", error.code)
         return 2
 
-    application = McpApplication(loaded.settings, adb_executable)
+    application = Application(loaded.settings, adb_executable, surface="mcp")
     server = create_server(application)
     try:
         server.run("stdio")
