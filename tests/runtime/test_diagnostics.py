@@ -2,6 +2,7 @@ import json
 import os
 import platform
 import socket
+import stat
 import subprocess
 import time
 from dataclasses import FrozenInstanceError, replace
@@ -1073,6 +1074,37 @@ def _managed_mac_root(home: Path, *, service_state: str = "stopped") -> Path:
     return root
 
 
+def _write_maintenance(root: Path, state: str) -> None:
+    record = root / "records/maintenance.json"
+    record.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "state": state,
+                "operation_id": "test-maintenance",
+                "operation": "driver_install",
+                "driver": "mac2",
+                "may_have_changed": False,
+            }
+        )
+    )
+    record.chmod(0o600)
+
+
+def _managed_tree_snapshot(root: Path) -> dict[str, tuple[int, int, bytes | None]]:
+    paths = (root, *root.rglob("*"))
+    result: dict[str, tuple[int, int, bytes | None]] = {}
+    for path in paths:
+        info = path.lstat()
+        content = path.read_bytes() if stat.S_ISREG(info.st_mode) else None
+        result[str(path.relative_to(root.parent))] = (
+            info.st_mode,
+            info.st_mtime_ns,
+            content,
+        )
+    return result
+
+
 def test_target_driver_validation_precedes_io(monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("unexpected I/O")
@@ -1140,18 +1172,25 @@ def test_mac2_external_diagnostics_are_static_and_target_aware(
 
 
 @pytest.mark.parametrize(
-    "service_state,expected",
+    "service_state,root_reason,component_status,component_reason",
     [
-        ("stopped", "managed_root_ready"),
-        ("active", "managed_service_active"),
-        ("cleanup_pending", "managed_recovery_required"),
+        ("stopped", "managed_root_ready", "pass", "metadata_observed"),
+        ("active", "managed_service_active", "unknown", "managed_root_not_ready"),
+        (
+            "cleanup_pending",
+            "managed_recovery_required",
+            "unknown",
+            "managed_root_not_ready",
+        ),
     ],
 )
 def test_mac2_managed_root_and_record_states(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     service_state: str,
-    expected: str,
+    root_reason: str,
+    component_status: str,
+    component_reason: str,
 ) -> None:
     from appium_connect_agent.runtime import _diagnostics
 
@@ -1163,9 +1202,10 @@ def test_mac2_managed_root_and_record_states(
         _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
     )
     result = _mac_checks(Runtime(LocalSettings()))
-    assert result["managed_root"].reason_code == expected
-    assert result["appium_installation"].status == "pass"
-    assert result["driver_installation"].status == "pass"
+    assert result["managed_root"].reason_code == root_reason
+    for check_id in ("appium_installation", "driver_installation"):
+        assert result[check_id].status == component_status
+        assert result[check_id].reason_code == component_reason
 
 
 def test_mac2_managed_root_missing_and_driver_identity_damage(
@@ -1196,6 +1236,124 @@ def test_mac2_managed_root_missing_and_driver_identity_damage(
     assert damaged["managed_root"].reason_code == "managed_root_ready"
     assert damaged["driver_installation"].status == "unknown"
     assert damaged["driver_installation"].reason_code == "unrecognized_driver"
+
+
+@pytest.mark.parametrize(
+    "case,root_status,root_reason,component_reason",
+    [
+        ("symlink", "fail", "managed_root_conflict", "managed_root_untrusted"),
+        ("mode", "fail", "managed_root_conflict", "managed_root_untrusted"),
+        ("extra", "fail", "managed_root_conflict", "managed_root_untrusted"),
+        ("marker", "fail", "managed_root_conflict", "managed_root_untrusted"),
+        (
+            "maintenance",
+            "unknown",
+            "managed_recovery_required",
+            "managed_root_not_ready",
+        ),
+        ("unreadable", "unknown", "path_unreadable", "managed_root_untrusted"),
+    ],
+)
+def test_mac2_nonready_managed_root_never_trusts_components(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    root_status: str,
+    root_reason: str,
+    component_reason: str,
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    account = _coordination._account_home()
+    if case == "symlink":
+        outside_home = tmp_path / "outside-home"
+        outside_home.mkdir()
+        outside = _managed_mac_root(outside_home)
+        (account / ".appium-connect-agent").symlink_to(
+            outside, target_is_directory=True
+        )
+    else:
+        root = _managed_mac_root(account)
+        if case == "mode":
+            root.chmod(0o755)
+        elif case == "extra":
+            (root / "unexpected").write_text("must not inspect")
+        elif case == "marker":
+            (root / "managed.json").write_text(json.dumps({"owner": "other"}))
+        elif case == "maintenance":
+            _write_maintenance(root, "incomplete")
+        else:
+            actual_iterdir = Path.iterdir
+
+            def denied_iterdir(path: Path) -> Any:
+                if path == root:
+                    raise PermissionError("root unreadable")
+                return actual_iterdir(path)
+
+            monkeypatch.setattr(Path, "iterdir", denied_iterdir)
+
+    metadata_reads: list[Path] = []
+    actual_metadata = Reader.metadata
+
+    def observed_metadata(reader: Reader, path: Path) -> dict[str, object]:
+        metadata_reads.append(path)
+        return actual_metadata(reader, path)
+
+    monkeypatch.setattr(Reader, "metadata", observed_metadata)
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(
+        _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
+    )
+    result = _mac_checks(Runtime(LocalSettings()))
+    assert result["managed_root"].status == root_status
+    assert result["managed_root"].reason_code == root_reason
+    for check_id in ("appium_installation", "driver_installation"):
+        assert result[check_id].status == "unknown"
+        assert result[check_id].reason_code == component_reason
+        assert result[check_id].evidence == ("source=managed_root",)
+        assert not any("node_modules" in path.parts for path in metadata_reads)
+
+
+def test_mac2_managed_driver_invalid_semver_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    root = _managed_mac_root(_coordination._account_home())
+    metadata = root / "driver-home/node_modules/appium-mac2-driver/package.json"
+    value = json.loads(metadata.read_text())
+    value["version"] = "4.6"
+    metadata.write_text(json.dumps(value))
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(
+        _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
+    )
+    result = _mac_checks(Runtime(LocalSettings()))
+    assert result["managed_root"].status == "pass"
+    assert result["driver_installation"].status == "unknown"
+    assert result["driver_installation"].reason_code == "version_unknown"
+
+
+def test_mac2_managed_diagnostics_leave_component_tree_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    root = _managed_mac_root(_coordination._account_home())
+    applications = tmp_path / "Applications"
+    _write_xcode(applications)
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(applications / "Xcode.app/Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+    before = _managed_tree_snapshot(root)
+    result = _mac_checks(Runtime(LocalSettings()))
+    assert result["managed_root"].status == "pass"
+    assert _managed_tree_snapshot(root) == before
 
 
 def test_mac2_xcode_io_failure_is_unknown(
@@ -1251,3 +1409,35 @@ def test_mac2_xcode_layout_clt_missing_and_symlink_rejection(
         _mac_checks(Runtime(LocalSettings()))["xcode_layout"].reason_code
         == "invalid_developer_directory"
     )
+
+
+@pytest.mark.parametrize(
+    "component",
+    ["bundle", "Contents", "Developer", "usr", "bin", "Info.plist"],
+)
+def test_mac2_xcode_rejects_symlink_at_every_trusted_component(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, component: str
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    applications = tmp_path / "Applications"
+    bundle = _write_xcode(applications)
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(bundle / "Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+    paths = {
+        "bundle": bundle,
+        "Contents": bundle / "Contents",
+        "Developer": bundle / "Contents/Developer",
+        "usr": bundle / "Contents/Developer/usr",
+        "bin": bundle / "Contents/Developer/usr/bin",
+        "Info.plist": bundle / "Contents/Info.plist",
+    }
+    selected = paths[component]
+    target = tmp_path / f"real-{component.replace('.', '-')}"
+    selected.rename(target)
+    selected.symlink_to(target, target_is_directory=component != "Info.plist")
+    result = _mac_checks(Runtime(LocalSettings()))
+    assert result["xcode_layout"].status == "fail"
+    assert result["xcode_layout"].reason_code == "invalid_developer_directory"

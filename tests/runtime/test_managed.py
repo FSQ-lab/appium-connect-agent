@@ -831,6 +831,87 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
     assert signal.SIGTERM in signals
 
 
+def test_cleanup_pending_concurrent_state_transitions_do_not_deadlock(
+    tmp_path: Path,
+) -> None:
+    _, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    usage = connection.acquire_usage()
+    start = threading.Event()
+    exit_done = threading.Event()
+    release_done = threading.Event()
+    cleanup_done = threading.Event()
+    pending_observed = threading.Event()
+    observations: list[bool] = []
+    failures: list[BaseException] = []
+
+    def observe() -> None:
+        start.wait()
+        while not cleanup_done.is_set():
+            value = runtime.managed_cleanup_pending
+            observations.append(value)
+            if value:
+                pending_observed.set()
+            time.sleep(0.001)
+        observations.append(runtime.managed_cleanup_pending)
+
+    def exit_scope() -> None:
+        start.wait()
+        try:
+            scope.__exit__(None, None, None)
+        except ServiceLifecycleError as error:
+            if error.code != "service_in_use":
+                failures.append(error)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            exit_done.set()
+
+    def release_usage() -> None:
+        start.wait()
+        exit_done.wait()
+        if not pending_observed.wait(timeout=5.0):
+            failures.append(AssertionError("cleanup pending was not observed"))
+        try:
+            usage.release()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            release_done.set()
+
+    def cleanup() -> None:
+        start.wait()
+        release_done.wait()
+        try:
+            runtime.cleanup_managed()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            cleanup_done.set()
+
+    threads = [
+        threading.Thread(target=observe),
+        threading.Thread(target=exit_scope),
+        threading.Thread(target=release_usage),
+        threading.Thread(target=cleanup),
+    ]
+    for thread in threads:
+        thread.start()
+    start.set()
+    for thread in threads:
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
+
+    assert failures == []
+    assert True in observations
+    assert observations[-1] is False
+    assert runtime.managed_cleanup_pending is False
+    scope_owner, cleanup_owner = runtime._snapshot_managed_state()
+    assert scope_owner is cleanup_owner is None
+
+
 def test_sigterm_ignoring_child_is_killed_and_all_resources_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -57,6 +57,7 @@ _APPLICATIONS_ROOT = Path("/Applications")
 
 def _managed_root_state(operation: _Operation, root: Path) -> str:
     from ._installation import (
+        _ALLOWED_ROOT,
         _installation_record_state,
         _maintenance_record_state,
         _service_record_state,
@@ -68,8 +69,17 @@ def _managed_root_state(operation: _Operation, root: Path) -> str:
     try:
         if not _validate_root(root):
             return "missing"
-    except _StateFailure:
-        raise Finding("managed_root_conflict") from None
+    except _StateFailure as failure:
+        reason = "managed_root_conflict"
+        if failure.code == "installation_state_unknown":
+            try:
+                names = {entry.name for entry in root.iterdir()}
+            except OSError:
+                reason = "path_unreadable"
+            else:
+                if not names - _ALLOWED_ROOT:
+                    reason = "path_unreadable"
+        raise Finding(reason) from None
     records = root / "records"
     try:
         names = {entry.name for entry in records.iterdir()}
@@ -404,18 +414,44 @@ class _Operation:
             return None
 
     def managed_components(self, root: Path) -> tuple[Package | None, Package | None]:
+        def unavailable(reason: str, status: Status = "unknown") -> tuple[None, None]:
+            for check_id in ("appium_installation", "driver_installation"):
+                self.add(
+                    check_id,
+                    status,
+                    reason,
+                    ("source=managed_root",),
+                )
+            return None, None
+
         try:
             state = _managed_root_state(self, root)
+        except Finding as finding:
+            root_status: Status = (
+                "fail" if finding.reason == "managed_root_conflict" else "unknown"
+            )
             self.add(
                 "managed_root",
-                "pass" if state == "managed_root_ready" else "fail",
-                state,
+                root_status,
+                finding.reason,
                 ("source=managed_root",),
             )
-        except Finding as finding:
-            self.add(
-                "managed_root", "unknown", finding.reason, ("source=managed_root",)
+            component_reason = (
+                "managed_root_not_ready"
+                if finding.reason
+                in ("managed_recovery_required", "managed_service_active")
+                else "managed_root_untrusted"
             )
+            return unavailable(component_reason)
+        self.add(
+            "managed_root",
+            "pass" if state == "managed_root_ready" else "fail",
+            state,
+            ("source=managed_root",),
+        )
+        if state != "managed_root_ready":
+            return unavailable("missing", "fail")
+
         packages: list[Package | None] = []
         specs = (
             (

@@ -390,8 +390,9 @@ RuntimeUsage.release() -> None
 ### Mac2 Static Diagnostic Behavior
 
 - `target_driver="mac2"` 返回 `host="macOS"`、`target="macOS"`、`driver="Mac2"`。诊断不执行子进程、不发 HTTP、不运行 Driver Doctor，不写组件、记录或安装目录；唯一允许写入仍是既有账号级 `runtime.lock` 协调资源。
-- `server_mode="managed"`，或没有显式 Appium executable/home 且固定 `~/.appium-connect-agent` 存在（含 symlink）时，使用受管根分支。它按既有当前 UID、mode、普通非链接目录、marker、根条目与 records namespace 规则读取；报告 `managed_root_ready`、`missing`、`managed_recovery_required`、`managed_service_active` 或 `managed_root_conflict`，不修复或接管现场。
-- 受管分支静态读取 `appium/node_modules/appium` 与 `driver-home/node_modules/appium-mac2-driver`；driver 必须是当前 UID 拥有的非链接 package 目录，且 package name、`appium.driverName="mac2"`、`appium.automationName="Mac2"` 和 strict SemVer 均有效。外部分支沿显式 Appium 路径和显式/default Appium home 检查相同 Mac2 identity；默认 `~/.appium` 只能报告 `home_association_unknown`。
+- `server_mode="managed"`，或没有显式 Appium executable/home 且固定 `~/.appium-connect-agent` 存在（含 symlink）时，使用受管根分支。它按既有当前 UID、mode、普通非链接目录、marker、根条目与 records namespace 规则读取；`managed_root_conflict` 为 `fail`，`managed_recovery_required`、`managed_service_active` 与 `path_unreadable` 为 `unknown`，不修复或接管现场。
+- 只有 `managed_root=pass/managed_root_ready` 时才遍历并读取 `appium/node_modules/appium` 与 `driver-home/node_modules/appium-mac2-driver`。根 identity 不可信时两个组件均为 `unknown/managed_root_untrusted`，不得读取下属文件或暴露解析路径；根 identity 可信但 records/service 未就绪时均为 `unknown/managed_root_not_ready`。根缺失时组件保持 `fail/missing`。任何非 pass 根都不得产生 pass 组件。
+- ready 受管分支中的 driver 必须是当前 UID 拥有的非链接 package 目录，且 package name、`appium.driverName="mac2"`、`appium.automationName="Mac2"` 和 strict SemVer 均有效。外部分支沿显式 Appium 路径和显式/default Appium home 检查相同 Mac2 identity；默认 `~/.appium` 只能报告 `home_association_unknown`。
 - Node/npm 保持既有静态候选检查。`declared_compatibility` 继续复用锁定 `node-semver==0.9.1` 处理 Appium、Mac2 driver 与 npm 声明；`qualified_support=unknown/not_qualified`，`service` 与 `device` 为 `unknown/not_checked`。Java 与 Android SDK 为 `not_applicable/not_applicable_for_driver`。
 
 ### Xcode Layout And Verification Boundary
