@@ -9,6 +9,7 @@ import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -30,6 +31,9 @@ from appium_connect_agent.automation import (
     OperationCancelledError,
     OperationTimeoutError,
     SessionBusyError,
+    _macos_actions,
+    _session,
+    _session_client,
 )
 from appium_connect_agent.runtime import OperationControl
 from tests.automation._action_protocol import (
@@ -628,6 +632,46 @@ def test_duration_budget_allows_strictly_less_and_rejects_equal_or_greater(
         )
         assert len(service.of_kind(kind)) == before
         cancelled.quit()
+
+
+@pytest.mark.parametrize(
+    ("action", "kind"),
+    [("press", "press"), ("drag", "clickAndDrag"), ("swipe", "clickAndDrag")],
+)
+def test_frozen_clock_proves_equal_duration_is_rejected_but_99ms_is_allowed(
+    service: MacActionService,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    kind: str,
+) -> None:
+    frozen = SimpleNamespace(monotonic=lambda: 0.0)
+    monkeypatch.setattr(_session, "time", frozen)
+    monkeypatch.setattr(_macos_actions, "time", frozen)
+    monkeypatch.setattr(
+        _session_client, "time", SimpleNamespace(monotonic=lambda: -10.0)
+    )
+    assert 0.1 - frozen.monotonic() == 100 / 1000.0
+
+    with connected(service) as connection:
+        allowed = mac_session_for(service, connection)
+        before = len(service.of_kind(kind))
+        _duration_action(allowed, action, 99, OperationControl(timeout_seconds=0.1))
+        assert len(service.of_kind(kind)) == before + 1
+        allowed.quit()
+
+        equal = mac_session_for(service, connection)
+        before = len(service.of_kind(kind))
+        with pytest.raises(OperationTimeoutError) as caught:
+            _duration_action(equal, action, 100, OperationControl(timeout_seconds=0.1))
+        assert_error(
+            caught.value,
+            OperationTimeoutError,
+            "operation_timeout",
+            "not_sent",
+        )
+        assert len(service.of_kind(kind)) == before
+        assert equal.session_info().state == "active"
+        equal.quit()
 
 
 def test_mac_action_presend_cancel_known_error_and_busy_are_isolated(
