@@ -70,27 +70,72 @@ def _http_cleanup(result: HTTPResult, operation: _Operation) -> BaseException | 
 class RuntimeUsage:
     """One opaque, one-shot in-memory lease against a Runtime connection."""
 
-    __slots__ = ("_lock", "_operation_id", "_release", "_released", "_report")
+    __slots__ = (
+        "_begin_terminal_disposal",
+        "_continue_terminal_disposal",
+        "_lock",
+        "_operation_id",
+        "_release",
+        "_released",
+        "_report",
+        "_terminal_disposal_started",
+    )
 
     def __init__(
         self,
         release: Callable[[], None],
         operation_id: str,
         report: DiagnosticReport,
+        *,
+        begin_terminal_disposal: Callable[[], None] | None = None,
+        continue_terminal_disposal: Callable[[OperationControl], None] | None = None,
     ) -> None:
         self._release = release
         self._operation_id = operation_id
         self._report = report
+        self._begin_terminal_disposal = begin_terminal_disposal
+        self._continue_terminal_disposal = continue_terminal_disposal
+        self._terminal_disposal_started = False
         self._released = False
         self._lock = Lock()
 
-    def release(self) -> None:
-        """Release this lease once without process, network, or filesystem I/O."""
+    @property
+    def _supports_terminal_disposal(self) -> bool:
+        return (
+            self._begin_terminal_disposal is not None
+            and self._continue_terminal_disposal is not None
+        )
+
+    def _terminal_dispose(self, control: OperationControl) -> None:
         with self._lock:
             if self._released:
                 raise InvalidStateError(
                     "usage_released", self._operation_id, self._report
                 )
+            begin = self._begin_terminal_disposal
+            continuation = self._continue_terminal_disposal
+            if begin is None or continuation is None:
+                raise InvalidStateError(
+                    "unsupported_connection_ownership",
+                    self._operation_id,
+                    self._report,
+                )
+            if not self._terminal_disposal_started:
+                begin()
+                self._terminal_disposal_started = True
+            continuation(control)
+            self._released = True
+
+    def release(self) -> None:
+        """Release this lease once without process, network, or filesystem I/O."""
+        with self._lock:
+            if self._released or self._terminal_disposal_started:
+                code = (
+                    "usage_disposal_started"
+                    if self._terminal_disposal_started and not self._released
+                    else "usage_released"
+                )
+                raise InvalidStateError(code, self._operation_id, self._report)
             self._released = True
             self._release()
 

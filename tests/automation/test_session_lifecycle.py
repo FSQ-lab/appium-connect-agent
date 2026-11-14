@@ -235,6 +235,7 @@ class UsageOwner:
         self.accepting = True
         self.count = 0
         self.events: list[str] = []
+        self.terminal_failures: deque[BaseException] = deque()
 
     def acquire_usage(self) -> RuntimeUsage:
         if not self.accepting:
@@ -250,10 +251,24 @@ class UsageOwner:
             self.count -= 1
             self.events.append("release")
 
+        def begin_terminal_disposal() -> None:
+            assert self.count > 0
+            self.count -= 1
+            self.accepting = False
+            self.events.append("dispose_begin")
+
+        def continue_terminal_disposal(control: OperationControl) -> None:
+            del control
+            self.events.append("dispose_continue")
+            if self.terminal_failures:
+                raise self.terminal_failures.popleft()
+
         return RuntimeUsage(
             release,
             self.connection.report.operation_id,
             self.connection.report,
+            begin_terminal_disposal=begin_terminal_disposal,
+            continue_terminal_disposal=continue_terminal_disposal,
         )
 
 
@@ -379,6 +394,32 @@ def patch_create_client(
         "appium_connect_agent.automation._session._new_connection",
         controlled_connection,
     )
+
+
+def patch_flaky_client_close(
+    monkeypatch: pytest.MonkeyPatch, *, failures: int
+) -> list[Any]:
+    original = _new_connection
+    captured: list[Any] = []
+
+    def controlled_connection(server_url: str) -> Any:
+        client = original(server_url)
+        original_clear = client._conn.clear
+        remaining = failures
+
+        def flaky_clear() -> None:
+            nonlocal remaining
+            if remaining:
+                remaining -= 1
+                raise OSError("pool close failed")
+            original_clear()
+
+        monkeypatch.setattr(client._conn, "clear", flaky_clear)
+        captured.append(client)
+        return client
+
+    monkeypatch.setattr(session_module, "_new_connection", controlled_connection)
+    return captured
 
 
 def test_automation_error_defaults_to_no_session() -> None:
@@ -1610,6 +1651,185 @@ def test_managed_cleanup_failure_and_closing_mapping_retain_usage(
         assert [request.method for request in service.lifecycle_requests()].count(
             "POST"
         ) == 1
+
+
+def test_uncertain_managed_session_dispose_is_terminal_and_idempotent(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-dispose")
+        session = unknown.value.session
+        assert session is not None
+        assert session.session_info().state == "uncertain"
+
+        session.dispose()
+
+        assert session.session_info().state == "disposed"
+        assert owner.count == 0
+        assert owner.events == ["acquire", "dispose_begin", "dispose_continue"]
+        assert [request.method for request in service.lifecycle_requests()] == ["POST"]
+        session.dispose()
+        assert owner.events == ["acquire", "dispose_begin", "dispose_continue"]
+
+
+def test_managed_session_dispose_retries_cleanup_without_releasing_twice(
+    service: ProtocolService,
+) -> None:
+    service.quit_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        session = create_session(connection, "managed-dispose-retry")
+        with pytest.raises(ResourceStateError):
+            session.quit()
+        owner.terminal_failures.append(
+            InvalidStateError(
+                "cleanup_pending",
+                connection.report.operation_id,
+                connection.report,
+            )
+        )
+
+        with pytest.raises(ResourceStateError) as pending:
+            session.dispose()
+        assert pending.value.code == "terminal_disposal_pending"
+        assert session.session_info().state == "disposing"
+        assert owner.count == 0
+
+        session.dispose()
+
+        assert session.session_info().state == "disposed"
+        assert owner.events == [
+            "acquire",
+            "dispose_begin",
+            "dispose_continue",
+            "dispose_continue",
+        ]
+        assert [request.method for request in service.lifecycle_requests()] == [
+            "POST",
+            "DELETE",
+        ]
+
+
+def test_external_uncertain_session_rejects_terminal_disposal_without_request(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with connected(service) as connection:
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "external-dispose")
+        session = unknown.value.session
+        assert session is not None
+
+        with pytest.raises(InvalidSessionStateError) as unsupported:
+            session.dispose()
+
+        assert unsupported.value.code == "unsupported_connection_ownership"
+        assert session.session_info().state == "uncertain"
+        assert [request.method for request in service.lifecycle_requests()] == ["POST"]
+
+
+def test_dispose_pre_cancel_preserves_uncertain_session_and_usage(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    cancellation = threading.Event()
+    cancellation.set()
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-dispose-cancel")
+        session = unknown.value.session
+        assert session is not None
+
+        with pytest.raises(OperationCancelledError) as cancelled:
+            session.dispose(control=OperationControl(cancellation=cancellation))
+
+        assert cancelled.value.session is session
+        assert session.session_info().state == "uncertain"
+        assert owner.count == 1
+        assert owner.events == ["acquire"]
+
+
+def test_dispose_pre_timeout_retains_session_and_usage(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-dispose-timeout")
+        session = unknown.value.session
+        assert session is not None
+        ticks = iter((10.0, 12.0))
+        monkeypatch.setattr(session_module.time, "monotonic", lambda: next(ticks))
+
+        with pytest.raises(OperationTimeoutError) as timed_out:
+            session.dispose(control=OperationControl(timeout_seconds=1))
+
+        assert timed_out.value.session is session
+        assert session.session_info().state == "uncertain"
+        assert owner.count == 1
+        assert owner.events == ["acquire"]
+
+
+def test_dispose_retries_failed_local_client_close_before_runtime_cleanup(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = patch_flaky_client_close(monkeypatch, failures=2)
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-dispose-local-close")
+        session = unknown.value.session
+        assert session is not None
+        assert len(captured) == 1
+        assert captured[0].locally_closed is False
+
+        with pytest.raises(ResourceStateError) as pending:
+            session.dispose()
+
+        assert pending.value.code == "terminal_disposal_pending"
+        assert pending.value.session is session
+        assert len(pending.value.cleanup_errors) == 1
+        assert session.session_info().state == "disposing"
+        assert owner.count == 1
+        assert owner.events == ["acquire"]
+
+        session.dispose()
+
+        assert captured[0].locally_closed is True
+        assert session.session_info().state == "disposed"
+        assert owner.count == 0
+        assert owner.events == ["acquire", "dispose_begin", "dispose_continue"]
+
+
+def test_dispose_timeout_after_local_close_stays_disposing_and_retries(
+    service: ProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured = patch_flaky_client_close(monkeypatch, failures=1)
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as unknown:
+            create_session(connection, "managed-dispose-close-timeout")
+        session = unknown.value.session
+        assert session is not None
+        original_monotonic = time.monotonic
+        ticks = iter((10.0, 10.0, 12.0))
+        monkeypatch.setattr(session_module.time, "monotonic", lambda: next(ticks))
+
+        with pytest.raises(OperationTimeoutError) as timed_out:
+            session.dispose(control=OperationControl(timeout_seconds=1))
+
+        assert timed_out.value.session is session
+        assert captured[0].locally_closed is True
+        assert session.session_info().state == "disposing"
+        assert owner.count == 1
+        assert owner.events == ["acquire"]
+
+        monkeypatch.setattr(session_module.time, "monotonic", original_monotonic)
+        session.dispose()
+
+        assert session.session_info().state == "disposed"
+        assert owner.count == 0
 
 
 def test_session_constructor_is_not_a_public_creation_path() -> None:

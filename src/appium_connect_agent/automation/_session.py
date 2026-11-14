@@ -22,9 +22,16 @@ from selenium.common.exceptions import (
 )
 
 from appium_connect_agent.runtime import (
+    OperationCancelledError as RuntimeOperationCancelledError,
+)
+from appium_connect_agent.runtime import (
     OperationControl,
     RuntimeConnection,
+    RuntimeOperationError,
     RuntimeUsage,
+)
+from appium_connect_agent.runtime import (
+    OperationTimeoutError as RuntimeOperationTimeoutError,
 )
 
 from ._actions import _perform_action, _validate_duration
@@ -1176,6 +1183,106 @@ class Session:
             self._set_state("closed")
             self._reservation.release()
             self._runtime_usage.release()
+        finally:
+            self._operation_gate.release()
+
+    def dispose(self, *, control: OperationControl | None = None) -> None:
+        """Terminally dispose one uncertain Session and its owned managed service."""
+        operation_id, supplied_control, started, deadline = _new_operation(control)
+        effective_control = supplied_control or OperationControl(timeout_seconds=30.0)
+        if deadline is None:
+            deadline = started + effective_control.timeout_seconds
+        if not self._operation_gate.acquire(blocking=False):
+            raise SessionBusyError("session_busy", operation_id, "not_sent")
+        try:
+            with self._state_lock:
+                state = self._state
+            if state == "disposed":
+                return
+            if state not in ("uncertain", "disposing"):
+                raise InvalidSessionStateError(
+                    "session_disposal_invalid", operation_id, "not_sent"
+                )
+            if state == "uncertain":
+                if not self._runtime_usage._supports_terminal_disposal:
+                    raise InvalidSessionStateError(
+                        "unsupported_connection_ownership",
+                        operation_id,
+                        "not_sent",
+                    )
+                try:
+                    _checkpoint(effective_control, deadline, operation_id)
+                except OperationCancelledError as cause:
+                    raise OperationCancelledError(
+                        "operation_cancelled",
+                        operation_id,
+                        "not_sent",
+                        session=self,
+                    ) from cause
+                except OperationTimeoutError as cause:
+                    raise OperationTimeoutError(
+                        "operation_timeout",
+                        operation_id,
+                        "not_sent",
+                        session=self,
+                    ) from cause
+                self._set_state("disposing")
+            cleanup_count = len(self._client.cleanup_errors)
+            self._client.force_close()
+            if not self._client.locally_closed:
+                cleanup_errors = self._client.cleanup_errors[cleanup_count:]
+                raise ResourceStateError(
+                    "terminal_disposal_pending",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=cleanup_errors,
+                )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise OperationTimeoutError(
+                    "operation_timeout", operation_id, "not_sent", session=self
+                )
+            disposal_control = OperationControl(
+                timeout_seconds=remaining,
+                cancellation=effective_control.cancellation,
+            )
+            try:
+                self._runtime_usage._terminal_dispose(disposal_control)
+            except RuntimeOperationCancelledError as cause:
+                raise OperationCancelledError(
+                    "operation_cancelled",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=(cause,),
+                ) from cause
+            except RuntimeOperationTimeoutError as cause:
+                raise OperationTimeoutError(
+                    "operation_timeout",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=(cause,),
+                ) from cause
+            except RuntimeOperationError as cause:
+                raise ResourceStateError(
+                    "terminal_disposal_pending",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=(cause,),
+                ) from cause
+            except Exception as cause:
+                raise ResourceStateError(
+                    "terminal_disposal_pending",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=(cause,),
+                ) from cause
+            self._reservation.release()
+            self._set_state("disposed")
         finally:
             self._operation_gate.release()
 

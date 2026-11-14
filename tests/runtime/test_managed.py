@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 import appium_connect_agent.automation._session as session_module
-from appium_connect_agent.automation import Session, create_session
+from appium_connect_agent.automation import ResourceStateError, Session, create_session
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import (
     EnvironmentBusyError,
@@ -111,6 +111,13 @@ class Server(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6 if host == '::1' else socket.AF_INET
 class Handler(http.server.BaseHTTPRequestHandler):
     requests = 0
+    def do_POST(self):
+        if mode == 'create-unknown' and self.path == base + '/session':
+            self.close_connection = True
+            self.connection.shutdown(socket.SHUT_RDWR)
+            self.connection.close()
+            return
+        self.send_error(404)
     def do_GET(self):
         if self.path != base + '/status':
             self.send_error(404)
@@ -649,6 +656,178 @@ def test_child_exit_after_ready_before_second_proof_is_not_accepted(
     assert caught.value.code == "managed_service_exited"
     assert runtime._managed_scope is None
     assert _service_state(root) == "stopped"
+
+
+def test_terminal_usage_disposal_stops_owned_process_without_scope_exit(
+    tmp_path: Path,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(
+        host="127.0.0.1", port=_unused_port("127.0.0.1"), base_path="/wd/hub"
+    )
+    connection = scope.__enter__()
+    usage = connection.acquire_usage()
+    process = cast(Any, scope).process
+    assert process is not None
+
+    usage._terminal_dispose(OperationControl(timeout_seconds=3))
+
+    assert _service_state(root) == "stopped"
+    assert process.process.returncode is not None
+    assert not process._thread.is_alive()
+    assert process._closed
+    assert runtime._managed_scope is None
+    with pytest.raises(InvalidStateError) as closed:
+        connection.acquire_usage()
+    assert closed.value.code == "connection_closed"
+    with pytest.raises(InvalidStateError) as repeated:
+        usage._terminal_dispose(OperationControl(timeout_seconds=3))
+    assert repeated.value.code == "usage_released"
+    scope.__exit__(None, None, None)
+
+
+def test_response_unknown_session_disposes_real_owned_managed_process(
+    tmp_path: Path,
+) -> None:
+    root, node = _managed_root(tmp_path, mode="create-unknown")
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(
+        host="127.0.0.1", port=_unused_port("127.0.0.1"), base_path="/wd/hub"
+    )
+    connection = scope.__enter__()
+    process = cast(Any, scope).process
+    assert process is not None
+    with pytest.raises(ResourceStateError) as unknown:
+        create_session(connection, "terminal-disposal-device")
+    session = unknown.value.session
+    assert session is not None
+    assert session.session_info().state == "uncertain"
+
+    session.dispose(control=OperationControl(timeout_seconds=3))
+
+    assert session.session_info().state == "disposed"
+    assert _service_state(root) == "stopped"
+    assert process.process.returncode is not None
+    assert not process._thread.is_alive()
+    assert process._closed
+    assert runtime._managed_scope is None
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process.group_id, 0)
+    with _coordination.account_lock():
+        pass
+    scope.__exit__(None, None, None)
+
+
+def test_cancelled_terminal_disposal_is_retryable_without_signal_or_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, node = _managed_root(tmp_path, mode="create-unknown")
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(
+        host="127.0.0.1", port=_unused_port("127.0.0.1"), base_path="/wd/hub"
+    )
+    connection = scope.__enter__()
+    process = cast(Any, scope).process
+    assert process is not None
+    with pytest.raises(ResourceStateError) as unknown:
+        create_session(connection, "terminal-cancel-device")
+    session = unknown.value.session
+    assert session is not None
+    cancellation = threading.Event()
+    signals: list[int] = []
+    original_cleanup = process.cleanup
+    original_killpg = os.killpg
+
+    def cancel_cleanup(operation: Any) -> bool:
+        cancellation.set()
+        return cast(bool, original_cleanup(operation))
+
+    def observed_killpg(group: int, signal_number: int) -> None:
+        if signal_number:
+            signals.append(signal_number)
+        original_killpg(group, signal_number)
+
+    monkeypatch.setattr(process, "cleanup", cancel_cleanup)
+    monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed_killpg)
+    with pytest.raises(session_module.OperationCancelledError) as cancelled:
+        session.dispose(
+            control=OperationControl(timeout_seconds=3, cancellation=cancellation)
+        )
+
+    assert cancelled.value.session is session
+    assert session.session_info().state == "disposing"
+    assert cast(Any, scope)._usages == 0
+    assert signals == []
+    assert process.process.returncode is None
+    assert runtime._managed_scope is scope
+
+    cancellation.clear()
+    monkeypatch.setattr(process, "cleanup", original_cleanup)
+    session.dispose(control=OperationControl(timeout_seconds=3))
+
+    assert session.session_info().state == "disposed"
+    assert signals == [signal.SIGTERM]
+    assert process.process.returncode is not None
+    assert runtime._managed_scope is None
+    scope.__exit__(None, None, None)
+
+
+def test_terminal_disposal_proves_lock_release_after_real_exit_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, node = _managed_root(tmp_path, mode="create-unknown")
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(
+        host="127.0.0.1", port=_unused_port("127.0.0.1"), base_path="/wd/hub"
+    )
+    connection = scope.__enter__()
+    process = cast(Any, scope).process
+    lock_context = cast(Any, scope).lock
+    assert process is not None
+    assert lock_context is not None
+    descriptors = cast(list[int], lock_context.gen.gi_frame.f_locals["descriptors"])
+    lock_descriptor = descriptors[-1]
+    close_calls = 0
+    failed = False
+    original_close = _coordination.os.close
+
+    def close_then_fail(descriptor: int) -> None:
+        nonlocal close_calls, failed
+        close_calls += 1
+        original_close(descriptor)
+        if descriptor == lock_descriptor and not failed:
+            failed = True
+            raise OSError("lock descriptor close failed")
+
+    monkeypatch.setattr(_coordination.os, "close", close_then_fail)
+    with pytest.raises(ResourceStateError) as unknown:
+        create_session(connection, "terminal-lock-device")
+    session = unknown.value.session
+    assert session is not None
+
+    with pytest.raises(ResourceStateError) as pending:
+        session.dispose(control=OperationControl(timeout_seconds=3))
+
+    assert pending.value.code == "terminal_disposal_pending"
+    assert pending.value.session is session
+    assert session.session_info().state == "disposing"
+    assert process.process.returncode is not None
+    assert cast(Any, scope).state == "cleanup_pending"
+    assert cast(Any, scope).lock is None
+    assert cast(Any, scope)._lock_release_pending is True
+    assert runtime._managed_scope is scope
+
+    session.dispose(control=OperationControl(timeout_seconds=3))
+
+    assert close_calls > 1
+    assert session.session_info().state == "disposed"
+    assert cast(Any, scope)._lock_release_pending is False
+    assert runtime._managed_scope is None
+    with _coordination.account_lock():
+        pass
+    scope.__exit__(None, None, None)
+
 
 
 @pytest.mark.parametrize("mode", ["version-2", "version-invalid"])
