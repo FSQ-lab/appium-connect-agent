@@ -1,0 +1,87 @@
+name: PR Governance
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-governance:
+    name: PR Governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate PR template sections and Issue linkage
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        shell: python
+        run: |
+          import os
+          import re
+          import sys
+
+          title = (os.environ.get("PR_TITLE") or "").strip()
+          raw_body = os.environ.get("PR_BODY") or ""
+          # Strip HTML template comments before checking filled content.
+          body = re.sub(r"<!--.*?-->", "", raw_body, flags=re.DOTALL)
+
+          errors: list[str] = []
+          if not title:
+              errors.append("PR title must not be empty.")
+
+          required_headings = (
+              "## 问题与改后行为",
+              "## 主要改动",
+              "## 关联 Issue",
+              "## SPEC 判定",
+              "## 库复用与选型依据",
+              "## 实际验证与 Issue 验收",
+              "## 限制与兼容性影响",
+          )
+          for heading in required_headings:
+              if heading not in body:
+                  errors.append(f"Missing required PR template heading: {heading}")
+
+          def section_content(heading: str) -> str:
+              pattern = rf"(?ms)^{re.escape(heading)}\s*\n(.*?)(?=^## |\Z)"
+              match = re.search(pattern, body)
+              return match.group(1).strip() if match else ""
+
+          for heading in required_headings:
+              if heading in body and not section_content(heading):
+                  errors.append(f"PR section must not be empty: {heading}")
+
+          issue_section = section_content("## 关联 Issue")
+          if issue_section and not re.search(
+              r"\b(?:Closes|Fixes|Resolves|Refs)\s+#[1-9]\d*\b",
+              issue_section,
+              flags=re.IGNORECASE,
+          ):
+              errors.append(
+                  "Section '## 关联 Issue' must link an Issue using 'Closes #N' or 'Refs #N'."
+              )
+
+          spec_section = section_content("## SPEC 判定")
+          if spec_section and not re.search(
+              r"\b(?:no-delta|delta)\b",
+              spec_section,
+              flags=re.IGNORECASE,
+          ):
+              errors.append(
+                  "Section '## SPEC 判定' must state 'delta' or 'no-delta'."
+              )
+
+          if errors:
+              for item in errors:
+                  print(f"::error::{item}", file=sys.stderr)
+              raise SystemExit(1)
+
+          print("PR governance checks passed.")

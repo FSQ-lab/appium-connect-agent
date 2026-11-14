@@ -36,19 +36,6 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]
 
-[[tool.uv.index]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-explicit = true
-
-[[tool.uv.index]]
-name = "corporate"
-url = "https://packagefeedproxy.microsoft.io/pypi/simple/"
-default = true
-
-[tool.uv.sources]
-Appium-Python-Client = { index = "tsinghua" }
-
 [tool.uv.build-backend]
 source-include = ["typings/nodesemver/__init__.pyi"]
 
