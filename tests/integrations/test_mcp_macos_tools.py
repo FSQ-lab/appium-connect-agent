@@ -27,7 +27,10 @@ from appium_connect_agent.integrations._application import (
 )
 from appium_connect_agent.integrations._cli_protocol import StopRequest
 from appium_connect_agent.integrations._daemon import create_and_serve_daemon
-from appium_connect_agent.integrations._models import AutomationLocatorDocument
+from appium_connect_agent.integrations._models import (
+    AppLifecycleRequest,
+    AutomationLocatorDocument,
+)
 from appium_connect_agent.integrations._server import create_server
 from appium_connect_agent.integrations._toolcall import build_tool_bindings
 from appium_connect_agent.runtime import DiagnosticCheck, DiagnosticReport
@@ -755,10 +758,9 @@ def test_sensitive_macos_inputs_never_reach_errors_or_logs(
     [
         "/Applications/./Calculator.app",
         "/Applications/../Calculator.app",
-        "/Applications//Calculator.app",
     ],
 )
-def test_macos_app_path_rejects_lexical_dot_and_empty_segments(
+def test_macos_app_path_rejects_lexical_dot_segments(
     app_path: str,
 ) -> None:
     application, _ = _mac_application()
@@ -782,6 +784,27 @@ def test_macos_app_path_rejects_lexical_dot_and_empty_segments(
         await application.aclose()
 
     anyio.run(scenario)
+
+
+@pytest.mark.parametrize(
+    "app_path",
+    [
+        "/Applications//Calculator.app",
+        "/Applications/Calculator.app/",
+    ],
+)
+def test_macos_app_path_accepts_posix_empty_separator_segments(
+    app_path: str,
+) -> None:
+    validated = AppLifecycleRequest.model_validate(
+        {
+            "schema_version": 1,
+            "session_handle": _HANDLE,
+            "intent": "launch",
+            "app_path": app_path,
+        }
+    )
+    assert validated.root.intent == "launch"
 
 
 def test_automation_locator_document_preserves_predicate_presence() -> None:

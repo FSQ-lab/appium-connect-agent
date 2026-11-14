@@ -110,7 +110,7 @@ def _mac_app_path(value: str) -> str:
     path = Path(value)
     if (
         not path.is_absolute()
-        or any(segment in {"", ".", ".."} for segment in segments[1:])
+        or any(segment in {".", ".."} for segment in segments[1:])
         or path.suffix.casefold() != ".app"
         or any(unicodedata.category(character) == "Cc" for character in value)
         or len(value.encode("utf-8", errors="strict")) > 4096
