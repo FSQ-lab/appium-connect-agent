@@ -376,3 +376,26 @@ RuntimeUsage.release() -> None
 ### Deferred By Design
 
 - stopped scope内再次单独start；usage drain/force/自动Session quit或恢复；自动重启/retry/fallback/换端口；恢复旧Session；跨进程attach/PID接管；external或远程stop/restart；多managed服务、daemon；Appium/driver维护或Doctor；设备/ADB/UI；generation持久化、公开计数/PID/result DTO、遥测和原始日志，均不在本feature，也不预建占位Interface。
+
+## macOS Mac2 Static Diagnostics And Managed Cleanup Query
+
+本节定义 Issue #31 `RT-MAC-01` 的已确认 Runtime 增量；默认 Android / UiAutomator2 静态诊断、安装、维护、服务与设备行为保持不变。
+
+### Public Interface And Locking
+
+- `Runtime.diagnose(*, target_driver: OfficialDriver = "uiautomator2", control: OperationControl | None = None) -> DiagnosticReport` 增加目标选择。默认值的报告头、检查顺序、状态、reason code 与 evidence 保持兼容；`xcuitest` 在对应批次确认前以固定 `ValueError` 拒绝，bool、非字符串和未知值在锁与 I/O 前拒绝。
+- `Runtime.managed_cleanup_pending: bool` 是只读、O(1)、零 I/O 属性，表示同一 Runtime 是否仍持有待 `cleanup_managed()` 继续处理的 owned service 句柄。
+- `_managed_scope` 与 `_managed_cleanup` 的所有产品代码读写都通过 `_managed_guard` 下的原子 helper；公开属性与 `cleanup_managed()` 使用同一快照。`_ManagedScope._usage_lock` 和 `Runtime._managed_guard` 绝不嵌套持有。
+
+### Mac2 Static Diagnostic Behavior
+
+- `target_driver="mac2"` 返回 `host="macOS"`、`target="macOS"`、`driver="Mac2"`。诊断不执行子进程、不发 HTTP、不运行 Driver Doctor，不写组件、记录或安装目录；唯一允许写入仍是既有账号级 `runtime.lock` 协调资源。
+- `server_mode="managed"`，或没有显式 Appium executable/home 且固定 `~/.appium-connect-agent` 存在（含 symlink）时，使用受管根分支。它按既有当前 UID、mode、普通非链接目录、marker、根条目与 records namespace 规则读取；报告 `managed_root_ready`、`missing`、`managed_recovery_required`、`managed_service_active` 或 `managed_root_conflict`，不修复或接管现场。
+- 受管分支静态读取 `appium/node_modules/appium` 与 `driver-home/node_modules/appium-mac2-driver`；driver 必须是当前 UID 拥有的非链接 package 目录，且 package name、`appium.driverName="mac2"`、`appium.automationName="Mac2"` 和 strict SemVer 均有效。外部分支沿显式 Appium 路径和显式/default Appium home 检查相同 Mac2 identity；默认 `~/.appium` 只能报告 `home_association_unknown`。
+- Node/npm 保持既有静态候选检查。`declared_compatibility` 继续复用锁定 `node-semver==0.9.1` 处理 Appium、Mac2 driver 与 npm 声明；`qualified_support=unknown/not_qualified`，`service` 与 `device` 为 `unknown/not_checked`。Java 与 Android SDK 为 `not_applicable/not_applicable_for_driver`。
+
+### Xcode Layout And Verification Boundary
+
+- Xcode 检查只信任系统 `/Applications`。若 `/var/db/xcode_select_link` 是 symlink，其目标必须精确匹配 `/Applications/Xcode*.app/Contents/Developer`；`/Applications`、bundle、`Contents`、`Info.plist`、`Developer/usr/bin/xcodebuild` 全链逐级 `lstat` 且零 symlink，两个叶文件必须是普通文件，`Info.plist` 通过既有有界 Reader 读取。合规则 `xcode_developer_dir_observed`；Command Line Tools 目标为 `command_line_tools_only`，其他目标为 `invalid_developer_directory`。
+- xcode-select link 缺失时最多按名称排序检查 16 个 `/Applications/Xcode*.app`；存在完整 bundle 但 active developer dir 未知时报告 `active_developer_dir_unknown`，否则 `missing`；权限或 I/O 不确定性报告 `path_unreadable`。不扫描用户 Applications，不调用 `xcode-select` 或 `xcodebuild`。
+- 永久测试必须覆盖默认 Android 零变化、目标纯值拒绝、受管根 ready/missing/损坏/非终态、外部 Mac2 identity、strict SemVer、Xcode 完整/CLT-only/缺失/symlink/I/O 分支、零子进程/网络写入，以及 cleanup pending 初始 false、提前退出 true、显式 cleanup 后 false 与并发锁顺序。真实受管根静态诊断、发行物验证和独立完整审查仍是 Issue Done gate。

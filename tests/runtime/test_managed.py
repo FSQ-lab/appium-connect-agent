@@ -800,6 +800,7 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
 ) -> None:
     _, node = _managed_root(tmp_path)
     runtime = Runtime(LocalSettings(node_executable=node))
+    assert runtime.managed_cleanup_pending is False
     scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
     connection = scope.__enter__()
     usage = connection.acquire_usage()
@@ -814,6 +815,7 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
 
     monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed)
     scope.__exit__(RuntimeError, primary, None)
+    assert runtime.managed_cleanup_pending is True
     assert signals == []
     attached = primary.__dict__["runtime_managed_cleanup_error"]
     assert isinstance(attached, ServiceLifecycleError)
@@ -825,6 +827,7 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
     usage.release()
     assert signals == []
     runtime.cleanup_managed()
+    assert runtime.managed_cleanup_pending is False
     assert signal.SIGTERM in signals
 
 
@@ -981,6 +984,7 @@ def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
         assert owner.state == "cleanup_pending"
         assert runtime._managed_scope is owner
         assert runtime._managed_cleanup is owner
+        assert runtime.managed_cleanup_pending is True
         assert cast(Any, scope).process is process
         assert _service_state(root) == "cleanup_pending"
         other = Runtime(LocalSettings(node_executable=node))
@@ -998,6 +1002,7 @@ def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
         assert cast(Any, scope).process is None
         assert runtime._managed_scope is None
         assert runtime._managed_cleanup is None
+        assert runtime.managed_cleanup_pending is False
         assert _service_state(root) == "stopped"
         with _coordination.account_lock():
             pass

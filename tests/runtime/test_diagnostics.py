@@ -1005,3 +1005,249 @@ def test_lib02_f1_actual_account_failures_still_map(
             Runtime(LocalSettings()).diagnose()
     assert _coordination._account_home is actual_home
     assert Runtime(LocalSettings()).diagnose().checks
+
+
+def _mac_checks(runtime: Runtime) -> dict[str, DiagnosticCheck]:
+    return {
+        check.check_id: check for check in runtime.diagnose(target_driver="mac2").checks
+    }
+
+
+def _write_xcode(applications: Path, name: str = "Xcode.app") -> Path:
+    bundle = applications / name
+    (bundle / "Contents/Developer/usr/bin").mkdir(parents=True)
+    (bundle / "Contents/Info.plist").write_bytes(b"plist")
+    (bundle / "Contents/Developer/usr/bin/xcodebuild").write_text("not executed")
+    return bundle
+
+
+def _managed_mac_root(home: Path, *, service_state: str = "stopped") -> Path:
+    root = home / ".appium-connect-agent"
+    root.mkdir(mode=0o700)
+    (root / "managed.json").write_text(
+        json.dumps({"owner": "appium-connect-agent", "schema": 1})
+    )
+    (root / "managed.json").chmod(0o600)
+    records = root / "records"
+    records.mkdir()
+    installation = records / "installation.json"
+    installation.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "state": "complete",
+                "operation_id": "test-installation",
+                "combination_id": "macos-android-uiautomator2",
+                "changed": False,
+            }
+        )
+    )
+    installation.chmod(0o600)
+    service = records / "service.json"
+    service.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "state": service_state,
+                "operation_id": "test-service",
+                "host": "127.0.0.1",
+                "port": 4723,
+                "base_path": "",
+            }
+        )
+    )
+    service.chmod(0o600)
+    write_package(
+        root / "appium/node_modules/appium",
+        "appium",
+        "3.7.0",
+        engines={"npm": ">=10"},
+    )
+    write_package(
+        root / "driver-home/node_modules/appium-mac2-driver",
+        "appium-mac2-driver",
+        "4.6.1",
+        appium={"driverName": "mac2", "automationName": "Mac2"},
+        peerDependencies={"appium": "^3.0.0-rc.2"},
+    )
+    return root
+
+
+def test_target_driver_validation_precedes_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unexpected I/O")
+
+    runtime = Runtime(LocalSettings())
+    monkeypatch.setattr(os, "open", forbidden)
+    for value in (True, 1, None, "unknown"):
+        with pytest.raises(ValueError):
+            runtime.diagnose(target_driver=value)  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError,
+        match="target_driver 'xcuitest' diagnostics are not yet enabled",
+    ):
+        runtime.diagnose(target_driver="xcuitest")
+
+
+def test_default_diagnostics_are_identical_to_explicit_uiautomator2(
+    tmp_path: Path,
+) -> None:
+    runtime = Runtime(settings(tmp_path))
+    default = runtime.diagnose()
+    explicit = runtime.diagnose(target_driver="uiautomator2")
+    assert default.host == explicit.host == "macOS"
+    assert default.target == explicit.target == "Android"
+    assert default.driver == explicit.driver == "UiAutomator2"
+    assert default.checks == explicit.checks
+
+
+def test_mac2_external_diagnostics_are_static_and_target_aware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    appium = write_package(tmp_path / "appium", "appium", "3.7.0")
+    home = tmp_path / "home"
+    write_package(
+        home / "node_modules/appium-mac2-driver",
+        "appium-mac2-driver",
+        "4.6.1",
+        appium={"driverName": "mac2", "automationName": "Mac2"},
+        peerDependencies={"appium": "^3.0.0-rc.2"},
+    )
+    applications = tmp_path / "Applications"
+    bundle = _write_xcode(applications)
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(bundle / "Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unexpected execution/network")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    report = Runtime(
+        LocalSettings(appium_executable=appium, appium_home=home)
+    ).diagnose(target_driver="mac2")
+    result = {check.check_id: check for check in report.checks}
+    assert (report.host, report.target, report.driver) == ("macOS", "macOS", "Mac2")
+    assert result["appium_installation"].status == "pass"
+    assert result["driver_installation"].status == "pass"
+    assert result["xcode_layout"].reason_code == "xcode_developer_dir_observed"
+    assert result["java_layout"].status == "not_applicable"
+    assert result["android_sdk_layout"].reason_code == "not_applicable_for_driver"
+
+
+@pytest.mark.parametrize(
+    "service_state,expected",
+    [
+        ("stopped", "managed_root_ready"),
+        ("active", "managed_service_active"),
+        ("cleanup_pending", "managed_recovery_required"),
+    ],
+)
+def test_mac2_managed_root_and_record_states(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    service_state: str,
+    expected: str,
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    _managed_mac_root(_coordination._account_home(), service_state=service_state)
+    applications = tmp_path / "Applications"
+    _write_xcode(applications)
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(
+        _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
+    )
+    result = _mac_checks(Runtime(LocalSettings()))
+    assert result["managed_root"].reason_code == expected
+    assert result["appium_installation"].status == "pass"
+    assert result["driver_installation"].status == "pass"
+
+
+def test_mac2_managed_root_missing_and_driver_identity_damage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(
+        _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
+    )
+    managed = LocalSettings(
+        server_mode="managed", managed_host="127.0.0.1", managed_port=4723
+    )
+    missing = _mac_checks(Runtime(managed))
+    assert missing["managed_root"].reason_code == "missing"
+    assert missing["appium_installation"].status == "fail"
+    assert missing["driver_installation"].status == "fail"
+
+    root = _managed_mac_root(_coordination._account_home())
+    metadata = root / "driver-home/node_modules/appium-mac2-driver/package.json"
+    value = json.loads(metadata.read_text())
+    value["appium"]["driverName"] = "wrong"
+    metadata.write_text(json.dumps(value))
+    damaged = _mac_checks(Runtime(managed))
+    assert damaged["managed_root"].reason_code == "managed_root_ready"
+    assert damaged["driver_installation"].status == "unknown"
+    assert damaged["driver_installation"].reason_code == "unrecognized_driver"
+
+
+def test_mac2_xcode_io_failure_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    link = tmp_path / "xcode_select_link"
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+    actual_lstat = Path.lstat
+
+    def denied(path: Path) -> os.stat_result:
+        if path == link:
+            raise PermissionError("not readable")
+        return actual_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", denied)
+    assert (
+        _mac_checks(Runtime(LocalSettings()))["xcode_layout"].reason_code
+        == "path_unreadable"
+    )
+
+
+def test_mac2_xcode_layout_clt_missing_and_symlink_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    link = tmp_path / "xcode_select_link"
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+    link.symlink_to("/Library/Developer/CommandLineTools")
+    assert (
+        _mac_checks(Runtime(LocalSettings()))["xcode_layout"].reason_code
+        == "command_line_tools_only"
+    )
+    link.unlink()
+    assert (
+        _mac_checks(Runtime(LocalSettings()))["xcode_layout"].reason_code == "missing"
+    )
+    bundle = _write_xcode(applications)
+    (bundle / "Contents/Developer/usr/bin/xcodebuild").unlink()
+    (bundle / "Contents/Developer/usr/bin/xcodebuild").symlink_to(
+        bundle / "Contents/Info.plist"
+    )
+    link.symlink_to(bundle / "Contents/Developer")
+    assert (
+        _mac_checks(Runtime(LocalSettings()))["xcode_layout"].reason_code
+        == "invalid_developer_directory"
+    )

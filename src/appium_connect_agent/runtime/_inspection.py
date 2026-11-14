@@ -177,14 +177,21 @@ class Reader:
             root = root.parent
         raise Finding(problem)
 
-    def driver(self, home: Path) -> Package:
-        root = home / "node_modules" / "appium-uiautomator2-driver"
+    def driver(
+        self,
+        home: Path,
+        *,
+        package_name: str = "appium-uiautomator2-driver",
+        driver_name: str = "uiautomator2",
+        automation_name: str = "UiAutomator2",
+    ) -> Package:
+        root = home / "node_modules" / package_name
         data = self.metadata(root / "package.json")
         appium = mapping(data.get("appium"))
         if (
-            data.get("name") != "appium-uiautomator2-driver"
-            or appium.get("driverName") != "uiautomator2"
-            or appium.get("automationName") != "UiAutomator2"
+            data.get("name") != package_name
+            or appium.get("driverName") != driver_name
+            or appium.get("automationName") != automation_name
         ):
             raise Finding("unrecognized_driver")
         return package_value(normalized(root), data)

@@ -1545,11 +1545,12 @@ def install(
 ) -> InstallationResult:
     operation = _InstallOperation(runtime, control)
     _ = request.combination_id
+    managed_scope, _ = runtime._snapshot_managed_state()
     if (
         runtime._installing
         or runtime._active_thread is not None
         or runtime._diagnosing
-        or runtime._managed_scope is not None
+        or managed_scope is not None
     ):
         raise operation.error(EnvironmentBusyError, "environment_busy")
     runtime._installing = True
