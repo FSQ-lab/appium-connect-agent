@@ -643,3 +643,28 @@
 - 截图 PNG `bytes` 与远端 Base64 文本可能含敏感屏幕内容，仅在内存返回给当前直接调用方；严禁写入日志、落盘文件、受控异常消息、测试固定快照或仓库持久化证据。
 - 永久受控测试须使用锁定真实 `Appium-Python-Client==6.0.8` / `selenium==4.51.0` 和本地 HTTP 协议服务覆盖精确 HTTP 路由与载荷（含单 `touch` 指针无冗余设备，以及缺失 `"value"` 键与服务端非 `null` 拒绝）、合法 67 字节最小 1×1 PNG、57 字节空 IDAT/无 IDAT/坏 chunk CRC/尾随字节/Base64/32MiB±1 边界、坐标与 `duration_ms` 类型/值域边界、`duration_ms` 剩余预算门禁、共享 gate、取消/超时/unknown 隔离及异常零泄漏；另须通过全仓质量、发行物隔离安装、独立完整差异审查及获准无敏感页面（Calculator）真机内存截图与坐标触控闭环验收。
 
+
+## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
+
+### Platform And Session Interface
+
+- `AutomationPlatform` 为 `Literal["android", "macos"]`。`SessionInfo` 在既有六字段后追加默认 `platform="android"`；Android 调用与序列化语义不变。公开入口 `create_mac2_session(connection, *, bundle_id=None, app_path=None, arguments=None, no_reset=True, skip_app_kill=None, show_server_logs=False, server_startup_timeout_ms=None, new_command_timeout_seconds=300.0, control=None)` 创建本机 Mac2 Session。
+- Mac2 固定发送 `platformName=Mac`、`appium:automationName=Mac2`、`appium:systemHost=127.0.0.1`，使用独立 `10100..10199` 端口池与单宿主槽位 `macos:local`。它不占用 Android `8200..8299` 端口或设备槽；同进程重叠 Mac2 创建在请求前返回 `device_busy/not_sent`。Session 继续复用既有非阻塞 gate、Runtime usage lease、confirmed quit 释放与 retained uncertain Session 错误合同。
+- `bundle_id` 可省略，否则必须为 1..255 ASCII 且匹配 `[A-Za-z0-9][A-Za-z0-9.-]{0,254}`。`app_path` 只接受绝对 `Path` `.app` bundle；从文件系统根到 bundle、`Contents`、`Info.plist` 的每级 `lstat` 必须无 symlink，bundle/Contents 为目录，Info.plist 为可读普通文件。路径严格 UTF-8、最多 4096 bytes、无控制字符，并以原值发送为 `appium:appPath`。
+- `arguments` 可省略；提供时要求已有 bundle_id 或 app_path，必须为非 str/bytes 的 `Sequence[str]`，最多 64 项，每项严格 UTF-8、最多 4096 code points且无 NUL。布尔参数必须为实际 bool；startup timeout 为 `1000..600000` ms 的实际 int；new-command timeout 为 `0..86400` 的有限数值。全部纯值校验发生在 usage、reservation 与请求前，受控错误不回显路径、arguments 或上游异常原文。
+- `SessionInfo(platform="macos", device_id="macos:local")` 的 `target_app_id` 优先使用显式 bundle_id，否则按 `CFBundleIdentifier`、`appium:bundleId`、`bundleId` 顺序接受合法响应字符串。
+
+### Mac2 Element Locators
+
+- `ElementBy` 支持 `id`、`accessibility id`、`xpath`、`name`、`class name`、`-ios predicate string`、`-ios class chain`。Android 仍仅支持前三项且拒绝 predicate。
+- Mac2 Element 禁止 package 与 raw_id，禁止 parent+xpath。可选 predicate 必须为 1..4096 code points 的严格 UTF-8 非 NUL 字符串。解析先按主 locator 查询，再按 `-ios predicate string` 查询，在同一 operation gateway/deadline 内以非空 WebElement id 求交；保留主结果顺序并按 id 去重，继续执行唯一性合同。Mac2 不执行 Android `disableIdLocatorAutocompletion` Settings transaction。
+- AUTO-MAC-01A 尚未启用 Mac2 Element 动作与 Device 方法。各方法先完成纯值参数校验，再在 gate 与任何外部请求前返回 `unsupported_operation/not_sent`；后续 AUTO-MAC-01B 单独激活。
+
+### XCUI Attribute And Structure Observation
+
+- Mac2 `Element.inspect` 只接受最多 14 个不重复属性：`id,text,type,label,title,value,placeholder_value,element_type,enabled,focused,selected,hittable,displayed,bounds`。跨平台专属属性在 gate/I/O 前返回 `unsupported_operation/not_sent`。读取使用 Mac2 公开 XCUI 属性与 WebElement state/text/rect；`element_type` 的非负十进制字符串转 int，缺失为 missing，非法值为 unknown。
+- Mac2 `observe_tree` 不读写 Android Settings。它先执行一次 `macos: listDisplays`，严格验证 display map；仅在恰好一个主屏位于 `(0,0)` 且宽高为正整数时生成已知 Viewport，否则生成 unknown Viewport。随后取得一次 page source。`inspect_structure` 直接取得 page source。SourceMetadata 固定 `enable_multi_windows=False, allow_invisible_elements=True, snapshot_max_depth=None`。
+- XCUI XML 继续使用 defusedxml，并沿用 4 MiB、20000 nodes、128 depth、64 attributes/node 等安全上限。根 tag 必须以 `XCUIElementType` 开头，且根自身是顶层真实节点。节点映射保留 type/identifier/label/title/value/placeholderValue/elementType/enabled/selected 与整数 x/y/width/height；text 严格按 `value -> label -> placeholderValue -> title -> ""` 合成。零尺寸或未知 Viewport 节点保持 unknown 可见性；已知正尺寸结合主屏计算 relation/visibility。
+- Mac2 tree JSON 字段为 `type,id,text,label,title,value,placeholder_value,element_type,enabled,selected,bounds`；`XCUIElementType` 拆为 namespace，默认 enabled=true 与 selected=false 省略，父子同 bounds 使用 `"parent"`。完整文档沿用 65536-byte full→visible+ancestors→`observation_too_large` 合同。
+- Mac2 局部结构链只接受无 predicate 的 `id`、`accessibility id`、`name`、`class name`；前三者精确匹配 XML `identifier`，后者精确匹配 tag。xpath、predicate 与 iOS predicate/class-chain locator 在任何外部请求前返回 `structure_scope_unavailable/not_sent`。
+- Android `LocatorValue` JSON 继续只含 `by,package,parent,raw_id,value` 五键，既有 TreeObservation、ElementInspection、RawStructureObservation canonical bytes 不变；Mac2 scope locator 额外序列化 `predicate`。

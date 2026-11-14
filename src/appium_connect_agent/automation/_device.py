@@ -54,6 +54,7 @@ class Device:
         """Activate an explicit package, without waiting for a business page."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         _check_app_id(app_id, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -67,6 +68,7 @@ class Device:
         """Force-stop an explicit package; preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         _check_app_id(app_id, operation_id)
+        owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -80,6 +82,7 @@ class Device:
         """Read one official state sample (0, 1, 3 or 4), not health."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         _check_app_id(app_id, operation_id)
+        owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -96,6 +99,10 @@ class Device:
     ) -> None:
         """Install one local APK without activating or verifying the app."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        if owner.platform == "macos":
+            if not isinstance(app_path, Path) or type(allow_test_packages) is not bool:
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            owner._reject_macos(operation_id)
         app_path = _check_app_path(app_path, operation_id)
         allow_test_packages = _check_bool(allow_test_packages, operation_id)
         owner._run_operation(
@@ -116,6 +123,7 @@ class Device:
         """Remove one explicit package and preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         _check_app_id(app_id, operation_id)
+        owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -132,6 +140,7 @@ class Device:
         """Send one panel command; output does not prove panel visibility."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         command = _status_bar_command(command, operation_id)
+        owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -141,6 +150,7 @@ class Device:
 
     def back(self, *, control: OperationControl | None = None) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
         owner._run_operation(operation_id, control, deadline, _back)
 
     def press_keycode(
@@ -155,6 +165,7 @@ class Device:
         keycode, metastate, flags = _key_arguments(
             keycode, metastate, flags, operation_id
         )
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -181,6 +192,7 @@ class Device:
         keycode, metastate, flags = _key_arguments(
             keycode, metastate, flags, operation_id
         )
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -197,10 +209,12 @@ class Device:
 
     def hide_keyboard(self, *, control: OperationControl | None = None) -> bool:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
         return owner._run_operation(operation_id, control, deadline, _hide_keyboard)
 
     def get_clipboard_text(self, *, control: OperationControl | None = None) -> str:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id, control, deadline, _get_clipboard_text
         )
@@ -215,6 +229,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         content = _clipboard_content(text, operation_id)
         label = _label(label, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -232,6 +247,7 @@ class Device:
     ) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         button_label = _label(button_label, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -249,6 +265,7 @@ class Device:
     ) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         button_label = _label(button_label, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -261,6 +278,7 @@ class Device:
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
 
     def tap_at(
@@ -270,6 +288,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_x = _coordinate(x, operation_id)
         valid_y = _coordinate(y, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -294,6 +313,7 @@ class Device:
         valid_ex = _coordinate(end_x, operation_id)
         valid_ey = _coordinate(end_y, operation_id)
         valid_duration = _duration_ms(duration_ms, operation_id)
+        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,

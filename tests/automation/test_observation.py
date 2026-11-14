@@ -34,6 +34,7 @@ from appium_connect_agent.automation import (
     SessionBusyError,
     TargetError,
     TreeObservation,
+    create_mac2_session,
     create_session,
 )
 from appium_connect_agent.contracts import LocalSettings
@@ -113,6 +114,13 @@ class ElementProtocolService:
             "disableIdLocatorAutocompletion": False,
             "enableMultiWindows": True,
             "snapshotMaxDepth": 70,
+        }
+        self.displays: object = {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1440, "height": 900},
+            }
         }
         self.source = basic_xml()
         self._lock = threading.Lock()
@@ -205,6 +213,8 @@ class ElementProtocolService:
             return f"settings:{request.method.lower()}"
         if path.endswith("/source"):
             return "source"
+        if path.endswith("/execute/sync"):
+            return "execute"
         if request.method == "POST" and path.endswith("/elements"):
             return "find"
         if "/attribute/" in path:
@@ -215,6 +225,10 @@ class ElementProtocolService:
             return "rect"
         if path.endswith("/displayed"):
             return "displayed"
+        if path.endswith("/enabled"):
+            return "enabled"
+        if path.endswith("/selected"):
+            return "selected"
         return "unknown"
 
     def _default_payload(self, request: Request, kind: str) -> object:
@@ -244,6 +258,9 @@ class ElementProtocolService:
             return {"value": dict(self.settings)}
         if kind == "source":
             return {"value": self.source}
+        if kind == "execute":
+            assert request.body == {"script": "macos: listDisplays", "args": []}
+            return {"value": self.displays}
         if kind == "find":
             assert request.body is not None
             using = request.body["using"]
@@ -268,6 +285,10 @@ class ElementProtocolService:
             }
         if kind == "displayed":
             return {"value": self.attributes.get((element_id, "displayed"))}
+        if kind == "enabled":
+            return {"value": self.attributes.get((element_id, "enabled"))}
+        if kind == "selected":
+            return {"value": self.attributes.get((element_id, "selected"))}
         return {"value": None}
 
     def _handle(self, handler: BaseHTTPRequestHandler) -> None:
@@ -335,6 +356,13 @@ def session_for(
 ) -> Session:
     del service
     return create_session(connection, device, app_id=app_id)
+
+
+def mac_session_for(
+    service: ElementProtocolService, connection: RuntimeConnection
+) -> Session:
+    del service
+    return create_mac2_session(connection)
 
 
 def w3c_error(message: str = "failed") -> dict[str, object]:
@@ -3000,4 +3028,171 @@ def test_reversed_exact_edge_with_orthogonal_outside_conflict_is_unknown(
         data = document(result)["payload"]["roots"][0]
         assert data["viewport_relation"] == "unknown"
         assert "bounds" in data["unknown"]
+        session.quit()
+
+
+def test_mac2_predicate_intersection_preserves_primary_order_and_json(
+    service: ElementProtocolService,
+) -> None:
+    service.matches[(None, "name", "result")] = ["a", "b", "a"]
+    service.matches[(None, "-ios predicate string", "label == 'Result'")] = ["b"]
+    service.attributes[("b", "identifier")] = "result-id"
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        element = session.element("name", "result", predicate="label == 'Result'")
+        result = element.inspect(attributes=("id",))
+        decoded = document(result)
+        assert result.attributes[0].value == "result-id"
+        assert decoded["scope"]["locator"]["predicate"] == "label == 'Result'"
+        finds = service.of_kind("find")
+        assert [request.body for request in finds] == [
+            {"using": "name", "value": "result"},
+            {"using": "-ios predicate string", "value": "label == 'Result'"},
+        ]
+        session.quit()
+
+
+def test_mac2_inspection_reads_xcui_attributes(
+    service: ElementProtocolService,
+) -> None:
+    service.attributes.update(
+        {
+            ("target", "identifier"): "equals",
+            ("target", "text"): "42",
+            ("target", "amType"): "Button",
+            ("target", "label"): "Equals",
+            ("target", "title"): "Equals title",
+            ("target", "value"): "42",
+            ("target", "placeholderValue"): "placeholder",
+            ("target", "elementType"): "9",
+            ("target", "enabled"): True,
+            ("target", "focused"): "false",
+            ("target", "selected"): False,
+            ("target", "hittable"): "true",
+            ("target", "displayed"): True,
+        }
+    )
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        result = session.element("id", "equals").inspect(
+            attributes=(
+                "id",
+                "text",
+                "type",
+                "label",
+                "title",
+                "value",
+                "placeholder_value",
+                "element_type",
+                "enabled",
+                "focused",
+                "selected",
+                "hittable",
+                "displayed",
+                "bounds",
+            )
+        )
+        values = {item.name: item.value for item in result.attributes}
+        assert values["element_type"] == 9
+        assert values["focused"] is False
+        assert values["hittable"] is True
+        assert values["bounds"] is not None
+        assert service.of_kind("settings:get") == []
+        session.quit()
+
+
+def test_mac2_tree_preserves_xcui_root_and_uses_main_display(
+    service: ElementProtocolService,
+) -> None:
+    service.source = (
+        '<XCUIElementTypeApplication elementType="1" identifier="calc" '
+        'label="Calculator" enabled="true" selected="false" '
+        'x="0" y="0" width="0" height="0">'
+        '<XCUIElementTypeButton elementType="9" identifier="equals" '
+        'label="Equals" title="Equals title" value="42" '
+        'placeholderValue="placeholder" enabled="true" selected="false" '
+        'x="10" y="20" width="30" height="40"/>'
+        "</XCUIElementTypeApplication>"
+    )
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        result = session.observe_tree()
+        decoded = document(result)
+        assert result.viewport.width.value == 1440
+        assert len(result.roots) == 1
+        root = result.roots[0]
+        assert root.type.value == "XCUIElementTypeApplication"
+        assert root.visibility == "unknown"
+        assert root.children[0].text.value == "42"
+        assert root.children[0].element_type.value == 9
+        assert decoded["payload"]["roots"][0]["type"] == "Application"
+        assert decoded["payload"]["roots"][0]["children"][0]["type"] == "Button"
+        assert [request.body for request in service.of_kind("execute")] == [
+            {"script": "macos: listDisplays", "args": []}
+        ]
+        assert service.of_kind("settings:get") == []
+
+        structure = session.element("id", "equals").inspect_structure(scope="target")
+        structure_doc = document(structure)
+        assert structure_doc["scope"]["locator"]["predicate"] is None
+        assert structure.roots[0].tag == "XCUIElementTypeButton"
+        session.quit()
+
+
+def test_mac2_structure_rejects_nonlocal_scope_before_source(
+    service: ElementProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        invalid = [
+            session.element("xpath", "//Button"),
+            session.element("-ios predicate string", "label == 'x'"),
+            session.element("id", "x", predicate="label == 'x'"),
+        ]
+        before = service.snapshot()
+        for element in invalid:
+            with pytest.raises(InvalidRequestError) as caught:
+                element.inspect_structure()
+            assert caught.value.code == "structure_scope_unavailable"
+        assert service.snapshot() == before
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "displays",
+    [
+        [],
+        {
+            "1": {
+                "id": 2,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1, "height": 1},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": 1,
+                "rect": {"x": 0, "y": 0, "width": 1, "height": 1},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 0, "height": 1},
+            }
+        },
+    ],
+)
+def test_mac2_rejects_malformed_display_map_before_source(
+    service: ElementProtocolService, displays: object
+) -> None:
+    service.displays = displays
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        with pytest.raises(CommandError) as caught:
+            session.observe_tree()
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        assert service.of_kind("source") == []
         session.quit()

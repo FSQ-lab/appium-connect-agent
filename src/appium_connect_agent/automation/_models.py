@@ -12,7 +12,16 @@ if TYPE_CHECKING:
 RequestState = Literal["not_sent", "response_received", "response_unknown"]
 ConnectionState = Literal["connected", "offline", "unauthorized", "unknown"]
 SessionState = Literal["creating", "active", "uncertain", "closing", "closed"]
-ElementBy: TypeAlias = Literal["id", "accessibility id", "xpath"]
+AutomationPlatform: TypeAlias = Literal["android", "macos"]
+ElementBy: TypeAlias = Literal[
+    "id",
+    "accessibility id",
+    "xpath",
+    "name",
+    "class name",
+    "-ios predicate string",
+    "-ios class chain",
+]
 ElementAttribute: TypeAlias = Literal[
     "id",
     "text",
@@ -32,6 +41,12 @@ ElementAttribute: TypeAlias = Literal[
     "displayed",
     "bounds",
     "window_id",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "hittable",
 ]
 ValueState: TypeAlias = Literal["value", "missing", "unknown", "not_applicable"]
 Coverage: TypeAlias = Literal[
@@ -69,6 +84,7 @@ class SessionInfo:
     target_app_id: str | None
     state: SessionState
     busy: bool
+    platform: AutomationPlatform = "android"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +118,7 @@ class LocatorValue:
     package: str | None
     raw_id: bool
     parent: LocatorValue | None
+    predicate: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +174,11 @@ class TreeNode:
     viewport_relation: ViewportRelation
     window_id: ObservedValue
     children: tuple[TreeNode, ...]
+    label: ObservedValue = ObservedValue("not_applicable")
+    title: ObservedValue = ObservedValue("not_applicable")
+    value: ObservedValue = ObservedValue("not_applicable")
+    placeholder_value: ObservedValue = ObservedValue("not_applicable")
+    element_type: ObservedValue = ObservedValue("not_applicable")
 
 
 @dataclass(frozen=True, slots=True)

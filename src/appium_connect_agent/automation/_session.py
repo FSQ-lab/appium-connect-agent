@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import stat
 import time
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -16,6 +17,7 @@ from uuid import uuid4
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
+from appium.options.mac import Mac2Options
 from selenium.common.exceptions import (
     SessionNotCreatedException,
     StaleElementReferenceException,
@@ -50,6 +52,7 @@ from ._gestures import (
 )
 from ._models import (
     AutomationError,
+    AutomationPlatform,
     CommandError,
     ElementAttribute,
     ElementInspection,
@@ -85,6 +88,7 @@ from ._session_coordination import (
     _DeviceBusy,
     _Reservation,
     _reserve,
+    _reserve_mac2,
     _SystemPortUnavailable,
 )
 from ._text_actions import _perform_text_action, _validate_text
@@ -94,6 +98,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 _Result = TypeVar("_Result")
 _ALLOWED_CAPABILITIES = frozenset({"appium:deviceName", "appium:platformVersion"})
+_MAC_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,254}")
 
 
 class _InvalidCreateResponse(Exception):
@@ -298,6 +303,164 @@ def _target_from_capabilities(capabilities: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _validate_mac_app_bundle(app_path: object, operation_id: str) -> str:
+    if not isinstance(app_path, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        text = str(app_path)
+        encoded = text.encode("utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if (
+        not app_path.is_absolute()
+        or "." in app_path.parts
+        or ".." in app_path.parts
+        or app_path.suffix.casefold() != ".app"
+        or not 1 <= len(encoded) <= 4_096
+        or _contains_control(text)
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    prefixes = [Path(app_path.anchor)]
+    current = prefixes[0]
+    for part in app_path.parts[1:]:
+        current /= part
+        prefixes.append(current)
+    contents = app_path / "Contents"
+    plist = contents / "Info.plist"
+    metadata: list[tuple[Path, os.stat_result]] = []
+    try:
+        for path in (*prefixes, contents, plist):
+            item = os.lstat(path)
+            if stat.S_ISLNK(item.st_mode):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            metadata.append((path, item))
+        readable = os.access(plist, os.R_OK)
+    except InvalidRequestError:
+        raise
+    except (OSError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    modes = {path: item.st_mode for path, item in metadata}
+    if (
+        not stat.S_ISDIR(modes[app_path])
+        or not stat.S_ISDIR(modes[contents])
+        or not stat.S_ISREG(modes[plist])
+        or not readable
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return text
+
+
+def _validate_mac2_request(
+    operation_id: str,
+    bundle_id: object,
+    app_path: object,
+    arguments: object,
+    no_reset: object,
+    skip_app_kill: object,
+    show_server_logs: object,
+    server_startup_timeout_ms: object,
+    new_command_timeout_seconds: object,
+) -> tuple[str | None, str | None, list[str] | None, float]:
+    if bundle_id is not None and (
+        not isinstance(bundle_id, str)
+        or _MAC_BUNDLE_ID.fullmatch(bundle_id) is None
+        or not bundle_id.isascii()
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    valid_path = (
+        None if app_path is None else _validate_mac_app_bundle(app_path, operation_id)
+    )
+    valid_arguments: list[str] | None = None
+    if arguments is not None:
+        if isinstance(arguments, (str, bytes)) or not isinstance(arguments, Sequence):
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        try:
+            valid_arguments = list(arguments)
+        except Exception:
+            raise InvalidRequestError(
+                "invalid_argument", operation_id, "not_sent"
+            ) from None
+        if len(valid_arguments) > 64 or (bundle_id is None and valid_path is None):
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        for item in valid_arguments:
+            if not isinstance(item, str) or len(item) > 4_096 or "\0" in item:
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            try:
+                item.encode("utf-8", errors="strict")
+            except UnicodeEncodeError:
+                raise InvalidRequestError(
+                    "invalid_argument", operation_id, "not_sent"
+                ) from None
+    if type(no_reset) is not bool or type(show_server_logs) is not bool:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if skip_app_kill is not None and type(skip_app_kill) is not bool:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if server_startup_timeout_ms is not None and (
+        type(server_startup_timeout_ms) is not int
+        or not 1_000 <= server_startup_timeout_ms <= 600_000
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    timeout = new_command_timeout_seconds
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or not 0 <= timeout <= 86_400
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return bundle_id, valid_path, valid_arguments, float(timeout)
+
+
+def _build_mac2_options(
+    *,
+    bundle_id: str | None,
+    app_path: str | None,
+    arguments: list[str] | None,
+    no_reset: bool,
+    skip_app_kill: bool | None,
+    show_server_logs: bool,
+    server_startup_timeout_ms: int | None,
+    new_command_timeout_seconds: float,
+    system_port: int,
+) -> Mac2Options:
+    capabilities: dict[str, Any] = {
+        "platformName": "Mac",
+        "appium:automationName": "Mac2",
+        "appium:systemHost": "127.0.0.1",
+        "appium:systemPort": system_port,
+        "appium:noReset": no_reset,
+        "appium:showServerLogs": show_server_logs,
+        "appium:newCommandTimeout": new_command_timeout_seconds,
+    }
+    optional = {
+        "appium:bundleId": bundle_id,
+        "appium:appPath": app_path,
+        "appium:arguments": arguments,
+        "appium:skipAppKill": skip_app_kill,
+        "appium:serverStartupTimeout": server_startup_timeout_ms,
+    }
+    capabilities.update(
+        {key: value for key, value in optional.items() if value is not None}
+    )
+    return Mac2Options().load_capabilities(capabilities)
+
+
+def _mac_target_from_capabilities(capabilities: Mapping[str, Any]) -> str | None:
+    for key in ("CFBundleIdentifier", "appium:bundleId", "bundleId"):
+        value = capabilities.get(key)
+        if (
+            isinstance(value, str)
+            and 1 <= len(value) <= 255
+            and not _contains_control(value)
+        ):
+            return value
+    return None
+
+
 def _close_client(client: _LifecycleConnection) -> tuple[BaseException, ...]:
     client.force_close()
     return client.cleanup_errors
@@ -342,6 +505,10 @@ class _SessionOperationGateway:
     @property
     def operation_deadline(self) -> float | None:
         return self._deadline
+
+    @property
+    def platform(self) -> AutomationPlatform:
+        return self._session._platform
 
     @property
     def can_send(self) -> bool:
@@ -571,6 +738,7 @@ class Session:
     _device: Device
     _device_id: str
     _driver: webdriver.Remote | None
+    _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
     _reservation: _Reservation
@@ -588,6 +756,7 @@ class Session:
         "_driver",
         "_id",
         "_operation_gate",
+        "_platform",
         "_reservation",
         "_runtime_connection",
         "_runtime_usage",
@@ -606,12 +775,14 @@ class Session:
         app_id: str | None,
         runtime_connection: RuntimeConnection,
         runtime_usage: RuntimeUsage,
+        platform: AutomationPlatform = "android",
     ) -> Session:
         instance = object.__new__(cls)
         instance._id = uuid4().hex
         instance._appium_session_id = None
         instance._device_id = device_id
         instance._target_app_id = app_id
+        instance._platform = platform
         instance._state = "creating"
         instance._runtime_connection = runtime_connection
         instance._runtime_usage = runtime_usage
@@ -625,6 +796,11 @@ class Session:
         """Return this Session's bound Device without performing I/O."""
         return self._device
 
+    @property
+    def platform(self) -> AutomationPlatform:
+        """Return the immutable target platform without performing I/O."""
+        return self._platform
+
     def session_info(self) -> SessionInfo:
         """Return a local immutable snapshot without touching Appium."""
         with self._state_lock:
@@ -635,6 +811,7 @@ class Session:
                 target_app_id=self._target_app_id,
                 state=self._state,
                 busy=self._operation_gate.locked(),
+                platform=self._platform,
             )
 
     def element(
@@ -645,16 +822,19 @@ class Session:
         parent: Element | None = None,
         package: str | None = None,
         raw_id: bool = False,
+        predicate: str | None = None,
     ) -> Element:
         """Create a Session-bound locator without performing I/O."""
         return _make_element(
             self,
+            self._platform,
             self._target_app_id,
             by,
             value,
             parent=parent,
             package=package,
             raw_id=raw_id,
+            predicate=predicate,
         )
 
     def _run_operation(
@@ -684,6 +864,10 @@ class Session:
         finally:
             self._operation_gate.release()
 
+    def _reject_macos(self, operation_id: str) -> None:
+        if self._platform == "macos":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+
     def observe_tree(
         self,
         *,
@@ -694,7 +878,7 @@ class Session:
         valid_parent = (
             None
             if parent is None
-            else _validate_tree_parent(parent, self, operation_id)
+            else _validate_tree_parent(parent, self, operation_id, self._platform)
         )
         return self._run_operation(
             operation_id,
@@ -713,7 +897,9 @@ class Session:
         operation_id, control, _, deadline = operation
         if scope not in ("target", "declared_parent"):
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        valid_element = _validate_tree_parent(element, self, operation_id)
+        valid_element = _validate_tree_parent(
+            element, self, operation_id, self._platform
+        )
         return self._run_operation(
             operation_id,
             control,
@@ -732,7 +918,9 @@ class Session:
     ) -> ElementInspection:
         operation_id, control, _, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
-        valid_attributes = _validate_attributes(attributes, operation_id)
+        valid_attributes = _validate_attributes(
+            attributes, operation_id, self._platform
+        )
         _validate_raw_chains((valid_element,), operation_id)
         return self._run_operation(
             operation_id,
@@ -756,6 +944,7 @@ class Session:
         valid_action = _validate_editor_action(action, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -781,6 +970,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -807,6 +997,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -835,6 +1026,7 @@ class Session:
         duration = _validate_duration(duration_ms, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -863,6 +1055,7 @@ class Session:
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -889,6 +1082,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -917,6 +1111,7 @@ class Session:
         valid_text = _validate_text(text, operation_id, allow_empty=True)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -947,6 +1142,7 @@ class Session:
         valid_percent = _validate_percent(percent, operation_id, maximum=1.0)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -977,6 +1173,7 @@ class Session:
         valid_percent = _validate_percent(percent, operation_id, maximum=3.0)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_macos(operation_id)
         return self._run_operation(
             operation_id,
             control,
@@ -1007,6 +1204,7 @@ class Session:
         valid_max_swipes = _validate_max_swipes(max_swipes, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         mapping = _validate_scroll_mapping(valid_container, valid_target, operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1039,6 +1237,7 @@ class Session:
         y_ratio = _validate_ratio(destination_y_ratio, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_source, valid_destination), operation_id)
+        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1072,7 +1271,11 @@ class Session:
             self._appium_session_id = session_id
             self._driver = driver
             if self._target_app_id is None:
-                self._target_app_id = _target_from_capabilities(capabilities)
+                self._target_app_id = (
+                    _target_from_capabilities(capabilities)
+                    if self._platform == "android"
+                    else _mac_target_from_capabilities(capabilities)
+                )
             self._state = "active"
 
     def _set_state(self, state: SessionState) -> None:
@@ -1325,6 +1528,133 @@ def create_session(
             valid_timeout,
             reservation.system_port,
             valid_capabilities,
+        )
+        client.prepare_request(
+            control.cancellation if control is not None else None, deadline
+        )
+        driver = _SessionWebDriver(command_executor=client, options=options)
+    except (_RequestCancelled, _RequestTimedOut) as cause:
+        _raise_create_preflight(cause, operation_id, session, reservation, client)
+    except Exception as cause:
+        if not client.request_started:
+            cleanup_errors = _close_client(client)
+            _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
+            session._set_state("closed" if not cleanup_errors else "uncertain")
+            if cleanup_errors:
+                cause.__dict__["automation_cleanup_errors"] = cleanup_errors
+            if not cleanup_errors:
+                raise
+            raise ResourceStateError(
+                "cleanup_failed",
+                operation_id,
+                "not_sent",
+                session=session,
+                cleanup_errors=cleanup_errors,
+            ) from cause
+        _raise_create_failure(cause, operation_id, session, reservation, client)
+    except BaseException as cause:
+        if client.request_started:
+            session._set_state("uncertain")
+        else:
+            cleanup_errors = _close_client(client)
+            _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
+            session._set_state("closed" if not cleanup_errors else "uncertain")
+            if cleanup_errors:
+                cause.__dict__["automation_cleanup_errors"] = cleanup_errors
+        raise
+
+    try:
+        session._activate(driver)
+    except _InvalidCreateResponse as cause:
+        cleanup_errors = _close_client(client)
+        session._set_state("uncertain")
+        error = ResourceStateError(
+            "session_create_unknown",
+            operation_id,
+            "response_received",
+            session=session,
+            cleanup_errors=cleanup_errors,
+        )
+        raise error from cause
+    return session
+
+
+def create_mac2_session(
+    connection: RuntimeConnection,
+    *,
+    bundle_id: str | None = None,
+    app_path: Path | None = None,
+    arguments: Sequence[str] | None = None,
+    no_reset: bool = True,
+    skip_app_kill: bool | None = None,
+    show_server_logs: bool = False,
+    server_startup_timeout_ms: int | None = None,
+    new_command_timeout_seconds: float = 300.0,
+    control: OperationControl | None = None,
+) -> Session:
+    """Create one independently owned local Mac2 Session."""
+    operation_id, control, _, deadline = _new_operation(control)
+    valid_bundle_id, valid_app_path, valid_arguments, valid_timeout = (
+        _validate_mac2_request(
+            operation_id,
+            bundle_id,
+            app_path,
+            arguments,
+            no_reset,
+            skip_app_kill,
+            show_server_logs,
+            server_startup_timeout_ms,
+            new_command_timeout_seconds,
+        )
+    )
+    server_url = _active_server_url(connection, operation_id)
+    _checkpoint(control, deadline, operation_id)
+    usage = _acquire_runtime_usage(connection, operation_id)
+    try:
+        session = Session._creating(
+            "macos:local", valid_bundle_id, connection, usage, "macos"
+        )
+    except BaseException:
+        usage.release()
+        raise
+    try:
+        reservation = _reserve_mac2()
+    except _DeviceBusy:
+        usage.release()
+        raise ResourceStateError("device_busy", operation_id, "not_sent") from None
+    except _SystemPortUnavailable:
+        usage.release()
+        raise ResourceStateError(
+            "system_port_unavailable", operation_id, "not_sent"
+        ) from None
+    except BaseException:
+        usage.release()
+        raise
+    session._reservation = reservation
+
+    try:
+        client = _new_connection(server_url)
+        session._client = client
+    except BaseException:
+        reservation.release()
+        usage.release()
+        raise
+    try:
+        session._device = _create_device(session)
+        options = _build_mac2_options(
+            bundle_id=valid_bundle_id,
+            app_path=valid_app_path,
+            arguments=valid_arguments,
+            no_reset=no_reset,
+            skip_app_kill=skip_app_kill,
+            show_server_logs=show_server_logs,
+            server_startup_timeout_ms=server_startup_timeout_ms,
+            new_command_timeout_seconds=valid_timeout,
+            system_port=reservation.system_port,
         )
         client.prepare_request(
             control.cancellation if control is not None else None, deadline

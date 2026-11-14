@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 from appium_connect_agent.runtime import OperationControl
 
 from ._models import (
+    AutomationPlatform,
     ElementAttribute,
     ElementBy,
     ElementInspection,
@@ -24,7 +25,19 @@ _PreparedOperation: TypeAlias = tuple[str, OperationControl | None, float, float
 
 _PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 _LOCAL_ID = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_ALLOWED_BY = frozenset({"id", "accessibility id", "xpath"})
+_ANDROID_BY = frozenset({"id", "accessibility id", "xpath"})
+_MACOS_BY = frozenset(
+    {
+        "id",
+        "accessibility id",
+        "xpath",
+        "name",
+        "class name",
+        "-ios predicate string",
+        "-ios class chain",
+    }
+)
+_ALLOWED_BY = _ANDROID_BY | _MACOS_BY
 _CREATION_MARKER = object()
 
 
@@ -48,6 +61,7 @@ class Element:
     package: str | None
     raw_id: bool
     parent: Element | None
+    predicate: str | None
     _owner: object = field(repr=False, compare=False)
     _marker: object = field(repr=False, compare=False)
 
@@ -253,6 +267,7 @@ def _create(
     package: str | None,
     raw_id: bool,
     parent: Element | None,
+    predicate: str | None,
     owner: object,
 ) -> Element:
     result = object.__new__(Element)
@@ -261,6 +276,7 @@ def _create(
     object.__setattr__(result, "package", package)
     object.__setattr__(result, "raw_id", raw_id)
     object.__setattr__(result, "parent", parent)
+    object.__setattr__(result, "predicate", predicate)
     object.__setattr__(result, "_owner", owner)
     object.__setattr__(result, "_marker", _CREATION_MARKER)
     return result
@@ -293,6 +309,7 @@ def _has_control(value: str) -> bool:
 
 def _make_element(
     owner: object,
+    platform: AutomationPlatform,
     target_app_id: str | None,
     by: object,
     value: object,
@@ -300,11 +317,17 @@ def _make_element(
     parent: object = None,
     package: object = None,
     raw_id: object = False,
+    predicate: object = None,
 ) -> Element:
-    if not isinstance(by, str) or by not in _ALLOWED_BY:
+    allowed = _ANDROID_BY if platform == "android" else _MACOS_BY
+    if not isinstance(by, str) or by not in allowed:
         raise ElementValidationError("invalid_argument")
     if not isinstance(value, str) or not 1 <= len(value) <= 4_096 or "\0" in value:
         raise ElementValidationError("invalid_argument")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        raise ElementValidationError("invalid_argument") from None
     if type(raw_id) is not bool:
         raise ElementValidationError("invalid_argument")
     if parent is not None:
@@ -329,17 +352,46 @@ def _make_element(
         if by == "xpath":
             raise ElementValidationError("unsupported_operation")
 
+    valid_predicate: str | None = None
+    if platform == "android":
+        if predicate is not None:
+            raise ElementValidationError("unsupported_operation")
+    else:
+        if package is not None or raw_id:
+            raise ElementValidationError("unsupported_operation")
+        if predicate is not None:
+            if (
+                not isinstance(predicate, str)
+                or not 1 <= len(predicate) <= 4_096
+                or "\0" in predicate
+            ):
+                raise ElementValidationError("invalid_argument")
+            try:
+                predicate.encode("utf-8", errors="strict")
+            except UnicodeEncodeError:
+                raise ElementValidationError("invalid_argument") from None
+            valid_predicate = predicate
+        return _create(
+            cast(ElementBy, by),
+            value,
+            None,
+            False,
+            parent if isinstance(parent, Element) else None,
+            valid_predicate,
+            owner,
+        )
+
     strategy = cast(ElementBy, by)
     valid_parent: Element | None = parent if isinstance(parent, Element) else None
     if strategy != "id":
         if package is not None or raw_id:
             raise ElementValidationError("invalid_argument")
-        return _create(strategy, value, None, False, valid_parent, owner)
+        return _create(strategy, value, None, False, valid_parent, None, owner)
 
     if raw_id:
         if package is not None or _has_control(value):
             raise ElementValidationError("invalid_argument")
-        return _create("id", value, None, True, valid_parent, owner)
+        return _create("id", value, None, True, valid_parent, None, owner)
 
     if package is not None and not _valid_package(package):
         raise ElementValidationError("invalid_argument")
@@ -351,20 +403,22 @@ def _make_element(
             raise ElementValidationError("invalid_argument")
         if valid_package is not None and valid_package != prefix:
             raise ElementValidationError("invalid_argument")
-        return _create("id", value, prefix, False, valid_parent, owner)
+        return _create("id", value, prefix, False, valid_parent, None, owner)
     if _LOCAL_ID.fullmatch(value) is None:
         raise ElementValidationError("invalid_argument")
     source = valid_package
     if source is None and _valid_package(target_app_id):
         source = target_app_id
     normalized = f"{source}:id/{value}" if source is not None else value
-    return _create("id", normalized, source, False, valid_parent, owner)
+    return _create("id", normalized, source, False, valid_parent, None, owner)
 
 
 def _trusted_chain_error(element: Element, owner: object) -> str | None:
     reversed_chain: list[Element] = []
     seen: set[int] = set()
     current: object = element
+    platform = getattr(owner, "_platform", None)
+    allowed = _ANDROID_BY if platform == "android" else _MACOS_BY
     while current is not None:
         if not isinstance(current, Element):
             return "invalid_argument"
@@ -382,36 +436,62 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
         value = getattr(current, "value", None)
         package = getattr(current, "package", None)
         raw_id = getattr(current, "raw_id", None)
+        predicate = getattr(current, "predicate", None)
         parent = getattr(current, "parent", None)
         if (
             not isinstance(by, str)
-            or by not in _ALLOWED_BY
+            or by not in allowed
             or not isinstance(value, str)
             or not 1 <= len(value) <= 4_096
             or "\0" in value
             or type(raw_id) is not bool
         ):
             return "invalid_argument"
-        if by != "id":
+        try:
+            value.encode("utf-8", errors="strict")
+        except UnicodeEncodeError:
+            return "invalid_argument"
+        if platform == "macos":
             if package is not None or raw_id or (by == "xpath" and parent is not None):
                 return "invalid_argument"
-        elif raw_id:
-            if package is not None or _has_control(value):
-                return "invalid_argument"
-        else:
-            if package is not None and not _valid_package(package):
-                return "invalid_argument"
-            marker = ":id/"
-            if value.count(marker) == 1:
-                prefix, local = value.split(marker)
+            if predicate is not None:
                 if (
-                    not _valid_package(prefix)
-                    or _LOCAL_ID.fullmatch(local) is None
-                    or package != prefix
+                    not isinstance(predicate, str)
+                    or not 1 <= len(predicate) <= 4_096
+                    or "\0" in predicate
                 ):
                     return "invalid_argument"
-            elif _LOCAL_ID.fullmatch(value) is None or package is not None:
+                try:
+                    predicate.encode("utf-8", errors="strict")
+                except UnicodeEncodeError:
+                    return "invalid_argument"
+        else:
+            if predicate is not None:
                 return "invalid_argument"
+            if by != "id":
+                if (
+                    package is not None
+                    or raw_id
+                    or (by == "xpath" and parent is not None)
+                ):
+                    return "invalid_argument"
+            elif raw_id:
+                if package is not None or _has_control(value):
+                    return "invalid_argument"
+            else:
+                if package is not None and not _valid_package(package):
+                    return "invalid_argument"
+                marker = ":id/"
+                if value.count(marker) == 1:
+                    prefix, local = value.split(marker)
+                    if (
+                        not _valid_package(prefix)
+                        or _LOCAL_ID.fullmatch(local) is None
+                        or package != prefix
+                    ):
+                        return "invalid_argument"
+                elif _LOCAL_ID.fullmatch(value) is None or package is not None:
+                    return "invalid_argument"
         reversed_chain.append(current)
         current = parent
     return None

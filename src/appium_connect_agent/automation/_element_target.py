@@ -84,16 +84,45 @@ def _resolve_unique_locator_once(
     value: str,
     gateway: _SessionOperationGateway,
     *,
+    predicate: str | None = None,
     condition_deadline: float | None = None,
 ) -> WebElement | None:
-    def action() -> Sequence[WebElement]:
-        return _find_elements(context, by, value)
+    def request(action: Callable[[], Sequence[WebElement]]) -> Sequence[WebElement]:
+        return (
+            gateway.request(action)
+            if condition_deadline is None
+            else gateway.wait_request(action, condition_deadline)
+        )
 
-    matches = (
-        gateway.request(action)
-        if condition_deadline is None
-        else gateway.wait_request(action, condition_deadline)
-    )
+    matches = request(lambda: _find_elements(context, by, value))
+    if predicate is not None:
+        predicate_matches = request(
+            lambda: _find_elements(context, "-ios predicate string", predicate)
+        )
+        try:
+            allowed: set[str] = set()
+            for match in predicate_matches:
+                element_id = match.id
+                if not isinstance(element_id, str) or not element_id:
+                    raise ValueError
+                allowed.add(element_id)
+            unique: list[WebElement] = []
+            seen: set[str] = set()
+            for match in matches:
+                element_id = match.id
+                if not isinstance(element_id, str) or not element_id:
+                    raise ValueError
+                if element_id in allowed and element_id not in seen:
+                    seen.add(element_id)
+                    unique.append(match)
+            matches = unique
+        except (AttributeError, ValueError):
+            raise CommandError(
+                "command_failed",
+                gateway.operation_id,
+                "response_received",
+                completed_steps=gateway.completed_steps,
+            ) from None
     if not matches:
         return None
     if len(matches) != 1:
@@ -123,6 +152,7 @@ def _resolve_unique_once(
             locator.value,
             gateway,
             condition_deadline=condition_deadline,
+            predicate=locator.predicate,
         )
         if target is None:
             return None

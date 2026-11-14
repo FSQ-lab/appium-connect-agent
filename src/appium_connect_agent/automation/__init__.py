@@ -1,4 +1,4 @@
-"""Synchronous Android discovery, Sessions, bound Element and Device operations."""
+"""Synchronous device discovery, Sessions, bound Element and Device operations."""
 
 from ._device import Device as Device
 from ._discovery import list_devices as list_devices
@@ -6,6 +6,7 @@ from ._element import Element as Element
 from ._element import ElementValidationError as ElementValidationError
 from ._models import AttributeObservation as AttributeObservation
 from ._models import AutomationError as AutomationError
+from ._models import AutomationPlatform as AutomationPlatform
 from ._models import Bounds as Bounds
 from ._models import CommandError as CommandError
 from ._models import Coverage as Coverage
@@ -35,4 +36,5 @@ from ._models import Viewport as Viewport
 from ._models import ViewportRelation as ViewportRelation
 from ._models import Visibility as Visibility
 from ._session import Session as Session
+from ._session import create_mac2_session as create_mac2_session
 from ._session import create_session as create_session
