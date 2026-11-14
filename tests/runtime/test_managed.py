@@ -153,6 +153,55 @@ def _service_state(root: Path) -> str:
     return state
 
 
+def _socket_probe_output(
+    host: str, port: int, pid: int, *, listening: bool
+) -> tuple[int, bytes, bytes, bool]:
+    if not listening:
+        return 1, b"", b"", False
+    endpoint = f"[::1]:{port}" if host == "::1" else f"127.0.0.1:{port}"
+    return 0, f"p{pid}\nf4\nn{endpoint}\nTST=LISTEN\n".encode("ascii"), b"", False
+
+
+@pytest.fixture(autouse=True)
+def _fast_owned_listener_probe(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_bounded = _managed._bounded_command
+    real_lsof_test = request.node.originalname in {
+        "test_real_lsof_owned_listener_ready_and_natural_cleanup",
+        "test_flooded_streams_are_bounded_and_startup_subprocesses_are_allowlisted",
+    }
+
+    def controlled_bounded(
+        operation: _Operation, argv: list[str], timeout: float
+    ) -> tuple[int, bytes, bytes, bool]:
+        if not argv or argv[0] != str(_managed._LSOF):
+            return original_bounded(operation, argv, timeout)
+        if real_lsof_test:
+            remaining = operation.deadline - time.monotonic()
+            return original_bounded(
+                operation, argv, min(max(timeout, 10.0), max(0.1, remaining))
+            )
+        pid = int(argv[argv.index("-p") + 1])
+        selector = next(item for item in argv if item.startswith("-i"))
+        host: Literal["127.0.0.1", "::1"] = (
+            "::1" if selector.startswith("-i6TCP@[::1]:") else "127.0.0.1"
+        )
+        port = int(selector.rsplit(":", 1)[1])
+        family = socket.AF_INET6 if host == "::1" else socket.AF_INET
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return 1, b"", b"", False
+        listening = False
+        with suppress(OSError), socket.socket(family, socket.SOCK_STREAM) as probe_sock:
+            probe_sock.settimeout(0.02)
+            listening = probe_sock.connect_ex((host, port)) == 0
+        return _socket_probe_output(host, port, pid, listening=listening)
+
+    monkeypatch.setattr(_managed, "_bounded_command", controlled_bounded)
+
+
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
 def test_real_lsof_owned_listener_ready_and_natural_cleanup(
     tmp_path: Path, host: Literal["127.0.0.1", "::1"]
@@ -257,8 +306,10 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
     script = _external_server_script(tmp_path)
     external: list[subprocess.Popen[bytes]] = []
     original = _managed._ManagedScope._port_preflight
+    external_bound = False
 
     def race(scope: Any, operation: Any) -> None:
+        nonlocal external_bound
         original(scope, operation)
         process = subprocess.Popen(
             [sys.executable, str(script), host, str(port), str(marker)],
@@ -269,15 +320,24 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
         )
         external.append(process)
         _wait_listening(host, port, process)
+        external_bound = True
+
+    def unowned_when_external_bound(
+        operation: _Operation, argv: list[str], timeout: float
+    ) -> tuple[int, bytes, bytes, bool]:
+        del operation, argv, timeout
+        assert external_bound
+        return 1, b"", b"", False
 
     monkeypatch.setattr(_managed._ManagedScope, "_port_preflight", race)
+    monkeypatch.setattr(_managed, "_bounded_command", unowned_when_external_bound)
     runtime = Runtime(LocalSettings(node_executable=node))
     try:
         with pytest.raises(OperationTimeoutError):
             runtime.start_managed(
                 host=host,
                 port=port,
-                control=OperationControl(timeout_seconds=1.5),
+                control=OperationControl(timeout_seconds=0.3),
             ).__enter__()
         assert not marker.exists()
         assert runtime._managed_scope is None
