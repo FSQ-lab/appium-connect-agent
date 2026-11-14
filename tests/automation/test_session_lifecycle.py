@@ -1760,7 +1760,8 @@ def test_dispose_pre_timeout_retains_session_and_usage(
         session = unknown.value.session
         assert session is not None
         ticks = iter((10.0, 12.0))
-        monkeypatch.setattr(session_module.time, "monotonic", lambda: next(ticks))
+        session_time = cast(Any, session_module).time
+        monkeypatch.setattr(session_time, "monotonic", lambda: next(ticks))
 
         with pytest.raises(OperationTimeoutError) as timed_out:
             session.dispose(control=OperationControl(timeout_seconds=1))
@@ -1814,7 +1815,8 @@ def test_dispose_timeout_after_local_close_stays_disposing_and_retries(
         assert session is not None
         original_monotonic = time.monotonic
         ticks = iter((10.0, 10.0, 12.0))
-        monkeypatch.setattr(session_module.time, "monotonic", lambda: next(ticks))
+        session_time = cast(Any, session_module).time
+        monkeypatch.setattr(session_time, "monotonic", lambda: next(ticks))
 
         with pytest.raises(OperationTimeoutError) as timed_out:
             session.dispose(control=OperationControl(timeout_seconds=1))
@@ -1825,7 +1827,7 @@ def test_dispose_timeout_after_local_close_stays_disposing_and_retries(
         assert owner.count == 1
         assert owner.events == ["acquire"]
 
-        monkeypatch.setattr(session_module.time, "monotonic", original_monotonic)
+        monkeypatch.setattr(session_time, "monotonic", original_monotonic)
         session.dispose()
 
         assert session.session_info().state == "disposed"

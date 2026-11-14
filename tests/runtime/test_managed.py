@@ -750,7 +750,8 @@ def test_cancelled_terminal_disposal_is_retryable_without_signal_or_usage(
 
     monkeypatch.setattr(process, "cleanup", cancel_cleanup)
     monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed_killpg)
-    with pytest.raises(session_module.OperationCancelledError) as cancelled:
+    session_cancelled = cast(Any, session_module).OperationCancelledError
+    with pytest.raises(session_cancelled) as cancelled:
         session.dispose(
             control=OperationControl(timeout_seconds=3, cancellation=cancellation)
         )
@@ -790,7 +791,8 @@ def test_terminal_disposal_proves_lock_release_after_real_exit_cleanup_failure(
     lock_descriptor = descriptors[-1]
     close_calls = 0
     failed = False
-    original_close = _coordination.os.close
+    coordination_os = cast(Any, _coordination).os
+    original_close = coordination_os.close
 
     def close_then_fail(descriptor: int) -> None:
         nonlocal close_calls, failed
@@ -800,7 +802,7 @@ def test_terminal_disposal_proves_lock_release_after_real_exit_cleanup_failure(
             failed = True
             raise OSError("lock descriptor close failed")
 
-    monkeypatch.setattr(_coordination.os, "close", close_then_fail)
+    monkeypatch.setattr(coordination_os, "close", close_then_fail)
     with pytest.raises(ResourceStateError) as unknown:
         create_session(connection, "terminal-lock-device")
     session = unknown.value.session
