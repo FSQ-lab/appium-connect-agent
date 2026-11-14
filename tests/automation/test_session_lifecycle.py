@@ -829,7 +829,7 @@ def test_stable_session_setup_error_cleanup_resource_outcome(
         assert retained is not None
         assert session_states[-1] == (retained, "uncertain")
         assert retained.session_info().state == "uncertain"
-        assert captured_clients[0]._closed is True
+        assert captured_clients[0]._closed is False
         assert captured_clients[0].cleanup_errors == (cleanup,)
         assert service.lifecycle_requests() == []
 
