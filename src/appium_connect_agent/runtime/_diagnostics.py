@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
+import stat
 import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -20,7 +21,9 @@ from ._inspection import (
     Finding,
     Package,
     Reader,
+    mapping,
     normalized,
+    package_value,
     path_evidence,
 )
 from ._models import (
@@ -48,16 +51,216 @@ if TYPE_CHECKING:
     from ._managed import _ManagedScope
 
 
+_XCODE_SELECT_LINK = Path("/var/db/xcode_select_link")
+_APPLICATIONS_ROOT = Path("/Applications")
+
+
+def _managed_root_state(operation: _Operation, root: Path) -> str:
+    from ._installation import (
+        _ALLOWED_ROOT,
+        _installation_record_state,
+        _maintenance_record_state,
+        _service_record_state,
+        _StateFailure,
+        _validate_root,
+    )
+
+    operation.checkpoint()
+    try:
+        if not _validate_root(root):
+            return "missing"
+    except _StateFailure as failure:
+        reason = "managed_root_conflict"
+        if failure.code == "installation_state_unknown":
+            try:
+                names = {entry.name for entry in root.iterdir()}
+            except OSError:
+                reason = "path_unreadable"
+            else:
+                if not names - _ALLOWED_ROOT:
+                    reason = "path_unreadable"
+        raise Finding(reason) from None
+    records = root / "records"
+    try:
+        names = {entry.name for entry in records.iterdir()}
+    except OSError:
+        raise Finding("managed_recovery_required") from None
+    if "installation.json" not in names or names - {
+        "installation.json",
+        "service.json",
+        "maintenance.json",
+    }:
+        raise Finding("managed_recovery_required")
+    try:
+        if _installation_record_state(root) != "complete":
+            raise Finding("managed_recovery_required")
+        service = _service_record_state(root)
+        if service == "active":
+            raise Finding("managed_service_active")
+        if service not in ("absent", "stopped"):
+            raise Finding("managed_recovery_required")
+        if _maintenance_record_state(root) not in ("absent", "complete", "failed"):
+            raise Finding("managed_recovery_required")
+    except _StateFailure:
+        raise Finding("managed_recovery_required") from None
+    operation.checkpoint()
+    return "managed_root_ready"
+
+
+def _managed_package(
+    operation: _Operation,
+    base: Path,
+    root: Path,
+    *,
+    package_name: str,
+    driver_name: str | None = None,
+    automation_name: str | None = None,
+) -> Package:
+    try:
+        base_info = base.lstat()
+        info = root.lstat()
+        resolved_base = base.resolve(strict=True)
+        resolved_root = root.resolve(strict=True)
+        metadata_info = (root / "package.json").lstat()
+    except FileNotFoundError:
+        raise Finding("missing") from None
+    except (OSError, RuntimeError):
+        raise Finding("path_unreadable") from None
+    if (
+        not stat.S_ISDIR(base_info.st_mode)
+        or stat.S_ISLNK(base_info.st_mode)
+        or base_info.st_uid != os.getuid()
+        or base_info.st_mode & 0o022
+        or not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
+        or not resolved_root.is_relative_to(resolved_base)
+        or not stat.S_ISREG(metadata_info.st_mode)
+        or stat.S_ISLNK(metadata_info.st_mode)
+        or metadata_info.st_uid != os.getuid()
+        or metadata_info.st_mode & 0o022
+    ):
+        raise Finding("path_untrusted")
+    data = operation.reader.metadata(root / "package.json")
+    if data.get("name") != package_name:
+        raise Finding("unrecognized_layout")
+    if driver_name is not None:
+        appium = mapping(data.get("appium"))
+        if (
+            appium.get("driverName") != driver_name
+            or appium.get("automationName") != automation_name
+        ):
+            raise Finding("unrecognized_driver")
+    package = package_value(resolved_root, data)
+    if package.version is None:
+        raise Finding("version_unknown")
+    return package
+
+
+def _lexical_absolute(link: Path, target: str) -> Path:
+    candidate = Path(target)
+    if not candidate.is_absolute():
+        candidate = link.parent / candidate
+    return Path(os.path.normpath(candidate))
+
+
+def _valid_xcode_bundle(operation: _Operation, bundle: Path) -> bool:
+    required = (
+        (_APPLICATIONS_ROOT, stat.S_ISDIR),
+        (bundle, stat.S_ISDIR),
+        (bundle / "Contents", stat.S_ISDIR),
+        (bundle / "Contents/Info.plist", stat.S_ISREG),
+        (bundle / "Contents/Developer", stat.S_ISDIR),
+        (bundle / "Contents/Developer/usr", stat.S_ISDIR),
+        (bundle / "Contents/Developer/usr/bin", stat.S_ISDIR),
+        (bundle / "Contents/Developer/usr/bin/xcodebuild", stat.S_ISREG),
+    )
+    try:
+        for path, predicate in required:
+            operation.checkpoint()
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode) or not predicate(info.st_mode):
+                return False
+        operation.reader.read(bundle / "Contents/Info.plist")
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _xcode_layout(operation: _Operation) -> None:
+    try:
+        link_info = _XCODE_SELECT_LINK.lstat()
+    except FileNotFoundError:
+        try:
+            root_info = _APPLICATIONS_ROOT.lstat()
+            if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+                operation.add("xcode_layout", "fail", "missing")
+                return
+            candidates = sorted(_APPLICATIONS_ROOT.glob("Xcode*.app"))[:16]
+            if any(
+                _valid_xcode_bundle(operation, candidate) for candidate in candidates
+            ):
+                operation.add("xcode_layout", "unknown", "active_developer_dir_unknown")
+            else:
+                operation.add("xcode_layout", "fail", "missing")
+        except (OSError, Finding):
+            operation.add("xcode_layout", "unknown", "path_unreadable")
+        return
+    except OSError:
+        operation.add("xcode_layout", "unknown", "path_unreadable")
+        return
+    if not stat.S_ISLNK(link_info.st_mode):
+        operation.add("xcode_layout", "fail", "invalid_developer_directory")
+        return
+    try:
+        target = _lexical_absolute(_XCODE_SELECT_LINK, os.readlink(_XCODE_SELECT_LINK))
+    except OSError:
+        operation.add("xcode_layout", "unknown", "path_unreadable")
+        return
+    command_line_tools = Path("/Library/Developer/CommandLineTools")
+    if target == command_line_tools or target.is_relative_to(command_line_tools):
+        operation.add("xcode_layout", "fail", "command_line_tools_only")
+        return
+    try:
+        relative = target.relative_to(_APPLICATIONS_ROOT)
+    except ValueError:
+        operation.add("xcode_layout", "fail", "invalid_developer_directory")
+        return
+    try:
+        valid = (
+            len(relative.parts) == 3
+            and relative.parts[0].startswith("Xcode")
+            and relative.parts[0].endswith(".app")
+            and relative.parts[1:] == ("Contents", "Developer")
+            and _valid_xcode_bundle(operation, _APPLICATIONS_ROOT / relative.parts[0])
+        )
+    except (OSError, Finding):
+        operation.add("xcode_layout", "unknown", "path_unreadable")
+        return
+    if not valid:
+        operation.add("xcode_layout", "fail", "invalid_developer_directory")
+        return
+    operation.add(
+        "xcode_layout",
+        "pass",
+        "xcode_developer_dir_observed",
+        (path_evidence(target),),
+    )
+
+
 class _Operation:
     def __init__(
         self,
         control: OperationControl,
         observer: Callable[[ProgressEvent], None] | None,
         phase: str = "diagnosing",
+        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
     ) -> None:
         self.control = control
         self.observer = observer
         self.phase = phase
+        self.target_driver = target_driver
         self.operation_id = uuid4().hex
         self.observed_at = datetime.now(UTC)
         self.deadline = time.monotonic() + control.timeout_seconds
@@ -66,6 +269,16 @@ class _Operation:
         self.reader = Reader(self.checkpoint)
 
     def report(self) -> DiagnosticReport:
+        if self.target_driver == "mac2":
+            return DiagnosticReport(
+                self.operation_id,
+                self.observed_at,
+                host="macOS",
+                target="macOS",
+                driver="Mac2",
+                checks=tuple(self.checks),
+                observer_errors=tuple(self.observer_errors),
+            )
         return DiagnosticReport(
             self.operation_id,
             self.observed_at,
@@ -155,12 +368,28 @@ class _Operation:
             )
             return None
 
-    def driver(self, settings: LocalSettings) -> Package | None:
+    def driver(
+        self,
+        settings: LocalSettings,
+        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
+    ) -> Package | None:
         explicit = settings.appium_home is not None
         home = settings.appium_home or _coordination._account_home() / ".appium"
         source = "explicit" if explicit else "conventional_candidate"
+        package_name = (
+            "appium-mac2-driver"
+            if target_driver == "mac2"
+            else "appium-uiautomator2-driver"
+        )
+        driver_name = "mac2" if target_driver == "mac2" else "uiautomator2"
+        automation_name = "Mac2" if target_driver == "mac2" else "UiAutomator2"
         try:
-            package = self.reader.driver(home)
+            package = self.reader.driver(
+                home,
+                package_name=package_name,
+                driver_name=driver_name,
+                automation_name=automation_name,
+            )
             self.add(
                 "driver_installation",
                 "pass" if explicit and package.version else "unknown",
@@ -171,7 +400,7 @@ class _Operation:
                     f"source={source}",
                     path_evidence(package.root),
                     f"version={package.version or 'unknown'}",
-                    "driverName=uiautomator2; automationName=UiAutomator2",
+                    f"driverName={driver_name}; automationName={automation_name}",
                 ),
             )
             return package if explicit else None
@@ -183,6 +412,100 @@ class _Operation:
                 (f"source={source}",),
             )
             return None
+
+    def managed_components(self, root: Path) -> tuple[Package | None, Package | None]:
+        def unavailable(reason: str, status: Status = "unknown") -> tuple[None, None]:
+            for check_id in ("appium_installation", "driver_installation"):
+                self.add(
+                    check_id,
+                    status,
+                    reason,
+                    ("source=managed_root",),
+                )
+            return None, None
+
+        try:
+            state = _managed_root_state(self, root)
+        except Finding as finding:
+            root_status: Status = (
+                "fail" if finding.reason == "managed_root_conflict" else "unknown"
+            )
+            self.add(
+                "managed_root",
+                root_status,
+                finding.reason,
+                ("source=managed_root",),
+            )
+            component_reason = (
+                "managed_root_not_ready"
+                if finding.reason
+                in ("managed_recovery_required", "managed_service_active")
+                else "managed_root_untrusted"
+            )
+            return unavailable(component_reason)
+        self.add(
+            "managed_root",
+            "pass" if state == "managed_root_ready" else "fail",
+            state,
+            ("source=managed_root",),
+        )
+        if state != "managed_root_ready":
+            return unavailable("missing", "fail")
+
+        packages: list[Package | None] = []
+        specs = (
+            (
+                "appium_installation",
+                root / "appium",
+                root / "appium/node_modules/appium",
+                "appium",
+                None,
+                None,
+            ),
+            (
+                "driver_installation",
+                root / "driver-home",
+                root / "driver-home/node_modules/appium-mac2-driver",
+                "appium-mac2-driver",
+                "mac2",
+                "Mac2",
+            ),
+        )
+        for (
+            check_id,
+            base,
+            package_root,
+            package_name,
+            driver_name,
+            automation_name,
+        ) in specs:
+            try:
+                package = _managed_package(
+                    self,
+                    base,
+                    package_root,
+                    package_name=package_name,
+                    driver_name=driver_name,
+                    automation_name=automation_name,
+                )
+                evidence = [
+                    "source=managed_root",
+                    path_evidence(package.root),
+                    f"version={package.version}",
+                ]
+                if driver_name is not None:
+                    evidence.append("driverName=mac2; automationName=Mac2")
+                self.add(check_id, "pass", "metadata_observed", tuple(evidence))
+                packages.append(package)
+            except Finding as finding:
+                self.add(
+                    check_id,
+                    "fail" if finding.reason == "missing" else "unknown",
+                    finding.reason,
+                    ("source=managed_root",),
+                )
+                packages.append(None)
+        return packages[0], packages[1]
 
     def layouts(self, settings: LocalSettings) -> None:
         for check_id, root, files in (
@@ -216,7 +539,12 @@ class _Operation:
                 )
 
     def compatibility(
-        self, appium: Package | None, driver: Package | None, npm: Package | None
+        self,
+        appium: Package | None,
+        driver: Package | None,
+        npm: Package | None,
+        *,
+        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
     ) -> None:
         results: list[bool | None] = []
         evidence: list[str] = []
@@ -255,11 +583,12 @@ class _Operation:
         else:
             status, reason = "pass", "declarations_match"
         self.add("declared_compatibility", status, reason, tuple(evidence))
+        target = "macOS" if target_driver == "mac2" else "Android"
         self.add(
             "qualified_support",
             "unknown",
             "not_qualified",
-            ("No Android Session qualification evidence is bundled.",),
+            (f"No {target} Session qualification evidence is bundled.",),
         )
 
 
@@ -314,9 +643,43 @@ class Runtime:
         self._diagnosing = False
         self._installing = False
         self._installation_cleanup: _Installer | _MaintenanceRunner | None = None
-        self._managed_scope: _ManagedScope | None = None
-        self._managed_cleanup: _ManagedScope | None = None
         self._managed_guard = Lock()
+        with self._managed_guard:
+            self._managed_scope: _ManagedScope | None = None
+            self._managed_cleanup: _ManagedScope | None = None
+
+    def _set_managed_cleanup(self, scope: _ManagedScope | None) -> None:
+        with self._managed_guard:
+            self._managed_cleanup = scope
+
+    def _snapshot_managed_state(
+        self,
+    ) -> tuple[_ManagedScope | None, _ManagedScope | None]:
+        with self._managed_guard:
+            return self._managed_scope, self._managed_cleanup
+
+    def _register_managed_scope(
+        self, scope: _ManagedScope, operation: _Operation
+    ) -> None:
+        with self._managed_guard:
+            if self._managed_scope is not None:
+                raise operation.error(EnvironmentBusyError, "environment_busy")
+            self._managed_scope = scope
+
+    def _clear_managed_scope(self, scope: _ManagedScope) -> None:
+        with self._managed_guard:
+            if self._managed_scope is scope:
+                self._managed_scope = None
+
+    def _owns_managed_scope(self, scope: _ManagedScope) -> bool:
+        with self._managed_guard:
+            return self._managed_scope is scope
+
+    @property
+    def managed_cleanup_pending(self) -> bool:
+        """Whether this instance retains an owned service needing cleanup."""
+        _, cleanup = self._snapshot_managed_state()
+        return cleanup is not None
 
     def connect(
         self, *, control: OperationControl | None = None
@@ -462,14 +825,29 @@ class Runtime:
 
         return cleanup_installation(self, selected)
 
-    def diagnose(self, *, control: OperationControl | None = None) -> DiagnosticReport:
+    def diagnose(
+        self,
+        *,
+        target_driver: OfficialDriver = "uiautomator2",
+        control: OperationControl | None = None,
+    ) -> DiagnosticReport:
+        if type(target_driver) is not str:
+            raise ValueError("target_driver must be 'uiautomator2' or 'mac2'")
+        if target_driver == "xcuitest":
+            raise ValueError("target_driver 'xcuitest' diagnostics are not yet enabled")
+        if target_driver not in ("uiautomator2", "mac2"):
+            raise ValueError("target_driver must be 'uiautomator2' or 'mac2'")
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
-        operation = _Operation(control or OperationControl(), self._on_progress)
+        selected: Literal["uiautomator2", "mac2"] = target_driver
+        operation = _Operation(
+            control or OperationControl(), self._on_progress, target_driver=selected
+        )
         operation.checkpoint()
+        managed_scope, _ = self._snapshot_managed_state()
         if (
             self._diagnosing
-            or self._managed_scope is not None
+            or managed_scope is not None
             or self._active_thread not in (None, get_ident())
         ):
             raise operation.error(EnvironmentBusyError, "environment_busy")
@@ -490,15 +868,51 @@ class Runtime:
                 if system != "Darwin":
                     return operation.report()
                 paths = tuple(os.environ.get("PATH", "").split(os.pathsep, 64))
-                appium = operation.tool(
-                    "appium", self._settings.appium_executable, paths
-                )
-                node = operation.tool("node", self._settings.node_executable, paths)
-                del node
-                npm = operation.tool("npm", self._settings.npm_executable, paths)
-                driver = operation.driver(self._settings)
-                operation.layouts(self._settings)
-                operation.compatibility(appium, driver, npm)
+                if selected == "uiautomator2":
+                    appium = operation.tool(
+                        "appium", self._settings.appium_executable, paths
+                    )
+                    node = operation.tool("node", self._settings.node_executable, paths)
+                    del node
+                    npm = operation.tool("npm", self._settings.npm_executable, paths)
+                    driver = operation.driver(self._settings)
+                    operation.layouts(self._settings)
+                    operation.compatibility(appium, driver, npm)
+                else:
+                    root = _coordination._account_home() / ".appium-connect-agent"
+                    root_present = False
+                    try:
+                        root.lstat()
+                        root_present = True
+                    except FileNotFoundError:
+                        pass
+                    managed = self._settings.server_mode == "managed" or (
+                        self._settings.appium_executable is None
+                        and self._settings.appium_home is None
+                        and root_present
+                    )
+                    if managed:
+                        appium, driver = operation.managed_components(root)
+                    else:
+                        appium = operation.tool(
+                            "appium", self._settings.appium_executable, paths
+                        )
+                        driver = operation.driver(self._settings, "mac2")
+                    node = operation.tool("node", self._settings.node_executable, paths)
+                    del node
+                    npm = operation.tool("npm", self._settings.npm_executable, paths)
+                    _xcode_layout(operation)
+                    operation.add(
+                        "java_layout",
+                        "not_applicable",
+                        "not_applicable_for_driver",
+                    )
+                    operation.add(
+                        "android_sdk_layout",
+                        "not_applicable",
+                        "not_applicable_for_driver",
+                    )
+                    operation.compatibility(appium, driver, npm, target_driver="mac2")
                 operation.add("service", "unknown", "not_checked")
                 operation.add("device", "unknown", "not_checked")
                 return operation.report()
