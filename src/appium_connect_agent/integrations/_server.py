@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
-import stat
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -20,7 +18,7 @@ from pydantic import BaseModel
 
 from appium_connect_agent.configuration import ConfigurationError, load_configuration
 
-from ._application import Application, ApplicationError
+from ._application import Application, ApplicationError, _validate_adb_executable
 from ._catalog import TOOL_CATALOG, ToolSpec
 from ._models import canonical_json, canonical_value_and_json
 
@@ -55,11 +53,11 @@ def _configure_logging() -> None:
     )
 
 
-def _parse_bootstrap(arguments: Sequence[str]) -> tuple[Path, Path]:
-    if len(arguments) != 4:
+def _parse_bootstrap(arguments: Sequence[str]) -> tuple[Path, Path | None]:
+    if len(arguments) not in (2, 4):
         raise _BootstrapError("bootstrap_invalid")
     values: dict[str, Path] = {}
-    for index in (0, 2):
+    for index in range(0, len(arguments), 2):
         option = arguments[index]
         value = arguments[index + 1]
         if option not in ("--config", "--adb-executable") or option in values:
@@ -70,22 +68,9 @@ def _parse_bootstrap(arguments: Sequence[str]) -> tuple[Path, Path]:
         if not path.is_absolute():
             raise _BootstrapError("bootstrap_invalid")
         values[option] = path
-    if set(values) != {"--config", "--adb-executable"}:
+    if "--config" not in values:
         raise _BootstrapError("bootstrap_invalid")
-    return values["--config"], values["--adb-executable"]
-
-
-def _validate_adb_executable(path: Path) -> Path:
-    if not path.is_absolute():
-        raise _BootstrapError("adb_executable_invalid")
-    try:
-        metadata = path.stat()
-        executable = os.access(path, os.X_OK)
-    except (OSError, ValueError):
-        raise _BootstrapError("adb_executable_invalid") from None
-    if not stat.S_ISREG(metadata.st_mode) or not executable:
-        raise _BootstrapError("adb_executable_invalid")
-    return path
+    return values["--config"], values.get("--adb-executable")
 
 
 def _only_broken_pipe(error: BaseException) -> bool:
@@ -124,11 +109,11 @@ def create_server(application: Application) -> MCPServer[Application]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local readiness, explicit Session lifecycle, Native observation, caller-requested "
-            "Element click, text, IME action, and gesture tools, Device back, keycode, keyboard, "
-            "clipboard, alert, and status-bar controls, and application lifecycle, install, and "
-            "remove tools; no automatic observation, verification, navigation, action chain, retry, "
-            "replay, rollback, attach, recovery, clear-app, or HTTP tools."
+            "Local Android and macOS (Mac2) readiness, explicit Session lifecycle, Native "
+            "observation, caller-requested Element actions, Device controls, screenshot, "
+            "screen-coordinate pointer actions, macOS keys, and application management; no "
+            "automatic observation, verification, navigation, action chain, retry, replay, "
+            "rollback, attach, recovery, clear-app, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,
@@ -197,15 +182,16 @@ def main() -> int:
     _configure_logging()
     try:
         config_path, adb_path = _parse_bootstrap(sys.argv[1:])
-        adb_executable = _validate_adb_executable(adb_path)
-        if not config_path.is_absolute():
-            raise _BootstrapError("config_invalid")
+        adb_executable = (
+            None if adb_path is None else _validate_adb_executable(adb_path)
+        )
         loaded = load_configuration(config_path)
     except ConfigurationError:
         logging.getLogger(_LOGGER_NAME).error("startup_error code=config_invalid")
         return 2
-    except _BootstrapError as error:
-        logging.getLogger(_LOGGER_NAME).error("startup_error code=%s", error.code)
+    except (ValueError, _BootstrapError) as error:
+        code = error.code if isinstance(error, _BootstrapError) else str(error)
+        logging.getLogger(_LOGGER_NAME).error("startup_error code=%s", code)
         return 2
 
     application = Application(loaded.settings, adb_executable, surface="mcp")

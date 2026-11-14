@@ -60,7 +60,10 @@ _ATTRIBUTES = (
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
+    return {"request": request}
 
 
 def _text(result: CallToolResult) -> str:
@@ -1065,11 +1068,11 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
             )
             initialized = receive(1)
             assert initialized["result"]["instructions"] == (
-                "Local readiness, explicit Session lifecycle, Native observation, caller-requested "
-                "Element click, text, IME action, and gesture tools, Device back, keycode, keyboard, "
-                "clipboard, alert, and status-bar controls, and application lifecycle, install, and "
-                "remove tools; no automatic observation, verification, navigation, action chain, retry, "
-                "replay, rollback, attach, recovery, clear-app, or HTTP tools."
+                "Local Android and macOS (Mac2) readiness, explicit Session lifecycle, Native "
+                "observation, caller-requested Element actions, Device controls, screenshot, "
+                "screen-coordinate pointer actions, macOS keys, and application management; no "
+                "automatic observation, verification, navigation, action chain, retry, replay, "
+                "rollback, attach, recovery, clear-app, or HTTP tools."
             )
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send(

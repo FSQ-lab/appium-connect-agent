@@ -17,7 +17,10 @@ from .conftest import TOOL_NAMES, McpHarness
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
+    return {"request": request}
 
 
 def _locator(value: str) -> dict[str, object]:
@@ -88,7 +91,7 @@ def test_ime_and_gesture_remain_destructive_with_disjoint_schemas(
 
     tools = anyio.run(scenario)
     assert tuple(tool.name for tool in tools) == TOOL_NAMES
-    assert len(tools) == 19
+    assert len(tools) == 22
     for tool in tools[10:12]:
         assert tool.annotations is not None
         assert tool.annotations.model_dump(
@@ -130,6 +133,8 @@ def test_ime_and_gesture_remain_destructive_with_disjoint_schemas(
         "scroll",
         "scroll_to",
         "drag_and_drop",
+        "scroll_by",
+        "macos_swipe",
     ]
     assert branches[0]["properties"]["percent"]["maximum"] == 1.0
     assert branches[1]["properties"]["percent"]["maximum"] == 3.0

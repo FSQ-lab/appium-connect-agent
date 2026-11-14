@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from appium_connect_agent.configuration import load_configuration
 
-from ._application import Application
+from ._application import Application, _validate_adb_executable
 from ._catalog import TOOL_CATALOG
 from ._cli_protocol import (
     BOOTSTRAP_ADAPTER,
@@ -49,7 +49,6 @@ from ._endpoint import (
     validate_endpoint_parent,
     validate_socket_path,
 )
-from ._server import _validate_adb_executable
 
 _DEFAULT_IDLE_TIMEOUT = 900.0
 _DEFAULT_CALL_TIMEOUT = 30.0
@@ -114,9 +113,7 @@ def _parser() -> _Parser:
     start.add_argument(
         "--config", required=True, action=_UniqueStore, type=_absolute_path
     )
-    start.add_argument(
-        "--adb-executable", required=True, action=_UniqueStore, type=_absolute_path
-    )
+    start.add_argument("--adb-executable", action=_UniqueStore, type=_absolute_path)
     start.add_argument("--socket", action=_UniqueStore, type=_absolute_path)
     start.add_argument(
         "--idle-timeout-seconds",
@@ -290,7 +287,11 @@ def _start(namespace: argparse.Namespace) -> int:
     bootstrap = BootstrapRequest(
         protocol_version=1,
         config=os.fspath(namespace.config),
-        adb_executable=os.fspath(namespace.adb_executable),
+        adb_executable=(
+            None
+            if namespace.adb_executable is None
+            else os.fspath(namespace.adb_executable)
+        ),
         socket=os.fspath(socket_path),
         idle_timeout_seconds=namespace.idle_timeout_seconds,
     )
@@ -384,7 +385,11 @@ async def _child_async(
     application: Application | None = None
     try:
         loaded = load_configuration(Path(bootstrap.config))
-        adb = _validate_adb_executable(Path(bootstrap.adb_executable))
+        adb = (
+            None
+            if bootstrap.adb_executable is None
+            else _validate_adb_executable(Path(bootstrap.adb_executable))
+        )
         socket_path = validate_socket_path(bootstrap.socket)
         lease = EndpointLease.acquire(socket_path)
         application = Application(loaded.settings, adb, surface="cli")

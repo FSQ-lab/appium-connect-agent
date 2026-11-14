@@ -99,7 +99,7 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="cli")
+        application = Application(LocalSettings(), None, surface="cli")
         result = await application.dispatch(
             "appium_capabilities_get", {"schema_version": 1}
         )
@@ -109,12 +109,15 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
             "transport": "unix_socket",
             "protocol_target": None,
             "host_compatibility": "unqualified",
-            "adb_configured": True,
-            "platform": {
-                "host": "macos",
-                "target": "android_native",
-                "driver": "uiautomator2",
-            },
+            "adb_configured": False,
+            "platforms": [
+                {
+                    "host": "macos",
+                    "target": "android_native",
+                    "driver": "uiautomator2",
+                },
+                {"host": "macos", "target": "macos_desktop", "driver": "mac2"},
+            ],
             "tools": list(TOOL_CATALOG.tool_names),
             "limitations": list(application.capabilities().data.limitations),
         }
@@ -456,7 +459,6 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
 
     monkeypatch.setattr(subprocess, "Popen", _FakeProcess)
     config = tmp_path / "private-config.toml"
-    adb = tmp_path / "private-adb"
     assert (
         cli.main(
             (
@@ -464,8 +466,6 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
                 "start",
                 "--config",
                 os.fspath(config),
-                "--adb-executable",
-                os.fspath(adb),
                 "--socket",
                 os.fspath(socket_path),
             )
@@ -477,10 +477,10 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
     assert not worker.is_alive()
     command_text = " ".join(captured["command"])
     assert os.fspath(config) not in command_text
-    assert os.fspath(adb) not in command_text
     assert os.fspath(socket_path) not in command_text
     assert captured["ack"] == b"\x06"
     bootstrap = decode_json_object(captured["bootstrap"], maximum=16 * 1024)
+    assert bootstrap["adb_executable"] is None
     assert bootstrap["idle_timeout_seconds"] == 900.0
     options = cast(dict[str, object], captured["options"])
     command = cast(list[str], captured["command"])
@@ -909,7 +909,7 @@ def test_new_device_tool_calls_through_actual_cli_daemon(
                     "call",
                     "appium_session_open",
                     "--json-args",
-                    '{"schema_version":1,"device_id":"cli-device-tools"}',
+                    '{"schema_version":1,"platform":"android","device_id":"cli-device-tools"}',
                     "--socket",
                     os.fspath(endpoint),
                 )
@@ -974,7 +974,7 @@ def test_idle_timeout_closes_application_and_removes_socket(
         endpoint = account / "bridge.sock"
         outcome = await create_and_serve_daemon(
             LocalSettings(),
-            tmp_path / "adb",
+            None,
             endpoint,
             0.05,
             account_directory=account,
@@ -1427,7 +1427,7 @@ def test_stop_cancels_partial_header_before_releasing_endpoint(
         async def daemon() -> None:
             result = await create_and_serve_daemon(
                 LocalSettings(),
-                tmp_path / "adb",
+                None,
                 endpoint,
                 30.0,
                 account_directory=account,

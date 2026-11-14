@@ -109,7 +109,9 @@ def build_tool_bindings(application: object) -> tuple[ToolBindingExport, ...]:
 class SyncApplication:
     """Synchronous owner for one async ToolCall application and its portal."""
 
-    def __init__(self, settings: LocalSettings, adb_executable: Path) -> None:
+    def __init__(
+        self, settings: LocalSettings, adb_executable: Path | None = None
+    ) -> None:
         self._settings = settings
         self._adb_executable = adb_executable
         self._portal_manager: AbstractContextManager[BlockingPortal] | None = None

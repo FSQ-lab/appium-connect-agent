@@ -25,6 +25,8 @@ from .conftest import CANARY, SECRET_PATH, TOOL_NAMES, McpHarness
 
 def _request(**values: object) -> dict[str, object]:
     request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
     if "locator" in values and "mode" not in values and "intent" not in values:
         request.setdefault("kind", "single")
     return {"request": request}
@@ -523,6 +525,7 @@ def test_back_timeout_budget_starts_before_registry_admission(
     lower_calls: list[object] = []
     entry = SimpleNamespace(
         handle="s_" + ("a" * 32),
+        platform="android",
         state="active",
         busy=False,
     )
@@ -564,6 +567,7 @@ def test_back_pre_start_cancel_does_zero_lower_calls(
     lower_calls: list[object] = []
     entry = SimpleNamespace(
         handle="s_" + ("a" * 32),
+        platform="android",
         state="active",
         busy=False,
     )

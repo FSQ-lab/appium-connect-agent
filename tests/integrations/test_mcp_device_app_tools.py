@@ -27,7 +27,10 @@ from .conftest import TOOL_NAMES, McpHarness
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
+    return {"request": request}
 
 
 @dataclass(frozen=True)
@@ -79,7 +82,7 @@ async def _close(client: Client, handle: str) -> None:
     assert result["data"]["session_state"] == "closed"
 
 
-def test_seven_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
+def test_ten_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
     expected = (
         (
             "appium.device.key",
@@ -123,6 +126,24 @@ def test_seven_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
             "app_package",
             "Install one local APK or remove one explicit application package.",
         ),
+        (
+            "appium.device.screenshot",
+            "appium_device_screenshot",
+            "device_screenshot",
+            "Capture one validated PNG screenshot from the bound Device as Base64.",
+        ),
+        (
+            "appium.device.pointer",
+            "appium_device_pointer",
+            "device_pointer",
+            "Perform one explicit screen-coordinate tap, click, hover, scroll, or drag on the bound Device.",
+        ),
+        (
+            "appium.macos.keys",
+            "appium_macos_keys",
+            "macos_keys",
+            "Send one sequence of macOS keystrokes or keyboard shortcuts to the application or an Element.",
+        ),
     )
     assert (
         tuple(
@@ -140,8 +161,22 @@ def test_seven_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
             spec.annotations.open_world,
         )
         == (True, True, True, True)
-        for spec in TOOL_CATALOG.specs[12:]
+        for spec in TOOL_CATALOG.specs[12:19]
     )
+    screenshot = TOOL_CATALOG.specs[19].annotations
+    assert (
+        screenshot.read_only,
+        not screenshot.destructive,
+        screenshot.idempotent,
+        screenshot.open_world,
+    ) == (True, True, True, True)
+    for spec in TOOL_CATALOG.specs[20:]:
+        assert (
+            not spec.annotations.read_only,
+            spec.annotations.destructive,
+            not spec.annotations.idempotent,
+            spec.annotations.open_world,
+        ) == (True, True, True, True)
 
     handle = "s_" + ("a" * 32)
     valid = {
@@ -213,7 +248,7 @@ def test_seven_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
         ),
         (
             "appium_app_lifecycle",
-            {**valid["appium_app_lifecycle"], "app_id": "1invalid.app"},
+            {**valid["appium_app_lifecycle"], "app_id": "-invalid.app"},
         ),
         (
             "appium_app_package",
@@ -821,7 +856,11 @@ def test_toolcall_callbacks_dispatch_all_seven_new_tools(
 
             opened = await invoke(
                 "appium_session_open",
-                {"schema_version": 1, "device_id": "toolcall-device-app"},
+                {
+                    "schema_version": 1,
+                    "platform": "android",
+                    "device_id": "toolcall-device-app",
+                },
             )
             handle = cast(str, opened["data"]["session_handle"])
             common: dict[str, JsonValue] = {

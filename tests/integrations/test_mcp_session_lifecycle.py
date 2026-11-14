@@ -42,7 +42,10 @@ def _error(result: CallToolResult) -> dict[str, Any]:
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
+    return {"request": request}
 
 
 async def _open(
@@ -323,7 +326,7 @@ def test_managed_uncertain_session_is_zero_signal_degraded_without_cleanup_retry
     )
 
 
-def test_nineteen_tools_have_fixed_order_annotations_and_session_schemas(
+def test_twenty_two_tools_have_fixed_order_annotations_and_session_schemas(
     mcp_harness: McpHarness,
 ) -> None:
     async def scenario() -> list[Tool]:
@@ -339,96 +342,99 @@ def test_nineteen_tools_have_fixed_order_annotations_and_session_schemas(
         "idempotentHint": False,
         "openWorldHint": True,
     }
+    read_open = {
+        "title": None,
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    }
     annotations = [
         tool.annotations.model_dump(mode="json", by_alias=True, exclude_none=False)
         if tool.annotations is not None
         else None
         for tool in tools
     ]
-    assert (
-        annotations
-        == [
-            {
-                "title": None,
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": False,
-            },
-            {
-                "title": None,
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": False,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": False,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": True,
-                "idempotentHint": True,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "idempotentHint": True,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": True,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": True,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": True,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-            {
-                "title": None,
-                "readOnlyHint": False,
-                "destructiveHint": True,
-                "idempotentHint": False,
-                "openWorldHint": True,
-            },
-            write_open,
-        ]
-        + [write_open] * 7
-    )
+    assert annotations == [
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        {
+            "title": None,
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+        write_open,
+    ] + [write_open] * 7 + [read_open, write_open, write_open]
     for tool in tools[:6]:
         assert tool.input_schema["type"] == "object"
         assert tool.input_schema["required"] == ["request"]

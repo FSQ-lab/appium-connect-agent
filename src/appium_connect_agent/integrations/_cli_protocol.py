@@ -99,7 +99,7 @@ RESPONSE_ADAPTER = TypeAdapter(BridgeResponse)
 class BootstrapRequest(_StrictModel):
     protocol_version: Literal[1]
     config: str
-    adb_executable: str
+    adb_executable: str | None = None
     socket: str
     idle_timeout_seconds: float
 

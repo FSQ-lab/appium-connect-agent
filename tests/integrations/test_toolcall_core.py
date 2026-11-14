@@ -69,69 +69,81 @@ _TOOL_NAMES = (
     "appium_device_status_bar",
     "appium_app_lifecycle",
     "appium_app_package",
+    "appium_device_screenshot",
+    "appium_device_pointer",
+    "appium_macos_keys",
 )
 _INPUT_SCHEMA_SHA256 = {
     "appium.capabilities.get": "f53a26611f0f62347fe10b6e09ebea6a17d1040b5d069dc0af2d2d632b7818c4",
-    "appium.runtime.check": "dbf076e1e7892a57ee7aa3a8ac641600630e7990841291246e0afef9ce8d40ee",
+    "appium.runtime.check": "9dbb922df6d64d1ad5a8a296aeb8dbbb5b823bc9562597d5f6eadf34f5e5924e",
     "appium.devices.list": "0965356f84e112a1670527d6186c0f47ad95fb44c978343dfb163d363a219f55",
-    "appium.session.open": "2fa7e03371dfe7b559de922759fe53a75db222bc4cb4c8360c021e5670bef7d5",
+    "appium.session.open": "9e7b3f69d70c2676672f66ceb09a8114fa59ca38cce693a2afd98a3a95b29caf",
     "appium.session.status": "e7d106bc945981291193fd8ff9509cfc92f51d73cde71db5169b18422e3c66de",
     "appium.session.close": "702d080d90efbe49179f282489e8cc1ae537700c121f0479401ed69c04488ace",
-    "appium.ui.observe": "310d885d7f095ed9c96624852413d1b6c8495abbd24088809aa492e669314cf9",
-    "appium.element.click": "212fbc6fdc56cf45acc2e82b33e1c811f6aec7f40470983cf1f157458c8049b0",
-    "appium.element.text": "109542fda082a344ed20ad2249f5eb66cadad88aeee5e51c136fb9380632dbd6",
+    "appium.ui.observe": "2d1270249db6fa63160c4dac59b53b1bde888284aba3cc2a0b865e0b72ff2b67",
+    "appium.element.click": "75a1d2c46161a5c21a53d24d4240deb5090c5e849c99bf2edd48d0f037f8feb7",
+    "appium.element.text": "888612a116701ad74daba1cf8acb726c62b577984f836ea55714bc75c9ca9fce",
     "appium.device.back": "f5b1986f683b37b974a549156afb4907bc66539228fc6930e10c2cb3bea6455d",
-    "appium.element.ime_action": "725369e79e3051381adabf720817b605f4ef2c82bfd1458c5e7150886e9497be",
-    "appium.element.gesture": "1d56c60870092cda6912fefba06ca799f00cf7aa847629680b60693462194b34",
+    "appium.element.ime_action": "6468c1e5660cf5a67580476d2425e3e154330bc68c6987a352943f4ec24ec284",
+    "appium.element.gesture": "945f9c04230d4b9e7911d78ceafc92c26a181f859750b7eb923b4042629be352",
     "appium.device.key": "975afe85c6e2ae1b8ec57b9b3e5a53e37349e3ead7fae9c25cf85e54748f6277",
     "appium.device.keyboard_hide": "4204b2bcb9adc9457f999294d2a231a7102c9147ae1f6e39b66500fc19e3a6c0",
     "appium.device.clipboard": "08c28bde9b44d4667fec26ebf6ab4489e5fa87f5642e51552013c94f011e2605",
     "appium.device.alert": "ecf0bd44087e78bdaa63eaeca8ba8d580cabb8ea2421d51d98b14d4da607e130",
     "appium.device.status_bar": "ec0834f42c093373f428c8bc163720862f1f455811e73c613a3a646336594e45",
-    "appium.app.lifecycle": "c360c6afe13a1e1154e4e4580d46d01aa88b252bd49d4e8ffb11e644cc6be1b8",
-    "appium.app.package": "778bf1f60b7ba92ead5e9557f2583149da76cfec339244b3ac0d834349021f34",
+    "appium.app.lifecycle": "0e717e5781b5b75715045868b65c2ed340773dbd1ddd4f0a27bbea1f2a92fbec",
+    "appium.app.package": "3ab8c80fb85cb0b2b1b005cc15943805d617e08040814996ee829795196e58fe",
+    "appium.device.screenshot": "86ce75b9d22ba605d12cdc42fa88182fc20c4fe1a1af02031d2435ede53e8966",
+    "appium.device.pointer": "47735aa6c8a759d0534037f027c1a9c2bce82ce6e5c525cdfce3fdc188803f8f",
+    "appium.macos.keys": "d363a33bc25d30dfb1746b84a3c466daaa8d4577a0ed58808529ab4873687637",
 }
 _OPENAI_SCHEMA_SHA256 = {
     "appium_capabilities_get": "5adb3919717cd87cc52ba5d526ac4ef34fe0980531f4b0f6e23a0fae09be46da",
-    "appium_runtime_check": "999b923faa4dd034d53cd942d2cdd8d75add3ef57630e78672c4dfc83aa8d240",
+    "appium_runtime_check": "ef36a10d1bd22f68f3a4e39a46c37d849ce6273895c307e5edc815967a57aaf1",
     "appium_devices_list": "9f5d7d28e2de3e7fc2e34f33548dd1135f5dc682ea1367e4ef08c7e325723ce3",
-    "appium_session_open": "2b631b47b21f9f4b3725777628e14c5e74c469cc81ff806b093f669bc69126da",
+    "appium_session_open": "c693f8026e7910c0b9ca5ed58fcb5bd59651ca7d8b6ffc69a280a333d7e00b02",
     "appium_session_status": "db08632cc7de86cb3edf049477b318fb79e80b90b8626bf631d28d62aaf697a5",
     "appium_session_close": "6b5b665bc41f8e09c804114963479e60387186819f28340e409598997c0c508d",
-    "appium_ui_observe": "829193a3d9e9826e6e2e350a733e75e2b0db9ae1f5bbc808edb20121a3716a20",
-    "appium_element_click": "702bd8dec03bbf1201cae62d3574671b4633dfe13c1e14ae0bb5f86c688a111c",
-    "appium_element_text": "e50dae9c228824ffcd836f716c1d29221e73d73f7264d12306b611d645d0833a",
+    "appium_ui_observe": "af710372199140bcf6dcfd7cdd0bfaf77663898c8533a433aa09781996edd364",
+    "appium_element_click": "2c5ec7a72cedc7530abd7860c2197fbf982f1323c65be663fc61915f89107809",
+    "appium_element_text": "e997fa3c241defa22515ac62274d3c24b42e5ca7aa5a34a01e76616545eb35c2",
     "appium_device_back": "ed7a312d325d4adb48c05de9a3d16fb85eb6251c097f050267d0df59f34e0557",
-    "appium_element_ime_action": "fd711080afdcca3847dc3a760df94341d1c316adaf36df8c74d187e3862fd77e",
-    "appium_element_gesture": "c8921fc233c267e31540bbc694b97c1088090b26b03369f2601b19979465ade2",
+    "appium_element_ime_action": "0c4d483138d063b6f925ef7d530e2d50afba9f39dba46213a88d77625f9f068c",
+    "appium_element_gesture": "61a71bd6e00ccbc8f0e1e83034548500e210c9198326d54fb2ff884e13ed6d36",
     "appium_device_key": "b2493f91ca851bfa6ac36e0316942df7a951a1898f794e30c4872e631680c87a",
     "appium_device_keyboard_hide": "517f151ac6fc4054c09b48ac705d20ea2529071c52ff79d74db80631df0cdd92",
     "appium_device_clipboard": "c5b99023d9a2200ca4af1314a321599b074b9ebb46f9e27d554a7997e801d373",
     "appium_device_alert": "08aedeb04edbeda19a75e9825df814f988593ddb9a1d9e1cbd906069d1601c69",
     "appium_device_status_bar": "506c7ec54c81d51f25383b102977bc281051c7a0dc56aeca6ea90b9143ef8596",
-    "appium_app_lifecycle": "6784e6f2bd0e7a3e1e41febd11ac77c27084d069d649c3cdf9c24e63c4d54ad7",
-    "appium_app_package": "55f9baa4308b580e4a13783dbb8d5b05142040d0876c2cdac10ef6a74821ef38",
+    "appium_app_lifecycle": "e73e7a2c7cb2ad391884087b0957386618f088de279c245ab775f8e67772a85b",
+    "appium_app_package": "387d0bbd8e395c1b5aba862f3d2f6d3ba4936ba618a0720c1dca445cbf377002",
+    "appium_device_screenshot": "47f3a26acd8299d65141553009033d115481b65d6a06c6eeeb9543f82583e9ce",
+    "appium_device_pointer": "3f10b69b21789527c63b2a061b9e0f227e332ead84ad128c4ac958105d2d86fa",
+    "appium_macos_keys": "3a98064d6387b6d592dd7c02602be9bd6e6f1df784a1cf1143567df59e382734",
 }
 _GOOGLE_SCHEMA_SHA256 = {
     "appium_capabilities_get": "9c74a083afb10b3e5f05f989dccd9ac4097be39a3916ada18093b1ad237eba67",
-    "appium_runtime_check": "95eafda7633b0cd4de7b92d3cb1d40d58284440d5490e02ba55d375726ff722b",
+    "appium_runtime_check": "8bb74d16f2fe0532a74ee861b76ab2be3b443eacf9d60ef351797c0815567867",
     "appium_devices_list": "4df93d90ec8aed3cfc5ce3780e6b0e176d261e2cef28558fc29a20fc0fa2760b",
-    "appium_session_open": "f00c7d780a910b1facab92e14fef959985a9ca8dfe1bd6b6c93aafd229f1639a",
+    "appium_session_open": "575ce14ddf60cddb136ebfa7495422878e4eb11df991f08a0fe4f962f84fb5fc",
     "appium_session_status": "f485e180967ffc88fad4bb5b3f62aff74fad0fb1833ae520ebbbc5d45389fe0b",
     "appium_session_close": "c5da739f0c6eaedc2ac392f050d9c3467c9ab515a5f02592920a124b901ad4a7",
-    "appium_ui_observe": "0c14ed3ca32b67551a11ebae78fb067343cac700f0ff5d2dde926a3c824c4789",
-    "appium_element_click": "aa4b1bfce17a4e9347412003229194dfcb000f45cac0135d7362839b6de8ab23",
-    "appium_element_text": "ac6d41cf457dd0fed064f016fd177ee021136e9acf2df4cc043efa4ecf1463b1",
+    "appium_ui_observe": "e551419f533358a672faa1e8ffd6a7603d4e120524f1c5b13c3be0461e8126e4",
+    "appium_element_click": "f5f5278b38a1351bc6935151927797180f96cf93b20686d4c348d0d1b3c2e1ff",
+    "appium_element_text": "03983a3594f72589da1ae6f3c17db1d65bcbf667295171a2fc05ab44c4da69b9",
     "appium_device_back": "65b4a1222ea4b9c70e1ee14d045ea2a142d80f8c36ea747f9e4f5b89e7dbad7a",
-    "appium_element_ime_action": "e03c3579b11aace2d9334cbd4d8acf81142ccc88553fe64f38d7ef63a6c1fdb9",
-    "appium_element_gesture": "5341d64927df1c63a8ca195a432c8575bf486201ef010c3451dc10556c7313fc",
+    "appium_element_ime_action": "657fb0f45f64695610d910be2a848082e70ec0c04432e5295f845cf5c3e6ba66",
+    "appium_element_gesture": "c133f66a43c4f4d9a880856843b4066e79618d4bec684e3ef10505f3889f7d4f",
     "appium_device_key": "48cdaaa20e68e9903a25993f6129811e01fee32957b9bd8cd42beaaf5ca823a7",
     "appium_device_keyboard_hide": "486675a363f75e0c80464f4a32deb951f0f59b715ac93c1562812ff3968d5628",
     "appium_device_clipboard": "48c83deda17090ed26e1e5c6c0edf91b8752d737bd857d2a77a92958f1693ae1",
     "appium_device_alert": "2a307eae505f638ee5733bb00ab2ccf6c9a921b2576be5a80044666f37f16463",
     "appium_device_status_bar": "6bef373e89e268af26fd44fae847be6c2cf1c71d372250ad5cd66f7da9998572",
-    "appium_app_lifecycle": "098ac6715906aa90e29ffe3496e357c2693510746dac47293645e3fa896bf70c",
-    "appium_app_package": "d9d4a2a6f2e0fe5f507d02b35cfb70622fe5b3ae4d790e3abb392b27bd6c95fd",
+    "appium_app_lifecycle": "4cc1b01d8b54dc21563d56195581b742b753df67f983dd3c8e662088c53fbd2b",
+    "appium_app_package": "1e82e829a9a67138681c466ddacf12bc4203ccefc5a82b2c8816e0035444b287",
+    "appium_device_screenshot": "f8c8b624356015fd9469a5d5646311ff7e267fa5e33dfa40f72463a7500243ee",
+    "appium_device_pointer": "975582e1cac2ad295b3bf5a3ab8642d3ccb3bdd5baacaa2ac12cd6871651fe6c",
+    "appium_macos_keys": "2cdae89b3a967b9b0b040c4a63208372b074e4c81b071c9e0bccf4b37016873f",
 }
 _OPENAI_KEYWORDS = {
     "$defs",
@@ -319,7 +331,7 @@ def _payload(value: str) -> dict[str, Any]:
 
 def test_catalog_is_fixed_and_fsq_projection_is_safe_and_fresh() -> None:
     assert TOOL_CATALOG.tool_names == _TOOL_NAMES
-    assert len(TOOL_CATALOG.mcp_names) == 19
+    assert len(TOOL_CATALOG.mcp_names) == 22
     assert all(re.fullmatch(r"[a-z0-9_]{1,32}", name) for name in _TOOL_NAMES)
 
     for name in _TOOL_NAMES:
@@ -453,7 +465,7 @@ def test_fsq_projection_rejects_unsafe_schema_shapes(
 
 def test_generated_mcp_input_schemas_match_pre_cutover_bytes(tmp_path: Path) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="mcp")
+        application = Application(LocalSettings(), None, surface="mcp")
         async with Client(create_server(application)) as client:
             tools = (await client.list_tools()).tools
         observed = {
@@ -474,10 +486,10 @@ def test_generated_mcp_input_schemas_match_pre_cutover_bytes(tmp_path: Path) -> 
 
 def test_tool_bindings_execute_capability_and_use_surface_truth(tmp_path: Path) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        application = Application(LocalSettings(), None, surface="toolcall")
         bindings = application.tool_bindings()
         assert tuple(binding.name for binding in bindings) == _TOOL_NAMES
-        assert len({id(binding.parameters_schema) for binding in bindings}) == 19
+        assert len({id(binding.parameters_schema) for binding in bindings}) == 22
 
         result = _payload(
             await bindings[0].invoke(
@@ -497,7 +509,7 @@ def test_tool_bindings_execute_capability_and_use_surface_truth(tmp_path: Path) 
 
 def test_toolcall_validation_errors_are_structured_and_redacted(tmp_path: Path) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        application = Application(LocalSettings(), None, surface="toolcall")
         binding = application.tool_bindings()[0]
 
         malformed = _payload(
@@ -542,7 +554,7 @@ def test_toolcall_callback_preserves_interruption_and_maps_internal_error(
     interruption: BaseException,
 ) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        application = Application(LocalSettings(), None, surface="toolcall")
         binding = application.tool_bindings()[0]
         call = _Call(binding.name, {"schema_version": 1})
 
@@ -573,7 +585,7 @@ def test_toolcall_callback_preserves_interruption_and_maps_internal_error(
 
 def test_closed_application_rejects_dispatch(tmp_path: Path) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        application = Application(LocalSettings(), None, surface="toolcall")
         await application.aclose()
         with pytest.raises(ApplicationError) as caught:
             await application.dispatch("appium_capabilities_get", {"schema_version": 1})
@@ -583,7 +595,7 @@ def test_closed_application_rejects_dispatch(tmp_path: Path) -> None:
 
 
 def test_sync_application_owns_portal_and_application(tmp_path: Path) -> None:
-    application = SyncApplication(LocalSettings(), tmp_path / "adb")
+    application = SyncApplication(LocalSettings())
     with application:
         result = application.dispatch("appium_capabilities_get", {"schema_version": 1})
         assert result.model_dump(mode="json")["data"]["integration_form"] == "toolcall"
@@ -596,8 +608,8 @@ def test_sync_application_owns_portal_and_application(tmp_path: Path) -> None:
 
 def test_surface_guards_prevent_registry_cross_use(tmp_path: Path) -> None:
     async def scenario() -> None:
-        mcp = Application(LocalSettings(), tmp_path / "adb", surface="mcp")
-        toolcall = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        mcp = Application(LocalSettings(), None, surface="mcp")
+        toolcall = Application(LocalSettings(), None, surface="toolcall")
         with pytest.raises(ValueError, match="ToolCall bindings require"):
             mcp.tool_bindings()
         with pytest.raises(ValueError, match="dispatch requires"):
@@ -611,7 +623,7 @@ def test_surface_guards_prevent_registry_cross_use(tmp_path: Path) -> None:
 
 
 def test_application_error_text_and_repr_never_render_payload(tmp_path: Path) -> None:
-    application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+    application = Application(LocalSettings(), None, surface="toolcall")
     sensitive = "private_secret_device-123"
     session_handle = "s_" + ("a" * 32)
     data = ToolErrorData(
@@ -740,9 +752,9 @@ class _FakeRuntime:
             ),
         )
 
-    def diagnose(self, *, control: object) -> DiagnosticReport:
+    def diagnose(self, *, target_driver: str, control: object) -> DiagnosticReport:
         del control
-        self._state.calls.append("runtime.diagnose")
+        self._state.calls.append(f"runtime.diagnose:{target_driver}")
         return self._report()
 
     def connect(self, *, control: object) -> AbstractContextManager[Any]:
@@ -788,20 +800,59 @@ class _FakeElement:
         self._session._state.calls.append("element.inspect_structure")
         return _FakeObservation("op_structure_fake", "structure")
 
-    def click(self, *, wait_timeout_seconds: float, control: object) -> None:
-        del wait_timeout_seconds, control
+    def click(
+        self,
+        *,
+        key_modifier_flags: int | None,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del key_modifier_flags, wait_timeout_seconds, control
         self._session._fail("click")
         self._session._state.calls.append("element.click")
 
-    def double_click(self, *, wait_timeout_seconds: float, control: object) -> None:
-        del wait_timeout_seconds, control
+    def double_click(
+        self,
+        *,
+        key_modifier_flags: int | None,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del key_modifier_flags, wait_timeout_seconds, control
         self._session._fail("click")
         self._session._state.calls.append("element.double_click")
 
-    def long_click(
-        self, duration_ms: int, *, wait_timeout_seconds: float, control: object
+    def right_click(
+        self,
+        *,
+        key_modifier_flags: int | None,
+        wait_timeout_seconds: float,
+        control: object,
     ) -> None:
-        del duration_ms, wait_timeout_seconds, control
+        del key_modifier_flags, wait_timeout_seconds, control
+        self._session._fail("click")
+        self._session._state.calls.append("element.right_click")
+
+    def hover(
+        self,
+        *,
+        key_modifier_flags: int | None,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del key_modifier_flags, wait_timeout_seconds, control
+        self._session._fail("click")
+        self._session._state.calls.append("element.hover")
+
+    def long_click(
+        self,
+        duration_ms: int,
+        *,
+        key_modifier_flags: int | None,
+        wait_timeout_seconds: float,
+        control: object,
+    ) -> None:
+        del duration_ms, key_modifier_flags, wait_timeout_seconds, control
         self._session._fail("click")
         self._session._state.calls.append("element.long_click")
 
@@ -855,6 +906,8 @@ class _FakeElement:
         *,
         destination_x_ratio: float,
         destination_y_ratio: float,
+        duration_ms: int | None,
+        key_modifier_flags: int | None,
         wait_timeout_seconds: float,
         control: object,
     ) -> None:
@@ -862,6 +915,8 @@ class _FakeElement:
             destination,
             destination_x_ratio,
             destination_y_ratio,
+            duration_ms,
+            key_modifier_flags,
             wait_timeout_seconds,
             control,
         )
@@ -1007,7 +1062,11 @@ _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
         "timeout_seconds": 10.0,
     },
     "appium_devices_list": {"schema_version": 1, "timeout_seconds": 30.0},
-    "appium_session_open": {"schema_version": 1, "device_id": "device-1"},
+    "appium_session_open": {
+        "schema_version": 1,
+        "platform": "android",
+        "device_id": "device-1",
+    },
     "appium_session_status": {
         "schema_version": 1,
         "session_handle": "s_" + ("a" * 32),
@@ -1107,6 +1166,23 @@ _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
         "app_id": "com.example",
         "timeout_seconds": 90.0,
     },
+    "appium_device_screenshot": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+    },
+    "appium_device_pointer": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "intent": "tap",
+        "x": 1,
+        "y": 2,
+    },
+    "appium_macos_keys": {
+        "schema_version": 1,
+        "session_handle": "s_" + ("a" * 32),
+        "target": "system",
+        "keys": [{"key": "a"}],
+    },
 }
 
 
@@ -1143,7 +1219,12 @@ def test_real_toolcall_lifecycle_runs_original_twelve_state_machines(
         opened = await _invoke_binding(
             bindings,
             "appium_session_open",
-            {"schema_version": 1, "device_id": "device-1", "app_id": "demo"},
+            {
+                "schema_version": 1,
+                "platform": "android",
+                "device_id": "device-1",
+                "app_id": "demo",
+            },
         )
         handle = cast(str, opened["data"]["session_handle"])
         assert handle.startswith("s_")
@@ -1301,7 +1382,7 @@ def test_real_toolcall_lifecycle_runs_original_twelve_state_machines(
         await application.aclose()
 
     anyio.run(scenario)
-    assert state.calls.count("runtime.diagnose") == 1
+    assert state.calls.count("runtime.diagnose:uiautomator2") == 1
     assert state.calls.count("runtime.connect") == 2
     assert state.calls.count("devices.list") == 1
     assert state.calls.count("session.create") == 1
@@ -1332,6 +1413,7 @@ def test_real_tool_errors_preserve_only_owned_session_resources(
         application = Application(LocalSettings(), mcp_harness.adb, surface="toolcall")
         arguments: dict[str, JsonValue] = {
             "schema_version": 1,
+            "platform": "android",
             "device_id": "device-1",
         }
         if callback:
@@ -1357,7 +1439,7 @@ def test_real_tool_errors_preserve_only_owned_session_resources(
         opened = await _invoke_binding(
             bindings,
             "appium_session_open",
-            {"schema_version": 1, "device_id": "device-1"},
+            {"schema_version": 1, "platform": "android", "device_id": "device-1"},
         )
         handle = cast(str, opened["data"]["session_handle"])
         state.failures[operation] = mode
@@ -1483,7 +1565,7 @@ class _MismatchedResultApplication(Application):
 def test_dispatch_rejects_unexpected_catalog_result_type(tmp_path: Path) -> None:
     async def scenario() -> None:
         application = _MismatchedResultApplication(
-            LocalSettings(), tmp_path / "adb", surface="toolcall"
+            LocalSettings(), None, surface="toolcall"
         )
         with pytest.raises(ApplicationError) as caught:
             await application.dispatch("appium_capabilities_get", {"schema_version": 1})
@@ -1526,7 +1608,7 @@ def test_concurrent_aclose_waits_for_one_real_session_quit(
         await _invoke_binding(
             _bindings(application),
             "appium_session_open",
-            {"schema_version": 1, "device_id": "device-1"},
+            {"schema_version": 1, "platform": "android", "device_id": "device-1"},
         )
         outcomes: list[bool] = []
 
@@ -1549,7 +1631,7 @@ def test_concurrent_aclose_waits_for_one_real_session_quit(
 def test_sync_application_concurrent_enter_and_close_are_serialized(
     tmp_path: Path,
 ) -> None:
-    application = SyncApplication(LocalSettings(), tmp_path / "adb")
+    application = SyncApplication(LocalSettings())
     enter_barrier = Barrier(2)
     entered: list[SyncApplication] = []
     enter_errors: list[BaseException] = []
@@ -1595,7 +1677,7 @@ def test_cancelled_close_completes_and_remains_idempotent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="toolcall")
+        application = Application(LocalSettings(), None, surface="toolcall")
         started = anyio.Event()
         release = anyio.Event()
 
@@ -1625,7 +1707,7 @@ def test_cancelled_close_completes_and_remains_idempotent(
 def test_sync_application_serializes_dispatch_and_close(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sync_application = SyncApplication(LocalSettings(), tmp_path / "adb")
+    sync_application = SyncApplication(LocalSettings())
     sync_application.__enter__()
     application = cast(Application, sync_application._application)
     entered = ThreadEvent()

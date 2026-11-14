@@ -31,6 +31,10 @@ from ._models import (
     DeviceKeyResult,
     DeviceListRequest,
     DeviceListResult,
+    DevicePointerRequest,
+    DevicePointerResult,
+    DeviceScreenshotRequest,
+    DeviceScreenshotResult,
     DeviceStatusBarRequest,
     DeviceStatusBarResult,
     ElementClickRequest,
@@ -41,6 +45,8 @@ from ._models import (
     ElementImeActionResult,
     ElementTextRequest,
     ElementTextResult,
+    MacosKeysRequest,
+    MacosKeysResult,
     McpCapabilityResult,
     McpToolNames,
     ObservationResult,
@@ -139,11 +145,11 @@ class ToolSpec:
 
 
 class ToolCatalog:
-    """Immutable declarations and deterministic schema projections for nineteen tools."""
+    """Immutable declarations and deterministic schema projections for 22 tools."""
 
     def __init__(self, specs: tuple[ToolSpec, ...]) -> None:
-        if len(specs) != 19:
-            raise ValueError("tool catalog must contain exactly nineteen tools")
+        if len(specs) != 22:
+            raise ValueError("tool catalog must contain exactly 22 tools")
         if len({spec.mcp_name for spec in specs}) != len(specs):
             raise ValueError("MCP tool names must be unique")
         if len({spec.tool_name for spec in specs}) != len(specs):
@@ -484,7 +490,9 @@ async def _capabilities(application: Application, request: BaseModel) -> BaseMod
 
 async def _runtime_check(application: Application, request: BaseModel) -> BaseModel:
     value = cast(RuntimeCheckRequest, request)
-    return await application.runtime_check(value.mode, value.timeout_seconds)
+    return await application.runtime_check(
+        value.mode, value.target_driver, value.timeout_seconds
+    )
 
 
 async def _devices_list(application: Application, request: BaseModel) -> BaseModel:
@@ -493,7 +501,8 @@ async def _devices_list(application: Application, request: BaseModel) -> BaseMod
 
 
 async def _session_open(application: Application, request: BaseModel) -> BaseModel:
-    return await application.session_open(cast(SessionOpenRequest, request))
+    value = cast(SessionOpenRequest, request)
+    return await application.session_open(value.root)
 
 
 async def _session_status(application: Application, request: BaseModel) -> BaseModel:
@@ -556,11 +565,27 @@ async def _device_status_bar(application: Application, request: BaseModel) -> Ba
 
 
 async def _app_lifecycle(application: Application, request: BaseModel) -> BaseModel:
-    return await application.app_lifecycle(cast(AppLifecycleRequest, request))
+    value = cast(AppLifecycleRequest, request)
+    return await application.app_lifecycle(value.root)
 
 
 async def _app_package(application: Application, request: BaseModel) -> BaseModel:
-    return await application.app_package(cast(AppPackageRequest, request))
+    value = cast(AppPackageRequest, request)
+    return await application.app_package(value.root)
+
+
+async def _device_screenshot(application: Application, request: BaseModel) -> BaseModel:
+    return await application.device_screenshot(cast(DeviceScreenshotRequest, request))
+
+
+async def _device_pointer(application: Application, request: BaseModel) -> BaseModel:
+    value = cast(DevicePointerRequest, request)
+    return await application.device_pointer(value.root)
+
+
+async def _macos_keys(application: Application, request: BaseModel) -> BaseModel:
+    value = cast(MacosKeysRequest, request)
+    return await application.macos_keys(value.root)
 
 
 def _request_adapter(request_annotation: Any) -> TypeAdapter[Any]:
@@ -789,6 +814,36 @@ TOOL_CATALOG = ToolCatalog(
             AppPackageResult,
             _WRITE_OPEN,
             _app_package,
+        ),
+        _spec(
+            "appium.device.screenshot",
+            "appium_device_screenshot",
+            "device_screenshot",
+            "Capture one validated PNG screenshot from the bound Device as Base64.",
+            DeviceScreenshotRequest,
+            DeviceScreenshotResult,
+            _READ_OPEN,
+            _device_screenshot,
+        ),
+        _spec(
+            "appium.device.pointer",
+            "appium_device_pointer",
+            "device_pointer",
+            "Perform one explicit screen-coordinate tap, click, hover, scroll, or drag on the bound Device.",
+            DevicePointerRequest,
+            DevicePointerResult,
+            _WRITE_OPEN,
+            _device_pointer,
+        ),
+        _spec(
+            "appium.macos.keys",
+            "appium_macos_keys",
+            "macos_keys",
+            "Send one sequence of macOS keystrokes or keyboard shortcuts to the application or an Element.",
+            MacosKeysRequest,
+            MacosKeysResult,
+            _WRITE_OPEN,
+            _macos_keys,
         ),
     )
 )
