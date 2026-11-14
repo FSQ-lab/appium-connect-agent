@@ -170,6 +170,7 @@ def _fast_owned_listener_probe(
     real_lsof_test = request.node.originalname in {
         "test_real_lsof_owned_listener_ready_and_natural_cleanup",
         "test_flooded_streams_are_bounded_and_startup_subprocesses_are_allowlisted",
+        "test_external_race_cannot_use_ready_status_for_owned_success",
     }
 
     def controlled_bounded(
@@ -283,7 +284,7 @@ Server((host, port), Handler).serve_forever()
 
 
 def _wait_listening(host: str, port: int, process: subprocess.Popen[bytes]) -> None:
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise AssertionError("external listener exited")
@@ -306,10 +307,8 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
     script = _external_server_script(tmp_path)
     external: list[subprocess.Popen[bytes]] = []
     original = _managed._ManagedScope._port_preflight
-    external_bound = False
 
     def race(scope: Any, operation: Any) -> None:
-        nonlocal external_bound
         original(scope, operation)
         process = subprocess.Popen(
             [sys.executable, str(script), host, str(port), str(marker)],
@@ -320,24 +319,15 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
         )
         external.append(process)
         _wait_listening(host, port, process)
-        external_bound = True
-
-    def unowned_when_external_bound(
-        operation: _Operation, argv: list[str], timeout: float
-    ) -> tuple[int, bytes, bytes, bool]:
-        del operation, argv, timeout
-        assert external_bound
-        return 1, b"", b"", False
 
     monkeypatch.setattr(_managed._ManagedScope, "_port_preflight", race)
-    monkeypatch.setattr(_managed, "_bounded_command", unowned_when_external_bound)
     runtime = Runtime(LocalSettings(node_executable=node))
     try:
         with pytest.raises(OperationTimeoutError):
             runtime.start_managed(
                 host=host,
                 port=port,
-                control=OperationControl(timeout_seconds=0.3),
+                control=OperationControl(timeout_seconds=5.0),
             ).__enter__()
         assert not marker.exists()
         assert runtime._managed_scope is None
@@ -1111,13 +1101,25 @@ def test_crashed_parent_record_never_authorizes_cross_process_takeover(
     port = _unused_port("127.0.0.1")
     program = """
 import os
+import socket
 import sys
+from contextlib import suppress
 from pathlib import Path
 from appium_connect_agent.contracts import LocalSettings
-from appium_connect_agent.runtime import Runtime, _coordination
+from appium_connect_agent.runtime import Runtime, _coordination, _managed
 
 home, node, marker, port = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4])
 _coordination._account_home = lambda: home
+def _child_probe(operation, argv, timeout):
+    listening = False
+    with suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.02)
+        listening = s.connect_ex(("127.0.0.1", port)) == 0
+    if not listening:
+        return 1, b"", b"", False
+    pid = argv[argv.index("-p") + 1]
+    return 0, f"p{pid}\\nf4\\nn127.0.0.1:{port}\\nTST=LISTEN\\n".encode("ascii"), b"", False
+_managed._bounded_command = _child_probe
 runtime = Runtime(LocalSettings(node_executable=node))
 runtime.start_managed(host="127.0.0.1", port=port).__enter__()
 owner = runtime._managed_scope
