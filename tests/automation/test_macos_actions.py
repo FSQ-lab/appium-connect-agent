@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import math
 import os
 import struct
+import threading
 import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError
@@ -21,9 +23,15 @@ from appium_connect_agent.automation import (
     CommandError,
     Device,
     Element,
+    ExecutionUnknownError,
     InvalidRequestError,
+    InvalidSessionStateError,
     MacKeyStroke,
+    OperationCancelledError,
+    OperationTimeoutError,
+    SessionBusyError,
 )
+from appium_connect_agent.runtime import OperationControl
 from tests.automation._action_protocol import (
     ActionProtocolService,
     Request,
@@ -32,6 +40,7 @@ from tests.automation._action_protocol import (
     connected,
     mac_session_for,
     session_for,
+    w3c_error,
 )
 
 
@@ -539,4 +548,431 @@ def test_invalid_mac_results_are_command_failures_without_replay(
         )
         assert len(service.of_kind("queryAppState")) == 1
         assert len(service.of_kind("click")) == 1
+        session.quit()
+
+
+def _duration_action(
+    session: Any,
+    action: str,
+    duration_ms: int,
+    control: OperationControl | None,
+) -> None:
+    if action == "press":
+        session.element("name", "target").long_click(
+            duration_ms=duration_ms, control=control
+        )
+    elif action == "drag":
+        session.element("name", "source").drag_and_drop(
+            session.element("name", "destination"),
+            duration_ms=duration_ms,
+            control=control,
+        )
+    else:
+        session.device.swipe_between(
+            1, 2, 3, 4, duration_ms=duration_ms, control=control
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "kind"),
+    [("press", "press"), ("drag", "clickAndDrag"), ("swipe", "clickAndDrag")],
+)
+def test_duration_budget_allows_strictly_less_and_rejects_equal_or_greater(
+    service: MacActionService, action: str, kind: str
+) -> None:
+    with connected(service) as connection:
+        allowed = mac_session_for(service, connection)
+        _duration_action(allowed, action, 1, OperationControl(timeout_seconds=1))
+        assert len(service.of_kind(kind)) == 1
+        allowed.quit()
+
+        rejected = mac_session_for(service, connection)
+        before = len(service.of_kind(kind))
+        with pytest.raises(OperationTimeoutError) as caught:
+            _duration_action(
+                rejected, action, 60_000, OperationControl(timeout_seconds=1)
+            )
+        assert_error(
+            caught.value,
+            OperationTimeoutError,
+            "operation_timeout",
+            "not_sent",
+        )
+        assert len(service.of_kind(kind)) == before
+        assert rejected.session_info().state == "active"
+        rejected.quit()
+
+        cancelled = mac_session_for(service, connection)
+        cancellation = threading.Event()
+        cancellation.set()
+        before = len(service.of_kind(kind))
+        with pytest.raises(OperationCancelledError) as cancelled_error:
+            _duration_action(
+                cancelled,
+                action,
+                60_000,
+                OperationControl(timeout_seconds=5e-324, cancellation=cancellation),
+            )
+        assert_error(
+            cancelled_error.value,
+            OperationCancelledError,
+            "operation_cancelled",
+            "not_sent",
+        )
+        assert len(service.of_kind(kind)) == before
+        cancelled.quit()
+
+
+def test_mac_action_presend_cancel_known_error_and_busy_are_isolated(
+    service: MacActionService,
+) -> None:
+    cancellation = threading.Event()
+    cancellation.set()
+    with connected(service) as connection:
+        cancelled = mac_session_for(service, connection)
+        before = service.snapshot()
+        with pytest.raises(OperationCancelledError) as caught:
+            cancelled.device.click_at(
+                1, 2, control=OperationControl(cancellation=cancellation)
+            )
+        assert_error(
+            caught.value,
+            OperationCancelledError,
+            "operation_cancelled",
+            "not_sent",
+        )
+        assert service.snapshot() == before
+        cancelled.quit()
+
+        service.queue("click", ResponsePlan(status=500, payload=w3c_error()))
+        known = mac_session_for(service, connection)
+        with pytest.raises(CommandError) as command:
+            known.device.click_at(1, 2)
+        assert_error(command.value, CommandError, "command_failed", "response_received")
+        assert known.session_info().state == "active"
+        assert len(service.of_kind("click")) == 1
+        known.quit()
+
+        started, release = threading.Event(), threading.Event()
+        service.queue("click", ResponsePlan(started=started, release=release))
+        busy = mac_session_for(service, connection)
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                busy.device.click_at(1, 2)
+            except BaseException as error:
+                failures.append(error)
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        assert started.wait(timeout=2)
+        before = service.snapshot()
+        try:
+            with pytest.raises(SessionBusyError) as busy_error:
+                busy.device.hover_at(3, 4)
+            assert_error(busy_error.value, SessionBusyError, "session_busy", "not_sent")
+            assert service.snapshot() == before
+        finally:
+            release.set()
+            worker.join(timeout=2)
+        assert not worker.is_alive() and failures == []
+        busy.quit()
+
+
+@pytest.mark.parametrize("phase", ["disconnect", "timeout"])
+def test_mac_response_unknown_quarantines_session_and_rejects_followup(
+    service: MacActionService, phase: str
+) -> None:
+    plan = (
+        ResponsePlan(disconnect=True)
+        if phase == "disconnect"
+        else ResponsePlan(header_delay_seconds=0.2)
+    )
+    service.queue("click", plan)
+    control = None if phase == "disconnect" else OperationControl(timeout_seconds=0.05)
+    error_type = (
+        ExecutionUnknownError if phase == "disconnect" else OperationTimeoutError
+    )
+    code = "execution_unknown" if phase == "disconnect" else "operation_timeout"
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        with pytest.raises(error_type) as caught:
+            session.device.click_at(1, 2, control=control)
+        assert_error(caught.value, error_type, code, "response_unknown")
+        assert len(service.of_kind("click")) == 1
+        assert session.session_info().state == "uncertain"
+        before = service.snapshot()
+        with pytest.raises(InvalidSessionStateError) as followup:
+            session.device.hover_at(3, 4)
+        assert_error(
+            followup.value,
+            InvalidSessionStateError,
+            "session_invalid",
+            "not_sent",
+        )
+        assert service.snapshot() == before
+
+
+def test_android_rejects_complete_mac_extension_matrix_without_io(
+    service: MacActionService,
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, "android-full-matrix")
+        source = session.element("id", "source")
+        destination = session.element("id", "destination")
+        attempts: tuple[Callable[[], object], ...] = (
+            lambda: source.click(key_modifier_flags=0),
+            lambda: source.double_click(key_modifier_flags=0),
+            lambda: source.long_click(key_modifier_flags=0),
+            lambda: source.drag_and_drop(destination, duration_ms=1),
+            lambda: source.drag_and_drop(destination, key_modifier_flags=0),
+            lambda: session.device.swipe_between(1, 2, 3, 4, key_modifier_flags=0),
+            lambda: source.right_click(),
+            lambda: source.hover(),
+            lambda: source.send_macos_keys(["a"]),
+            lambda: source.scroll_by(delta_x=0, delta_y=1),
+            lambda: source.macos_swipe(direction="up"),
+            lambda: session.device.launch_app(bundle_id="com.example.App"),
+            lambda: session.device.click_at(1, 2),
+            lambda: session.device.hover_at(1, 2),
+            lambda: session.device.scroll_at(1, 2, delta_x=0, delta_y=1),
+            lambda: session.device.send_keys(["a"]),
+        )
+        before = service.snapshot()
+        for attempt in attempts:
+            with pytest.raises(InvalidRequestError) as caught:
+                attempt()
+            assert_error(
+                caught.value,
+                InvalidRequestError,
+                "unsupported_operation",
+                "not_sent",
+            )
+            assert service.snapshot() == before
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "attempt",
+    [
+        lambda session: session.element("id", "x").click(key_modifier_flags=True),
+        lambda session: session.element("id", "x").drag_and_drop(
+            session.element("id", "y"), duration_ms=0
+        ),
+        lambda session: session.device.swipe_between(
+            1, 2, 3, 4, key_modifier_flags=True
+        ),
+        lambda session: session.element("id", "x").scroll_by(
+            delta_x=math.nan, delta_y=0
+        ),
+        lambda session: session.element("id", "x").macos_swipe(
+            direction="up", velocity=0
+        ),
+        lambda session: session.device.launch_app(app_path=Path("relative.app")),
+        lambda session: session.device.click_at(1, 2, button="right", double=True),
+        lambda session: session.device.hover_at(-1, 2),
+        lambda session: session.device.scroll_at(1, 2, delta_x=True, delta_y=0),
+        lambda session: session.device.send_keys([]),
+    ],
+)
+def test_android_mac_extension_invalid_arguments_precede_unsupported(
+    service: MacActionService, attempt: Callable[[Any], object]
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, "android-invalid-precedence")
+        before = service.snapshot()
+        with pytest.raises(InvalidRequestError) as caught:
+            attempt(session)
+        assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+        assert service.snapshot() == before
+        session.quit()
+
+
+def test_macos_rejects_complete_android_only_matrix_without_io(
+    service: MacActionService,
+) -> None:
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        source = session.element("id", "source")
+        destination = session.element("id", "destination")
+        attempts: tuple[Callable[[], object], ...] = (
+            lambda: source.replace_element_value("x"),
+            lambda: source.swipe_gesture(direction="up", percent=0.5),
+            lambda: source.scroll_gesture(direction="up", percent=0.5),
+            lambda: source.scroll(destination, max_swipes=1),
+            lambda: source.perform_editor_action("done"),
+            lambda: session.device.set_clipboard_text("x", label="x"),
+            lambda: session.device.back(),
+            lambda: session.device.press_keycode(1),
+            lambda: session.device.long_press_keycode(1),
+            lambda: session.device.hide_keyboard(),
+            lambda: session.device.accept_alert(),
+            lambda: session.device.dismiss_alert(),
+            lambda: session.device.status_bar("collapse"),
+            lambda: session.device.install_app(Path("/tmp/example.apk")),
+            lambda: session.device.remove_app("com.example"),
+        )
+        before = service.snapshot()
+        for attempt in attempts:
+            with pytest.raises(InvalidRequestError) as caught:
+                attempt()
+            assert_error(
+                caught.value,
+                InvalidRequestError,
+                "unsupported_operation",
+                "not_sent",
+            )
+            assert service.snapshot() == before
+        session.quit()
+
+
+_ALL_MAC_KEY_NAMES = (
+    "XCUIKeyboardKeyDelete",
+    "XCUIKeyboardKeyReturn",
+    "XCUIKeyboardKeyEnter",
+    "XCUIKeyboardKeyTab",
+    "XCUIKeyboardKeySpace",
+    "XCUIKeyboardKeyEscape",
+    "XCUIKeyboardKeyUpArrow",
+    "XCUIKeyboardKeyDownArrow",
+    "XCUIKeyboardKeyLeftArrow",
+    "XCUIKeyboardKeyRightArrow",
+    *(f"XCUIKeyboardKeyF{index}" for index in range(1, 20)),
+    "XCUIKeyboardKeyForwardDelete",
+    "XCUIKeyboardKeyHome",
+    "XCUIKeyboardKeyEnd",
+    "XCUIKeyboardKeyPageUp",
+    "XCUIKeyboardKeyPageDown",
+    "XCUIKeyboardKeyClear",
+    "XCUIKeyboardKeyHelp",
+    "XCUIKeyboardKeyCapsLock",
+    "XCUIKeyboardKeyShift",
+    "XCUIKeyboardKeyControl",
+    "XCUIKeyboardKeyOption",
+    "XCUIKeyboardKeyCommand",
+    "XCUIKeyboardKeyRightShift",
+    "XCUIKeyboardKeyRightControl",
+    "XCUIKeyboardKeyRightOption",
+    "XCUIKeyboardKeyRightCommand",
+    "XCUIKeyboardKeySecondaryFn",
+)
+
+
+def test_all_46_wda_named_keys_and_modifier_boundaries(
+    service: MacActionService,
+) -> None:
+    assert len(_ALL_MAC_KEY_NAMES) == 46
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        session.device.send_keys(list(_ALL_MAC_KEY_NAMES))
+        session.device.send_keys([MacKeyStroke("a", 0), MacKeyStroke("b", 63)])
+        for invalid_name in ("XCUIKeyboardKeyF20", "Enter"):
+            with pytest.raises(InvalidRequestError):
+                session.device.send_keys([invalid_name])
+        for invalid_flags in (-1, 64, True):
+            with pytest.raises(InvalidRequestError):
+                session.device.send_keys([MacKeyStroke("a", invalid_flags)])
+        assert len(service.of_kind("keys")) == 2
+        session.quit()
+
+
+def test_coordinate_number_velocity_and_duration_boundaries(
+    service: MacActionService,
+) -> None:
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        session.device.click_at(0, 0)
+        session.device.click_at(2_147_483_647, 2_147_483_647)
+        session.device.swipe_between(0, 0, 1, 1, duration_ms=1)
+        session.device.swipe_between(0, 0, 1, 1, duration_ms=60_000)
+        for coordinate in (-1, 2_147_483_648, True):
+            with pytest.raises(InvalidRequestError):
+                session.device.click_at(coordinate, 0)
+        for value in (True, math.nan, math.inf, -math.inf):
+            with pytest.raises(InvalidRequestError):
+                session.device.scroll_at(0, 0, delta_x=value, delta_y=0)
+            with pytest.raises(InvalidRequestError):
+                session.device.scroll_at(0, 0, delta_x=0, delta_y=value)
+            with pytest.raises(InvalidRequestError):
+                session.element("name", "x").macos_swipe(direction="up", velocity=value)
+        for velocity in (0, -1):
+            with pytest.raises(InvalidRequestError):
+                session.element("name", "x").macos_swipe(
+                    direction="up", velocity=velocity
+                )
+        for duration in (0, 60_001, True):
+            with pytest.raises(InvalidRequestError):
+                session.device.swipe_between(0, 0, 1, 1, duration_ms=duration)
+        session.quit()
+
+
+@pytest.mark.parametrize("state", [0, 1, 2, 3, 4])
+def test_all_mac_app_states_are_preserved(
+    service: MacActionService, state: int
+) -> None:
+    service.queue("queryAppState", ResponsePlan(payload={"value": state}))
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        result = session.device.query_app_state("com.example.App")
+        assert result == state and type(result) is int
+        session.quit()
+
+
+@pytest.mark.parametrize("state", [-1, 5, True])
+def test_invalid_mac_app_states_are_command_failures(
+    service: MacActionService, state: object
+) -> None:
+    service.queue("queryAppState", ResponsePlan(payload={"value": state}))
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        with pytest.raises(CommandError) as caught:
+            session.device.query_app_state("com.example.App")
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        session.quit()
+
+
+def test_launch_symlinks_clipboard_boundaries_and_controlled_errors_hide_secrets(
+    service: MacActionService, tmp_path: Path
+) -> None:
+    root = tmp_path.resolve()
+    real_parent = root / "real"
+    real_bundle = real_parent / "SecretBundle.app"
+    contents = real_bundle / "Contents"
+    contents.mkdir(parents=True)
+    (contents / "Info.plist").write_text("plist")
+    parent_link = root / "secret-parent-link"
+    parent_link.symlink_to(real_parent, target_is_directory=True)
+    bundle_link = root / "secret-bundle-link.app"
+    bundle_link.symlink_to(real_bundle, target_is_directory=True)
+    path_secrets = (parent_link / real_bundle.name, bundle_link)
+    key_secret = "secret-key-value"
+    clipboard_secret = "s" * 65_537
+    argument_secret = "secret-argument\0"
+
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        session.device.set_clipboard_text("c" * 65_536)
+        failures: list[tuple[InvalidRequestError, str]] = []
+        for secret_path in path_secrets:
+            with pytest.raises(InvalidRequestError) as caught:
+                session.device.launch_app(app_path=secret_path)
+            failures.append((caught.value, str(secret_path)))
+        with pytest.raises(InvalidRequestError) as key_error:
+            session.device.send_keys([key_secret])
+        failures.append((key_error.value, key_secret))
+        with pytest.raises(InvalidRequestError) as clipboard_error:
+            session.device.set_clipboard_text(clipboard_secret)
+        failures.append((clipboard_error.value, clipboard_secret))
+        with pytest.raises(InvalidRequestError) as argument_error:
+            session.device.launch_app(
+                bundle_id="com.example.App", arguments=[argument_secret]
+            )
+        failures.append((argument_error.value, argument_secret))
+
+        for error, secret in failures:
+            assert secret not in str(error)
+            assert secret not in repr(error)
+            assert_error(error, InvalidRequestError, "invalid_argument", "not_sent")
+        assert len(service.of_kind("setClipboard")) == 1
         session.quit()
