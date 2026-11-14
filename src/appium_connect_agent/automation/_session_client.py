@@ -122,6 +122,11 @@ class _LifecycleConnection(AppiumConnection):
         with self._record_lock:
             return tuple(self._cleanup_errors)
 
+    @property
+    def locally_closed(self) -> bool:
+        with self._record_lock:
+            return self._closed
+
     def close(self) -> None:
         # WebDriver.quit always calls close, including when our last-moment
         # checkpoint rejected the request before it started. Keep that case
@@ -134,12 +139,14 @@ class _LifecycleConnection(AppiumConnection):
         with self._record_lock:
             if self._closed:
                 return
-            self._closed = True
         try:
             super().close()  # type: ignore[no-untyped-call]
         except BaseException as error:
             with self._record_lock:
                 self._cleanup_errors.append(error)
+            return
+        with self._record_lock:
+            self._closed = True
 
 
 class _CreateErrorHandler(ErrorHandler):

@@ -318,6 +318,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         self.control = control
         self.operation: _Operation | None = None
         self.lock: AbstractContextManager[None] | None = None
+        self._lock_release_pending = False
         self.process: _ManagedProcess | None = None
         self.state = "idle"
         self._entry = Lock()
@@ -358,13 +359,62 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 raise operation.error(InvalidStateError, "connection_closed")
             self._usages += 1
         return RuntimeUsage(
-            self._release_usage, operation.operation_id, operation.report()
+            self._release_usage,
+            operation.operation_id,
+            operation.report(),
+            begin_terminal_disposal=self._begin_terminal_disposal,
+            continue_terminal_disposal=self._continue_terminal_disposal,
         )
 
     def _release_usage(self) -> None:
         with self._usage_lock:
             assert self._usages > 0
             self._usages -= 1
+
+    def _begin_terminal_disposal(self) -> None:
+        operation = self.operation or _Operation(self.control, None)
+        with self.runtime._managed_guard:
+            if not self._registered or self.runtime._managed_scope is not self:
+                raise operation.error(InvalidStateError, "connection_closed")
+            with self._usage_lock:
+                if (
+                    self.state
+                    not in (
+                        "active",
+                        "close_requested",
+                        "cleanup_pending",
+                    )
+                    or self._usages <= 0
+                ):
+                    raise operation.error(InvalidStateError, "connection_closed")
+                self._usages -= 1
+                if self.state == "active":
+                    self.state = "close_requested"
+                    self._connection = None
+                    self._generation += 1
+
+    def _continue_terminal_disposal(self, control: OperationControl) -> None:
+        operation = _Operation(
+            control, self.runtime._on_progress, phase="disposing_managed"
+        )
+        with self._usage_lock:
+            state = self.state
+            usages = self._usages
+        if state == "closed":
+            return
+        if state not in ("close_requested", "cleanup_pending"):
+            raise operation.error(InvalidStateError, "connection_closed")
+        if usages:
+            failure = operation.error(ServiceLifecycleError, "service_in_use")
+            try:
+                self._record("cleanup_pending", operation)
+            except BaseException as record_error:
+                failure.runtime_managed_cleanup_error = record_error
+            with self._usage_lock:
+                self.state = "cleanup_pending"
+            self.runtime._managed_cleanup = self
+            raise failure
+        self._cleanup(operation, None)
 
     def _publish_connection(
         self, version: str, operation: _Operation
@@ -459,9 +509,34 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
             ) from None
         self.lock = lock
 
-    def _release_lock(self, original: BaseException | None) -> None:
+    def _release_lock(
+        self, original: BaseException | None, *, retryable: bool = False
+    ) -> bool:
         if self.lock is None:
-            return
+            if not self._lock_release_pending:
+                return True
+            probe = _coordination.account_lock()
+            try:
+                probe.__enter__()
+            except _coordination.Busy:
+                operation = self.operation or _Operation(self.control, None)
+                raise operation.error(
+                    ServiceLifecycleError, "managed_cleanup_pending"
+                ) from None
+            except (_coordination.CoordinationFailure, OSError, KeyError) as cause:
+                operation = self.operation or _Operation(self.control, None)
+                raise operation.error(
+                    RuntimeOperationError, "coordination_unavailable"
+                ) from cause
+            try:
+                probe.__exit__(None, None, None)
+            except BaseException as cause:
+                operation = self.operation or _Operation(self.control, None)
+                raise operation.error(
+                    RuntimeOperationError, "coordination_unavailable"
+                ) from cause
+            self._lock_release_pending = False
+            return True
         lock, self.lock = self.lock, None
         try:
             lock.__exit__(
@@ -470,13 +545,17 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 original.__traceback__ if original is not None else None,
             )
         except BaseException as cleanup:
+            if retryable:
+                self._lock_release_pending = True
             if original is not None:
                 original.__dict__["runtime_cleanup_error"] = cleanup
-            else:
-                operation = self.operation or _Operation(self.control, None)
-                raise operation.error(
-                    RuntimeOperationError, "coordination_unavailable"
-                ) from None
+                return False
+            operation = self.operation or _Operation(self.control, None)
+            raise operation.error(
+                RuntimeOperationError, "coordination_unavailable"
+            ) from cleanup
+        self._lock_release_pending = False
+        return True
 
     def _validate_lsof(self, operation: _Operation) -> None:
         try:
@@ -841,6 +920,18 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         self.runtime._managed_cleanup = None
 
     def _finish_closed(self, original: BaseException | None) -> None:
+        try:
+            released = self._release_lock(original, retryable=True)
+        except BaseException:
+            with self._usage_lock:
+                self.state = "cleanup_pending"
+            self.runtime._managed_cleanup = self
+            raise
+        if not released:
+            with self._usage_lock:
+                self.state = "cleanup_pending"
+            self.runtime._managed_cleanup = self
+            return
         with self._usage_lock:
             self._connection = None
             self._generation += 1
@@ -849,7 +940,6 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         self.runtime._active_thread = None
         self._clear_registration()
         self.runtime._managed_cleanup = None
-        self._release_lock(original)
 
     def stop(self, connection: RuntimeConnection, control: OperationControl) -> None:
         operation = _Operation(

@@ -11,7 +11,15 @@ if TYPE_CHECKING:
 
 RequestState = Literal["not_sent", "response_received", "response_unknown"]
 ConnectionState = Literal["connected", "offline", "unauthorized", "unknown"]
-SessionState = Literal["creating", "active", "uncertain", "closing", "closed"]
+SessionState = Literal[
+    "creating",
+    "active",
+    "uncertain",
+    "disposing",
+    "disposed",
+    "closing",
+    "closed",
+]
 ElementBy: TypeAlias = Literal["id", "accessibility id", "xpath"]
 ElementAttribute: TypeAlias = Literal[
     "id",

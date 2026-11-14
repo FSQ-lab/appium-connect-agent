@@ -432,6 +432,7 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - confirmed close后的managed首次exit抛出任何异常时，Session仍转closed tombstone且本次工具返回既有`cleanup_failed/closed`；new open与`runtime.check`继续阻断，owner保留同一Runtime/scope且不得第二次调用`__exit__`。若异常为`service_in_use`，视为usage/生命周期不变量违例并沿零信号unsafe分支。其余异常只在usage已证明为零时进入safe-continuation：`Application.aclose()`用一个新的30秒非取消Control，在owner线程对同一Runtime调用公开幂等`cleanup_managed()`一次，不读取`_managed_cleanup`或按`managed_cleanup_pending`单一码推断状态。该调用可继续真实pending或在无pending时安全幂等返回；首次exit失败已使最终shutdown保持degraded，继续成功仅证明资源收尾完成。无retained create失败的对应规则由上节维护，且不产生tombstone。
 - create/quit结果unknown或清理失败而保留Session时usage保持。`Application.aclose()`不补设备命令并调用scope exit一次；`service_in_use`表示usage非零，必须零TERM/KILL、零`cleanup_managed`、零第二次exit/quit/probe/retry，保留unknown在途资源并设置`shutdown_degraded=True`。MCP和CLI沿现有映射exit4；CLI stop输出`shutdown="degraded"`。
 - external模式的connect、close、sticky cleanup失败和shutdown行为保持现有合同。owner executor仅在application终态决策后停止；停止线程池本身不表示或触发Appium停止。
+- Issue #30新增的`Session.dispose()`不进入本模块工具、Registry或自动shutdown链；本模块仍对retained uncertain只提供status并按本节零信号degraded退出。未来若要由FSQ/MCP/CLI调用terminal disposal，必须独立Issue、schema/授权/验收与SPEC gate，不能因Automation公开方法存在而隐式启用。
 
 ### Lifecycle matrix
 

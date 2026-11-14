@@ -72,9 +72,9 @@
 ### Public Interface And Local Snapshots
 
 - 同步入口为 `create_session(connection: RuntimeConnection, device_id: str, *, app_id: str | None = None, app_path: Path | None = None, auto_launch: bool = False, force_app_launch: bool = False, no_reset: bool = True, full_reset: bool = False, should_terminate_app: bool = False, new_command_timeout_seconds: float = 500, capabilities: Mapping[str, JsonValue] | None = None, control: OperationControl | None = None) -> Session`。
-- `Session` 只公开 `session_info() -> SessionInfo` 与 `quit(*, control: OperationControl | None = None) -> None`；本 feature 不提供界面动作、底层 WebDriver、任意命令执行、上下文管理器或按 ID 找回 Session 的入口。
-- `SessionInfo` 是不可变本地快照，字段为本库 `id`、`appium_session_id: str | None`、`device_id`、`target_app_id: str | None`、`state` 和 `busy`。`state` 只取 `creating`、`active`、`uncertain`、`closing`、`closed`；读取不发网络或设备命令，不重置 Session 空闲计时。
-- 创建请求进入未知状态时，抛出的 `ResourceStateError` 携带仍可达的 `session: Session`；调用方可读取其 `session_info()`，但 uncertain Session 不允许普通命令或再次发送 quit。核心不维护可按 ID 查询的公共 Registry。
+- `Session` 生命周期入口包括 `session_info() -> SessionInfo`、`quit(*, control: OperationControl | None = None) -> None` 与限定的 `dispose(*, control: OperationControl | None = None) -> None`；后续 AIF 条款另增加 Element、Device 与观测能力，但不公开底层 WebDriver、任意命令执行、上下文管理器或按 ID 找回 Session。
+- `SessionInfo` 是不可变本地快照，字段为本库 `id`、`appium_session_id: str | None`、`device_id`、`target_app_id: str | None`、`state` 和 `busy`。`state` 只取 `creating`、`active`、`uncertain`、`disposing`、`disposed`、`closing`、`closed`；读取不发网络或设备命令，不重置 Session 空闲计时。
+- 创建请求进入未知状态时，抛出的 `ResourceStateError` 携带仍可达的 `session: Session`；uncertain Session 不允许普通命令或再次发送 quit，只可读取 `session_info()`，或在精确 managed ownership 条件下由调用方显式请求 terminal `dispose()`。核心不维护可按 ID 查询的公共 Registry。
 
 ### Inputs And Capability Construction
 
@@ -88,36 +88,37 @@
 
 - 创建请求发出前，在进程内原子保留 device_id 与一个 systemPort，并构造可本地观察的 creating Session。纯值、connection 或取消/预算检查在请求前失败时释放保留；有效终态错误明确证明未创建时，关闭本地客户端后释放。请求可能已发送后不得因超时、取消、连接关闭、成功响应形状无效或缺少 sessionId 自动释放。
 - 每个成功 Session 持有独立 Appium 客户端。只有取得有效创建响应、非空 sessionId 和对象形有效 capabilities 后转 active；显式 app_id 不由响应改写。direct-connect 响应字段不得改变已由 Runtime 验证的 server URL。
-- 同一 Session 同时只允许一个生命周期操作；重叠 quit 立即抛 `SessionBusyError/session_busy/not_sent`，不排队、不打断前一请求。不同 Session 不共享该准入；本 feature 不承诺跨 Session 请求一定并行推进或 Runtime 退出竞态被强制阻止。
-- active Session 的 quit 先验证 Runtime connection 仍 active，再转 closing 并发送一次 DELETE。有效成功响应和客户端/Automation 必要收尾都完成后才转 closed并释放 device/port；closed 再次 quit 为本地空操作成功。creating、closing 或 uncertain 不自动再次 DELETE。
-- Runtime connection 已退出时，新的 create 在请求前失败；既有非 closed Session 的新操作在请求前转 uncertain并拒绝。正常调用方必须先逐个 quit 再退出 Runtime；Automation 不读取 Runtime 私有 scope/lock，也不改变 Runtime 退出行为。
+- 同一 Session 同时只允许一个生命周期或业务操作；重叠 quit/dispose 立即抛 `SessionBusyError/session_busy/not_sent`，不排队、不打断前一请求。不同 Session 不共享该准入。
+- active Session 的 quit 先验证 Runtime connection 仍 active，再转 closing 并发送一次 DELETE。有效成功响应和客户端/Automation 必要收尾都完成后才转 closed并释放 device/port；closed 再次 quit 为本地空操作成功。creating、closing、uncertain、disposing 或 disposed 不自动发送 DELETE。
+- Runtime connection 已退出时，新的 create 在请求前失败；既有非 closed/disposed Session 的普通操作在请求前转 uncertain并拒绝。正常调用方必须先逐个 quit 再退出 Runtime；terminal dispose 是 unknown 后对当前进程真实 managed ownership 的限定失败收尾，不是普通关闭、恢复或 DELETE。
 - 进程崩溃后进程内保证终止；新进程不得声称旧远端 Session 已由 500 秒机制清理。本 feature 不写持久账本、不 attach、不开 session discovery、不探活、不心跳、不自动重建/重放或清理其他客户端 Session。
 
 ### Errors And Request State
 
 - AIF-01 的 `AutomationError` 字段保持。AIF-02 新增 `InvalidSessionStateError`、`SessionBusyError` 与 `ResourceStateError`；受控错误仍携带稳定 code、operation_id、request_state、completed_steps、cleanup_errors，底层异常通过异常链保留，不预建后续动作才需要的异常类型。
-- 请求前纯值/能力错误为 `InvalidRequestError`，code `invalid_argument` 或 `unsupported_operation`；connection/Session 状态错误为 `InvalidSessionStateError`，code `session_invalid` 或 `session_closed`；资源冲突为 `ResourceStateError`，code `device_busy` 或 `system_port_unavailable`。
+- 请求前纯值/能力错误为 `InvalidRequestError`，code `invalid_argument` 或 `unsupported_operation`；connection/Session 状态错误为 `InvalidSessionStateError`，沿用 `session_invalid`、`session_closed`，并为 terminal disposal 增加 `session_disposal_invalid` 与 `unsupported_connection_ownership`；资源冲突为 `ResourceStateError`，code `device_busy` 或 `system_port_unavailable`。
 - Appium 对 create 返回有效终态错误响应时为 `CommandError/command_failed/response_received`，确认本次未创建并在本地客户端收尾后释放占用。create 得到成功形响应却无法取得可靠 sessionId/capabilities，或传输结束状态无法证明时为 `ResourceStateError/session_create_unknown`，Session 转 uncertain并保留占用；其 request_state 分别为 `response_received` 或 `response_unknown`。
 - quit 的任何非成功终态、传输未知或必要收尾失败均使 Session 转 uncertain并保留占用；主 code 为 `session_quit_unknown`，必要清理错误按发生顺序放入 cleanup_errors。没有主错误而客户端/Automation 必要清理失败时使用 `cleanup_failed`，不覆盖原始错误。
-- 发送前取消优先于 deadline，分别为 `operation_cancelled`、`operation_timeout` 与 `not_sent`。请求可能已发送后取消/超时保留 `response_unknown` 和 uncertain 状态。已经取得有效成功响应时，已完成 create/quit 事实优先于随后观察到的取消或 deadline；completed_steps 可分别含 `session_created` 或 `session_deleted`。
+- 发送前取消优先于 deadline，分别为 `operation_cancelled`、`operation_timeout` 与 `not_sent`。请求可能已发送后取消/超时保留 `response_unknown` 和 uncertain 状态。已经取得有效成功响应时，已完成 create/quit 事实优先于随后观察到的取消或 deadline；terminal disposal 失败保留 `disposing`，使用 `terminal_disposal_pending` 并把 Runtime 原因放入 `cleanup_errors`。
 
 ### Verification Scope
 
 - 必须使用锁定的真实 Appium/Selenium 客户端和临时 HTTP 协议服务验证 W3C capabilities、初始 Settings、幂等键、无传输重试、direct connection 不切换、base path、create/quit 单次请求、有效错误/响应未知、显式预算、取消检查点和连接池关闭；不得只 mock 客户端成功。
-- 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/closing/closed、同 Session 立即忙、closed quit 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
+- 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/disposing/disposed/closing/closed、同 Session 立即忙、closed quit 与 disposed dispose 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
 - 获准真实验收使用固定Appium3.7.0 / UiAutomator2 8.7.0和一个明确Android目标，覆盖实际Session创建、500秒协商、正常quit及确认释放后的replacement Session。四种应用输入、不同device ID独立资源、同设备拒绝、systemPort、状态机、known/unknown和分别quit继续由锁定真实Client/Selenium到临时HTTP服务的受控永久测试守护。当前资格不声明两个真实设备同时active或真实多设备隔离；未来增加该资格须独立设计、SPEC和资源授权。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
 
 ### RT-LOCAL-04 Managed Runtime Usage Delta
 
-本节只为 managed `RuntimeConnection` 增加 AIF-02 的 usage lease 接缝；现有 external connection、公开 `create_session`/`Session.quit` 签名、Session 状态、请求事实、错误层级和 device/systemPort 规则不变。
+本节为 managed `RuntimeConnection` 增加 AIF-02 的 usage lease 接缝；Issue #30 在此既有 lease 上增加不公开 Runtime process API 的 terminal disposal authority。现有 external connection、公开 `create_session`/`Session.quit` 签名、DELETE 请求事实和 device/systemPort 规则不变。
 
 - `create_session(connection, ...)` 完成全部纯值校验及 active `server_url` 读取后、取得 device/systemPort reservation 或发送任何 Session 创建请求前，调用公开 `connection.acquire_usage()`。`InvalidStateError/connection_closing` 或 `connection_closed` 在发送前映射为既有 `InvalidSessionStateError/session_invalid/not_sent`，不暴露 Runtime 私有状态机。
 - 请求可证明未发送，或 Appium 有效终态明确证明未创建，且 client/transport 本地清理完成时，同步调用 `usage.release()`；清理错误存在时不得释放。成功创建时 lease 由 Session 唯一持有；`session_create_unknown`、response_unknown、无可靠成功形状或任何保留 Session/device/systemPort 的清理错误都通过现有公开 retained Session 保持同一 lease 可达。
 - `Session.quit()` 只有在远端 Session 删除响应确认、client/transport 清理完成、Session 状态置为 `closed` 且 device/systemPort reservation 已释放后，才同步调用 `usage.release()`。quit 结果 unknown、删除未确认或任何必要清理错误均保留 lease。
-- 有效未释放 lease 的 `RuntimeUsage.release()` 是 O(1) 纯内存操作：只原子递减 Runtime usage 并标记 released；不执行进程信号、服务终止、网络或文件 I/O，不抛 Runtime cleanup 异常。只有重复 release 抛 `InvalidStateError/usage_released`，且产品实现必须避免重复调用。
-- 因此 managed Session 的 create/quit 仍只产生既有 Automation 成功或错误；`Session.quit()` 不负责、也不会触发 Appium 服务清理。scope 已提前 close-requested 时，成功 quit 仅令 usage 归零，调用方另行调用同一 Runtime 的 `cleanup_managed()`。Integrations 当前 external connection 行为不变；切换 managed 不属于 #10。
-- 永久受控测试必须覆盖 acquire 在 reservation/request 前、closing/closed 错误映射、not-created+clean release、active/unknown/cleanup-error 保留、retained Session lease 身份、confirmed quit 的 reservation→release 顺序、release 零 I/O/零 Runtime 异常、重复 release 防护及全部 external AIF-02 回归；无需真实设备即可验证该窄接缝。
+- 有效未释放 lease 的 `RuntimeUsage.release()` 保持 O(1) 纯内存操作；它不执行 terminal disposal。managed lease 另携带只供 Automation `Session.dispose()` 使用的不透明 authority；external lease 不携带该 authority。两种路径均一次性，terminal disposal 已开始后不得再普通 release。
+- `Session.dispose()` 仅接受 `uncertain|disposing`。首次调用先证明本地 client/transport 关闭；关闭失败保留usage/reservation并以携带同一Session的`terminal_disposal_pending`保持`disposing`，后续dispose重试关闭。只有关闭成功后才不可逆消费本Session usage、撤销managed connection generation并进入本实例真实Popen/PGID的既有cleanup；绝不发送DELETE、ADB、Session、设备或探活请求。全部Runtime终态后才释放device/systemPort并转`disposed`；重复dispose本地幂等。
+- preflight取消/超时保持`uncertain`且错误携带同一Session。client关闭已开始后的取消、超时或清理失败保留`disposing`、真实Runtime handle与重试authority；调用方必须保留该引用并传播失败，重试只继续未完成阶段，不重新释放usage或重新授权信号。external/伪造/无authority在任何I/O前`unsupported_connection_ownership`，Session保持uncertain。Integrations不在Issue #30中新增工具或自动调用该入口。
+- 永久受控测试必须覆盖 acquire 在 reservation/request 前、known/unknown/cleanup-error lease、confirmed quit 顺序、release 零 I/O、真实 response_unknown→dispose、external 零信号拒绝、pre-cancel、cleanup retry、幂等，以及真实受管临时进程终态和全部 external AIF-02 回归；无需设备命令。
 
 
 ### Retained Session Error Reachability
