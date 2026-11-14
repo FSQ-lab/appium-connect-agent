@@ -735,6 +735,77 @@ def test_child_startup_exception_rolls_back_before_ack(
                 os.close(descriptor)
 
 
+@pytest.mark.parametrize("value", [None, "a", "a" * 4096])
+def test_bootstrap_adb_executable_accepts_exact_bounds(value: str | None) -> None:
+    request = BootstrapRequest(
+        protocol_version=1,
+        config="config.toml",
+        adb_executable=value,
+        socket="bridge.sock",
+        idle_timeout_seconds=1.0,
+    )
+    assert request.adb_executable == value
+
+
+@pytest.mark.parametrize("value", ["", "a" * 4097, "\ud800"])
+def test_bootstrap_adb_executable_rejects_before_application_without_echo(
+    value: str,
+) -> None:
+    with pytest.raises(ValueError) as caught:
+        BootstrapRequest(
+            protocol_version=1,
+            config="config.toml",
+            adb_executable=value,
+            socket="bridge.sock",
+            idle_timeout_seconds=1.0,
+        )
+    if value:
+        assert value not in str(caught.value)
+
+
+@pytest.mark.parametrize("value", ["", "a" * 4097, "\ud800"])
+def test_invalid_bootstrap_frame_never_constructs_application_or_echoes_input(
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bootstrap_read, bootstrap_write = os.pipe()
+    ready_read, ready_write = os.pipe()
+
+    def forbidden_run(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("Application construction must not be reached")
+
+    monkeypatch.setattr(anyio, "run", forbidden_run)
+    payload = json.dumps(
+        {
+            "protocol_version": 1,
+            "config": "config.toml",
+            "adb_executable": value,
+            "socket": "bridge.sock",
+            "idle_timeout_seconds": 1.0,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    try:
+        cli._write_fd_frame(bootstrap_write, payload)
+        os.close(bootstrap_write)
+        bootstrap_write = -1
+        assert (
+            cli._daemon_child(["--daemon-child", str(bootstrap_read), str(ready_write)])
+            == 2
+        )
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+    finally:
+        for descriptor in (bootstrap_write, ready_read, ready_write):
+            if descriptor >= 0:
+                with suppress(OSError):
+                    os.close(descriptor)
+
+
 class _StatefulResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

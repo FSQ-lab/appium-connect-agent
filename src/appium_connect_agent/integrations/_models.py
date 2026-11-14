@@ -106,10 +106,11 @@ def _safe_identifier(value: str, label: str) -> str:
 
 
 def _mac_app_path(value: str) -> str:
+    segments = value.split("/")
     path = Path(value)
     if (
         not path.is_absolute()
-        or any(part in {".", ".."} for part in path.parts)
+        or any(segment in {"", ".", ".."} for segment in segments[1:])
         or path.suffix.casefold() != ".app"
         or any(unicodedata.category(character) == "Cc" for character in value)
         or len(value.encode("utf-8", errors="strict")) > 4096
@@ -595,6 +596,12 @@ _ELEMENT_ATTRIBUTE: TypeAlias = Literal[
     "displayed",
     "bounds",
     "window_id",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "hittable",
 ]
 _TREE_VALUE_NAME: TypeAlias = Literal[
     "type",

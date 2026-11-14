@@ -20,6 +20,8 @@ from pydantic import (
     field_validator,
 )
 
+from ._models import StrictUtf8
+
 PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -99,7 +101,9 @@ RESPONSE_ADAPTER = TypeAdapter(BridgeResponse)
 class BootstrapRequest(_StrictModel):
     protocol_version: Literal[1]
     config: str
-    adb_executable: str | None = None
+    adb_executable: (
+        Annotated[StrictUtf8, Field(min_length=1, max_length=4096)] | None
+    ) = None
     socket: str
     idle_timeout_seconds: float
 

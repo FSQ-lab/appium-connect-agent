@@ -56,6 +56,12 @@ _ATTRIBUTES = (
     "displayed",
     "bounds",
     "window_id",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "hittable",
 )
 
 
