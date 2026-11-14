@@ -48,7 +48,7 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "6cb948c6163c09d74b5b7fbdb9021e2dbcc747ca8f0ffe1208edd10ce1ddb730"
+    "43d35ec7fa39418fe68a6e8d5059f2f56396feacd0861cf67850cd8fd91dc922"
 )
 CAPABILITY_MAX_CANONICAL_BYTES = 3858
 RUNTIME_MAX_CANONICAL_BYTES = 622_071

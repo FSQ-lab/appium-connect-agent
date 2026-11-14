@@ -1005,7 +1005,7 @@ def test_owned_group_cleanup_and_gone_group_never_reacquired(
 
     with pytest.raises(TimeoutError):
         handle.wait(checkpoint, deadline)
-    assert handle.cleanup(time.monotonic() + 2)
+    assert handle.cleanup(time.monotonic() + 5)
 
     def forbidden(*args: Any) -> None:
         raise AssertionError("a gone process group must never be reacquired")

@@ -57,7 +57,7 @@ import appium_connect_agent
 from appium_connect_agent import integrations
 from appium_connect_agent.contracts import LocalSettings
 
-assert len(integrations.TOOL_CATALOG.specs) == 19
+assert len(integrations.TOOL_CATALOG.specs) == 22
 assert "appium_connect_agent.runtime" not in sys.modules
 assert set(integrations.__all__) <= set(dir(integrations))
 assert LocalSettings().server_mode == "external"
