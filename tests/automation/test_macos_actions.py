@@ -586,21 +586,28 @@ def test_duration_budget_allows_strictly_less_and_rejects_equal_or_greater(
         assert len(service.of_kind(kind)) == 1
         allowed.quit()
 
-        rejected = mac_session_for(service, connection)
-        before = len(service.of_kind(kind))
-        with pytest.raises(OperationTimeoutError) as caught:
-            _duration_action(
-                rejected, action, 60_000, OperationControl(timeout_seconds=1)
+        for boundary, duration_ms, timeout_seconds in (
+            ("equal", 100, 0.1),
+            ("greater", 60_000, 1),
+        ):
+            rejected = mac_session_for(service, connection)
+            before = len(service.of_kind(kind))
+            with pytest.raises(OperationTimeoutError) as caught:
+                _duration_action(
+                    rejected,
+                    action,
+                    duration_ms,
+                    OperationControl(timeout_seconds=timeout_seconds),
+                )
+            assert_error(
+                caught.value,
+                OperationTimeoutError,
+                "operation_timeout",
+                "not_sent",
             )
-        assert_error(
-            caught.value,
-            OperationTimeoutError,
-            "operation_timeout",
-            "not_sent",
-        )
-        assert len(service.of_kind(kind)) == before
-        assert rejected.session_info().state == "active"
-        rejected.quit()
+            assert len(service.of_kind(kind)) == before, boundary
+            assert rejected.session_info().state == "active"
+            rejected.quit()
 
         cancelled = mac_session_for(service, connection)
         cancellation = threading.Event()
