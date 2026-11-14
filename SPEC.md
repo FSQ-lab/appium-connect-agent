@@ -140,11 +140,21 @@
 - Runtime 增加显式同步 managed scope，只从当前账号固定 `~/.appium-connect-agent/` 中经验证的受管 Appium 启动本次 owned 服务；调用方必须给出 numeric loopback `127.0.0.1` 或 `::1`、明确端口和合法 base path。不扫描、自动换端口、共享未知实例、读取用户全局安装或接入远程服务。
 - RT-LOCAL-03 的 `supported_combinations()` 与 `Runtime.install()` 继续拥有精确初始安装清单，当前仍为 Appium 3.7.0 + UiAutomator2 8.7.0；RT-LOCAL-04/05 不改变其初始组件版本 installed/reused/conflict 语义。记录命名空间仅做窄兼容 delta：`records/` 精确允许必需 `installation.json`、可选 `service.json` 与可选 `maintenance.json`，任何其他文件继续 recovery；service 不存在或合法 `stopped`，且 maintenance 不存在或合法 terminal `complete | failed` 时 install 才可继续原资格核对；service/maintenance 非终态、recovery 或非法 schema 时 install/start/maintenance 均在各自写入或组件命令前阻断。
 - managed lifecycle 独立按实际 owned 服务的可靠 SemVer Appium `3.x` 判断启动资格，不维护 Appium minor/patch 与 driver 版本矩阵。启动必须持有本次真实 `Popen`/进程组句柄，并以固定 macOS `/usr/sbin/lsof -F` 对内核 socket 表核验本次 owned PID 自身持有目标 numeric loopback/port 的 TCP LISTEN FD，之后才可轮询 `/status`；status 成功后必须再次核验同一 FD ownership 和 child 存活。只有两次 ownership proof、`ready=true`、可靠 SemVer `3.x` 和 child 存活同时成立才进入 active。外部服务在 bind 竞态中抢占端口时 owned PID 无该 LISTEN FD，不能借外部 ready 假阳性通过；证明不依赖 Appium 日志文案或 extension 输出。工具缺失、不可信、超时或结果异常保守失败 `service_ownership_unverified`。
-- managed connection 复用 `RuntimeConnection`，将 ownership 扩展为 `external | managed`。Automation 在 managed Session 创建前取得 Runtime usage lease；只有已证明未创建，或 Session 已确认删除且本地清理完成后纯内存释放。创建/quit 结果 unknown 或清理失败时保留 usage；有效 `release()` 不执行进程/网络/文件 I/O，不发送信号或抛 Runtime 清理异常，`Session.quit()` 契约保持。
-- 任一 usage 存在时 scope exit 零 TERM/KILL，进入 close-requested/cleanup_pending并保留本实例真实句柄与账号锁；无主体异常抛 `service_in_use`，有主体异常在 `runtime_managed_cleanup_error` 独立保留。后续 quit 只令 usage 归零，调用方必须显式 `cleanup_managed()`；该入口在 usage>0 时零信号拒绝，usage=0 后才有界 TERM→必要 KILL、流排空、wait、管道关闭和监督线程 join。
+- managed connection 复用 `RuntimeConnection`，ownership 为 `external | managed`。Automation 在 managed Session 创建前取得 Runtime usage lease；confirmed未创建或confirmed删除且本地清理完成时纯内存释放。创建/quit unknown或清理失败时保留usage。公开`release()`不执行I/O；Issue #30另允许持有该lease的同一`Session`在uncertain后显式`dispose()`，以不透明authority终止本实例owned managed service。
+- 任一普通 usage 存在时 scope exit 零 TERM/KILL，进入 close-requested/cleanup_pending并保留真实句柄与账号锁。confirmed quit只令usage归零；terminal dispose则原子消费自身usage、撤销generation并直接继续既有有界cleanup。两条路径都只可作用于本实例内存中的真实Popen/PGID，不按磁盘PID或端口接管。
 - 唯一服务记录固定为 `~/.appium-connect-agent/records/service.json`；父进程崩溃、非终态/非法记录或 ownership 事实不足时为 recovery_required。磁盘 PID/PGID、端口、进程名、目录、EOF 或空闲锁都不授予接管或 kill 权限；不自动重启。
 - 普通 managed startup 不执行 Doctor、driver install/update、npm、ADB 或 Session。Driver Doctor 属于 #13 RT-LOCAL-05 的显式、另行授权环境准备，固定 driver 名仅 `uiautomator2 | xcuitest | mac2`；Appium 3.7.0 Doctor 的 autofix 副作用不能由 `--json` 关闭。active 服务的显式 stop/restart 属于 #4 RT-LOCAL-06；Integrations 从 external 切换 managed 属于后续 Integrations Issue。
 - 复用 CPython 3.11 标准库进程、信号、selector、socket、线程和 monotonic 能力，macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及已批准 HTTPX 0.28.1、AnyIO 4.15.1、HTTPcore 1.0.9、node-semver 0.9.1 的现有用途；不新增或升级产品/开发依赖，不改变模块导入方向。
+
+## Managed Session Terminal Disposal
+
+本节定义Issue #30的窄增量；它修复response-unknown后`Session`持有最后usage导致owned Appium无法结算的问题，不为Integrations增加工具或自动恢复策略。
+
+- Automation公开`Session.dispose(*, control: OperationControl | None = None) -> None`，仅接受`uncertain|disposing`且仅限该Session持有的managed Runtime authority。external、伪造、旧实例或无authority在任何信号/I/O前以`unsupported_connection_ownership/not_sent`拒绝。
+- 首次dispose先证明本地client/transport关闭；关闭失败保留`disposing`、usage与reservation并返回同一Session，后续dispose重试本地关闭。只有本地关闭成功后才不可逆消费usage、撤销connection generation，并以同一有限预算/取消信号进入既有managed cleanup；全程绝不发送DELETE、HTTP探活、ADB、Session或设备请求。
+- 完整进程组、Popen、双流、selector、监督线程、`service.json=stopped`及账号锁实际释放全部成立后，Automation才释放device/systemPort并把Session转`disposed`。若账号锁context退出报告cleanup错误，不再次退出已耗尽context；后续dispose须通过重新取得并完整释放同一账号锁证明协调资源终态。重复dispose为本地幂等，不能重复release或signal已终态资源。
+- preflight取消/超时保持`uncertain`并在错误携带同一Session；本地关闭开始后的取消/超时、账号锁release-verification未完成或任一清理失败保留`disposing`、必要cleanup_pending与同一重试authority。后续dispose只继续未完成阶段；稳定code为`session_disposal_invalid`、`unsupported_connection_ownership`与`terminal_disposal_pending`，下层原因通过`cleanup_errors`保留。
+- 不新增/升级依赖，不改变Session quit、external服务、Integrations工具/schema/自动shutdown或FSQ调用顺序。验证须覆盖真实协议response_unknown、零额外DELETE、external零信号拒绝、pre-cancel、cleanup重试/幂等，以及受控真实owned临时进程终态；不需设备命令。
 
 
 ## Local Managed Appium Explicit Stop And Restart

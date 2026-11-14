@@ -91,9 +91,8 @@ details = field.inspect(attributes=("text", "focused"))
 局部结构使用 `field.inspect_structure()`，拖动使用
 `source.drag_and_drop(destination, destination_x_ratio=0.5, destination_y_ratio=0.5)`，
 受限滚动查找使用 `container.scroll(target, max_swipes=5)`。
-`Session` 保留 `element`、`observe_tree`（含可选 parent）、`session_info` 与 `quit`；
-旧 `session.click(element)`、`session.inspect_element(element, ...)` 等入口已移除，
-不提供兼容别名。全部操作共用所属 Session 的准入、预算及恢复规则。
+`Session` 保留 `element`、`observe_tree`（含可选 parent）、`session_info`、`quit` 与限定的 `dispose`。`quit`只用于active Session并发送一次DELETE；若请求终态未知，Session进入`uncertain`且不再发送设备/Session命令。调用方可对仍持有本进程managed ownership的uncertain Session显式调用`session.dispose()`，它不发送DELETE/探活/ADB，而是终止当前SDK实例真实owned Appium、释放lease与本地device/systemPort；external Session明确拒绝。清理取消、超时或失败时错误继续携带同一Session且状态为`disposing`；调用方必须保留该引用、传播失败，并只用再次`dispose()`继续同一cleanup，不得把失败当成功或丢弃pending资源。成功后为`disposed`且重复调用幂等。Integrations现有19工具与自动shutdown不调用该入口。
+旧 `session.click(element)`、`session.inspect_element(element, ...)` 等入口已移除，不提供兼容别名。全部操作共用所属 Session 的准入、预算及恢复规则。
 
 ### Device 与 Element IME
 

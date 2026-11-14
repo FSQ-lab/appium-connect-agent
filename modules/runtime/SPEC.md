@@ -241,8 +241,8 @@ RuntimeUsage.release() -> None
 - `start_managed()` 和上下文构造零 I/O；进入时才获取账号锁、访问固定根、做端口预检、写 `service.json`、spawn 和 ready 检查。`control=None` 启动总预算 60 秒；显式 control 沿其预算/Event。scope 一次性语义保持。
 - host 只接受显式 `127.0.0.1 | ::1`；port 是排除 bool 的 `1..65535` 整数，无默认/扫描/替换。base_path 空串表示根，非空沿 external ASCII segment/长度规则。非法纯值在任何 I/O 前 ValueError。
 - RuntimeConnection 复用 server_url、appium_version、compatibility、report 与范围有效性；ownership 扩展为 `external | managed`。managed 必须有可靠 `3.x` 且 compatibility=`declared_compatible`，不返回 unverified；external 行为不变。
-- `RuntimeUsage` 是不透明一次性 lease。有效未释放 lease 的 `release()` 只原子递减计数/标记 released，O(1)、零进程/网络/文件 I/O，绝不发送信号、终止服务或抛 Runtime 清理异常；第二次 release 才 `InvalidStateError/usage_released`。external lease 不阻止 external scope 退出。
-- `cleanup_managed()` 只处理同一 Runtime 实例 `cleanup_pending` 且仍持有真实 Popen/PGID 的资源；默认预算 30 秒，无资源幂等。usage>0 时立即 `ServiceLifecycleError/service_in_use` 且零信号；只有 usage=0 才清理。它不能停止 active 服务、依据磁盘记录接管进程或充当 stop/restart。
+- `RuntimeUsage` 是不透明一次性 lease。有效未释放 lease 的公开 `release()` 只原子递减计数/标记 released，O(1)、零进程/网络/文件 I/O，绝不发送信号、终止服务或抛 Runtime 清理异常；第二次 release 为 `InvalidStateError/usage_released`。managed lease 可携带只供 Automation `Session.dispose()` 消费的不透明 terminal authority；external lease无此authority。Runtime不公开按PID、connection或全局current-service dispose的入口。
+- `cleanup_managed()` 只处理同一 Runtime 实例 `cleanup_pending` 且仍持有真实 Popen/PGID 的资源；默认预算 30 秒，无资源幂等。usage>0 时立即 `ServiceLifecycleError/service_in_use` 且零信号；只有 usage=0 才清理。它不能停止 active 服务、依据磁盘记录接管进程或充当 stop/restart；Session terminal authority 是唯一可从一个未释放 managed usage 原子转入同一 owned cleanup 的例外。
 
 ### Coordination, Record And Spawn
 
@@ -261,12 +261,14 @@ RuntimeUsage.release() -> None
 
 ### Usage Lease And Automation Seam
 
-- Automation 对 create_session 完成纯值和 active URL 校验后、取得 device/systemPort reservation 或发送请求前 acquire usage。`connection_closing/connection_closed` 在发送前映射为既有 `InvalidSessionStateError/session_invalid/not_sent`；公开 create_session 签名不变，Runtime 不依赖 Automation。
+- Automation 对 create_session 完成纯值和 active URL 校验后、取得 device/systemPort reservation 或发送请求前 acquire usage。`connection_closing/connection_closed` 在发送前映射为既有 `InvalidSessionStateError/session_invalid/not_sent`；Runtime 不依赖 Automation。
 - 可证明未发送或明确未创建且 client/transport 清理完成时纯内存 release；成功时 lease 归 Session；创建 unknown/cleanup error/其他不确定结果通过 retained Session 保持 lease 可达。
-- Session.quit 只有在远端删除确认、client cleanup 完成、Session 标为 closed 且 device/systemPort 释放后调用纯内存 release。未知或 cleanup error 保留 lease。release 不发送进程信号、不终止 Appium、不抛 Runtime cleanup，因此不污染 quit 的 closed/异常契约。
-- 正常顺序是逐个 quit 使 usage=0 后再退出 scope，由 Runtime `__exit__` 自己清理。
-- usage>0 的提前 `__exit__` 零 TERM/KILL：connection→close-requested，`service.json`→cleanup_pending，保留真实句柄和账号锁；无主体异常抛 `service_in_use`，有主体异常保持同一对象并附 `runtime_managed_cleanup_error`。已有 Session 可 quit 归零，但禁止新 acquire。
-- usage 归零不触发 I/O。调用方随后必须显式 cleanup_managed；usage 仍大于零时该入口零信号拒绝，等于零才清理。unknown usage 有意保留服务与锁。
+- Session.quit 只有在远端删除确认、client cleanup 完成、Session 标为 closed 且 device/systemPort 释放后调用纯内存 release。未知或 cleanup error 保留 lease。release 不发送进程信号、不终止 Appium、不抛 Runtime cleanup。
+- managed lease 的 terminal authority 在首次使用时原子递减usage、撤销当前connection generation并把scope转 `close_requested`；随后以调用方同一有限 `OperationControl` 进入现有 cleanup。只允许本实例仍注册的真实scope/Popen/PGID；external、伪造、旧实例或无authority在信号/I/O前拒绝。
+- terminal cleanup成功必须同时证明既有进程/流/线程终态、写stopped、清除scope并实际释放账号锁。真实account-lock context `__exit__`已执行后即使报告descriptor cleanup错误也不得二次退出同一已耗尽context；scope改为保留release-verification pending authority，后续通过重新取得并完整释放同一账号锁证明协调资源已终态。证明前保持`cleanup_pending`且不能重复递减usage。该路径不发送HTTP、DELETE、ADB、Session或设备请求，不探活、不attach、不按磁盘PID接管。
+- 正常顺序仍是逐个 quit 使 usage=0 后再退出 scope，由 Runtime `__exit__` 自己清理。terminal authority仅供 unknown/uncertain Session 的显式失败收尾，不替代普通quit或scope退出。
+- usage>0 的提前 `__exit__` 零 TERM/KILL：connection→close-requested，`service.json`→cleanup_pending，保留真实句柄和账号锁；无主体异常抛 `service_in_use`，有主体异常保持同一对象并附 `runtime_managed_cleanup_error`。已有 uncertain Session 可通过自己的 terminal authority消费最后usage并继续cleanup，但禁止新 acquire。
+- 普通 usage release 归零不触发 I/O。调用方随后必须显式 cleanup_managed；usage 仍大于零时该入口零信号拒绝，等于零才清理。
 
 ### Natural Cleanup And Crash Recovery
 
@@ -278,10 +280,10 @@ RuntimeUsage.release() -> None
 
 ### Errors, Reuse And Verification
 
-- 新增 Runtime 子类 `ServiceLifecycleError`。稳定 code 至少为 `managed_installation_not_ready`、`managed_root_conflict`、`managed_recovery_required`、`service_port_in_use`、`service_ownership_unverified`、`managed_service_exited`、`service_in_use`、`managed_cleanup_pending`；复用 InvalidStateError 的 `connection_closing/connection_closed/usage_released` 及现有连接/版本/预算 code。
-- 已定义失败附有界 partial_report；未知缺陷保持原对象并保守清理。日志、记录和错误不泄露 argv 环境、原始流、上游 message/header、凭据或异常 repr。
+- `ServiceLifecycleError` 稳定 code 至少为 `managed_installation_not_ready`、`managed_root_conflict`、`managed_recovery_required`、`service_port_in_use`、`service_ownership_unverified`、`managed_service_exited`、`service_in_use`、`managed_cleanup_pending`；复用 InvalidStateError 的 `unsupported_connection_ownership`、`connection_closing`、`connection_closed`、`usage_released` 与新增内部重复路径 `usage_disposal_started`，以及既有连接/版本/预算 code。
+- 已定义失败附有界 partial_report；未知缺陷保持原对象并保守清理。日志、记录和错误不泄露 argv 环境、原始流、上游 message/header、凭据或异常 repr/stack。
 - 复用 CPython 3.11 subprocess/os.killpg/signal/selectors/socket/threading/time.monotonic、macOS 固定系统工具 `/usr/sbin/lsof` 的机器可读内核 socket 查询，以及既有 httpx==0.28.1、anyio==4.15.1、httpcore==1.0.9、node-semver==0.9.1；不新增/升级产品或开发依赖，不使用日志匹配、psutil/AppiumService，不自研 HTTP/SemVer/Doctor。
-- 永久测试必须覆盖：03 records 白名单与 service 状态互操作；真实进程组/双流洪泛；真实临时 Python IPv4/IPv6 HTTP listener 下 `/usr/sbin/lsof -F` 精确 PID/FD/endpoint/LISTEN；工具缺失/不可信/超时/异常；已占端口及 bind 后 external 抢占、external ready + owned child 挂起不退出的反例；首次 proof 前零 HTTP、status 后第二次 proof；ready/version/child；usage create/unknown/quit；release 零 I/O/零清理异常；提前 exit + 显式 cleanup、usage>0 cleanup 零信号；TERM/KILL/错误字段；父崩溃不接管。默认只用临时根/fake Appium和受控 HTTP，不要求设备。
+- 永久测试必须覆盖：03 records白名单与service状态互操作；真实进程组/双流/lsof ownership；usage create/unknown/quit；公开release零I/O；terminal authority真实owned进程终态、generation撤销、external/伪造零信号拒绝、pre-cancel、timeout/cleanup-pending继续且不重复usage；提前exit+显式cleanup；TERM/KILL/错误字段；父崩溃不接管。默认只用临时根/fake Appium和受控HTTP，不要求设备。
 - Feature Done 另需授权的真实受管组合完成 start→两次 owned LISTEN FD proof 包围 ready→安全 Session create→quit→usage=0→scope 自然清理→进程/管道终态→service stopped→锁复用，并完成质量、发行物和独立审查。缺少服务/设备授权时只能 implementation-and-non-device-pass、device-validation-blocked、Feature non-Done。
 
 ## Local Managed Driver Maintenance And Official Driver Doctor
