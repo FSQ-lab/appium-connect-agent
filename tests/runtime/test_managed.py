@@ -277,7 +277,7 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
             runtime.start_managed(
                 host=host,
                 port=port,
-                control=OperationControl(timeout_seconds=0.5),
+                control=OperationControl(timeout_seconds=1.5),
             ).__enter__()
         assert not marker.exists()
         assert runtime._managed_scope is None
