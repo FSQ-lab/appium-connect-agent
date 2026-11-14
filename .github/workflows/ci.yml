@@ -50,7 +50,7 @@ jobs:
           - name: Tests (Core & Runtime)
             paths: tests/test_package_import.py tests/contracts tests/configuration tests/runtime/test_connection.py tests/runtime/test_coordination.py tests/runtime/test_diagnostics.py tests/runtime/test_installation.py tests/runtime/test_maintenance.py
           - name: Tests (Runtime Managed)
-            paths: -vv tests/runtime/test_managed.py
+            paths: tests/runtime/test_managed.py
           - name: Tests (Integrations)
             paths: tests/integrations
           - name: Tests (Automation)

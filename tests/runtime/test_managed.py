@@ -85,6 +85,7 @@ def _managed_root(tmp_path: Path, *, mode: str = "serve") -> tuple[Path, Path]:
     node.write_text(
         f"""#!{sys.executable}
 import http.server
+import socketserver
 import os
 import signal
 import socket
@@ -109,6 +110,9 @@ if mode == 'ignore-term':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 class Server(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6 if host == '::1' else socket.AF_INET
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 class Handler(http.server.BaseHTTPRequestHandler):
     requests = 0
     def do_GET(self):
@@ -151,56 +155,6 @@ def _service_state(root: Path) -> str:
     state = value["state"]
     assert isinstance(state, str)
     return state
-
-
-def _socket_probe_output(
-    host: str, port: int, pid: int, *, listening: bool
-) -> tuple[int, bytes, bytes, bool]:
-    if not listening:
-        return 1, b"", b"", False
-    endpoint = f"[::1]:{port}" if host == "::1" else f"127.0.0.1:{port}"
-    return 0, f"p{pid}\nf4\nn{endpoint}\nTST=LISTEN\n".encode("ascii"), b"", False
-
-
-@pytest.fixture(autouse=True)
-def _fast_owned_listener_probe(
-    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    original_bounded = _managed._bounded_command
-    real_lsof_test = request.node.originalname in {
-        "test_real_lsof_owned_listener_ready_and_natural_cleanup",
-        "test_flooded_streams_are_bounded_and_startup_subprocesses_are_allowlisted",
-        "test_external_race_cannot_use_ready_status_for_owned_success",
-    }
-
-    def controlled_bounded(
-        operation: _Operation, argv: list[str], timeout: float
-    ) -> tuple[int, bytes, bytes, bool]:
-        if not argv or argv[0] != str(_managed._LSOF):
-            return original_bounded(operation, argv, timeout)
-        if real_lsof_test:
-            remaining = operation.deadline - time.monotonic()
-            return original_bounded(
-                operation, argv, min(max(timeout, 10.0), max(0.1, remaining))
-            )
-        pid = int(argv[argv.index("-p") + 1])
-        selector = next(item for item in argv if item.startswith("-i"))
-        host: Literal["127.0.0.1", "::1"] = (
-            "::1" if selector.startswith("-i6TCP@[::1]:") else "127.0.0.1"
-        )
-        port = int(selector.rsplit(":", 1)[1])
-        family = socket.AF_INET6 if host == "::1" else socket.AF_INET
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return 1, b"", b"", False
-        listening = False
-        with suppress(OSError), socket.socket(family, socket.SOCK_STREAM) as probe_sock:
-            probe_sock.settimeout(0.02)
-            listening = probe_sock.connect_ex((host, port)) == 0
-        return _socket_probe_output(host, port, pid, listening=listening)
-
-    monkeypatch.setattr(_managed, "_bounded_command", controlled_bounded)
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1"])
@@ -263,10 +217,14 @@ def _external_server_script(path: Path) -> Path:
         f"""import http.server
 import pathlib
 import socket
+import socketserver
 import sys
 host, port, marker = sys.argv[1], int(sys.argv[2]), pathlib.Path(sys.argv[3])
 class Server(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6 if host == '::1' else socket.AF_INET
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         marker.write_text('STATUS_REQUESTED')
@@ -284,7 +242,7 @@ Server((host, port), Handler).serve_forever()
 
 
 def _wait_listening(host: str, port: int, process: subprocess.Popen[bytes]) -> None:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise AssertionError("external listener exited")
@@ -327,7 +285,7 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
             runtime.start_managed(
                 host=host,
                 port=port,
-                control=OperationControl(timeout_seconds=5.0),
+                control=OperationControl(timeout_seconds=1.5),
             ).__enter__()
         assert not marker.exists()
         assert runtime._managed_scope is None
@@ -1101,25 +1059,13 @@ def test_crashed_parent_record_never_authorizes_cross_process_takeover(
     port = _unused_port("127.0.0.1")
     program = """
 import os
-import socket
 import sys
-from contextlib import suppress
 from pathlib import Path
 from appium_connect_agent.contracts import LocalSettings
-from appium_connect_agent.runtime import Runtime, _coordination, _managed
+from appium_connect_agent.runtime import Runtime, _coordination
 
 home, node, marker, port = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), int(sys.argv[4])
 _coordination._account_home = lambda: home
-def _child_probe(operation, argv, timeout):
-    listening = False
-    with suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.02)
-        listening = s.connect_ex(("127.0.0.1", port)) == 0
-    if not listening:
-        return 1, b"", b"", False
-    pid = argv[argv.index("-p") + 1]
-    return 0, f"p{pid}\\nf4\\nn127.0.0.1:{port}\\nTST=LISTEN\\n".encode("ascii"), b"", False
-_managed._bounded_command = _child_probe
 runtime = Runtime(LocalSettings(node_executable=node))
 runtime.start_managed(host="127.0.0.1", port=port).__enter__()
 owner = runtime._managed_scope
