@@ -829,7 +829,6 @@ def test_terminal_disposal_proves_lock_release_after_real_exit_cleanup_failure(
     scope.__exit__(None, None, None)
 
 
-
 @pytest.mark.parametrize("mode", ["version-2", "version-invalid"])
 def test_managed_status_requires_reliable_appium_3_version(
     tmp_path: Path, mode: str
