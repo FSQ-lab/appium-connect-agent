@@ -47,8 +47,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Tests (Core, Runtime & Integrations)
-            paths: tests/test_package_import.py tests/contracts tests/configuration tests/runtime tests/integrations
+          - name: Tests (Core & Runtime)
+            paths: tests/test_package_import.py tests/contracts tests/configuration tests/runtime
+          - name: Tests (Integrations)
+            paths: tests/integrations
           - name: Tests (Automation)
             paths: tests/automation
     steps:
