@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -75,6 +76,19 @@ _TREE_FIELDS = (
     "bounds",
     "window_id",
 )
+_MAC2_TREE_FIELDS = (
+    "type",
+    "id",
+    "text",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "enabled",
+    "selected",
+    "bounds",
+)
 
 
 @dataclass(slots=True, eq=False)
@@ -112,6 +126,22 @@ _ATTRIBUTES: tuple[ElementAttribute, ...] = (
     "displayed",
     "bounds",
     "window_id",
+)
+_MAC2_ATTRIBUTES: tuple[ElementAttribute, ...] = (
+    "id",
+    "text",
+    "type",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "enabled",
+    "focused",
+    "selected",
+    "hittable",
+    "displayed",
+    "bounds",
 )
 _BOOLEAN_ATTRIBUTES = frozenset(
     {
@@ -152,12 +182,17 @@ def _error(
 
 
 def _validate_attributes(
-    attributes: object, operation_id: str
+    attributes: object, operation_id: str, platform: Literal["android", "macos"]
 ) -> tuple[ElementAttribute, ...]:
-    if not isinstance(attributes, tuple) or not 1 <= len(attributes) <= 18:
+    maximum = 18 if platform == "android" else 14
+    allowed = _ATTRIBUTES if platform == "android" else _MAC2_ATTRIBUTES
+    if not isinstance(attributes, tuple) or not 1 <= len(attributes) <= maximum:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    if any(not isinstance(name, str) or name not in _ATTRIBUTES for name in attributes):
+    known = frozenset((*_ATTRIBUTES, *_MAC2_ATTRIBUTES))
+    if any(not isinstance(name, str) or name not in known for name in attributes):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if any(name not in allowed for name in attributes):
+        raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
     if len(set(attributes)) != len(attributes):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return cast(tuple[ElementAttribute, ...], attributes)
@@ -172,30 +207,34 @@ def _locator_value(element: Element | None) -> LocatorValue | None:
         element.package,
         element.raw_id,
         _locator_value(element.parent),
+        element.predicate,
     )
 
 
-def _json_value(value: object) -> object:
+def _json_value(value: object, *, macos: bool = False) -> object:
     if isinstance(value, Bounds):
         return [value.x, value.y, value.width, value.height]
     if isinstance(value, LocatorValue):
-        return {
+        locator_result = {
             "by": value.by,
             "package": value.package,
-            "parent": _json_value(value.parent),
+            "parent": _json_value(value.parent, macos=macos),
             "raw_id": value.raw_id,
             "value": value.value,
         }
+        if macos:
+            locator_result["predicate"] = value.predicate
+        return locator_result
     if isinstance(value, ObservationScope):
         return {
             "kind": value.kind,
-            "locator": _json_value(value.locator),
-            "range_locator": _json_value(value.range_locator),
+            "locator": _json_value(value.locator, macos=macos),
+            "range_locator": _json_value(value.range_locator, macos=macos),
         }
     if isinstance(value, AttributeObservation):
         result: dict[str, object] = {"name": value.name, "state": value.state}
         if value.state == "value":
-            result["value"] = _json_value(value.value)
+            result["value"] = _json_value(value.value, macos=macos)
         return result
     if isinstance(value, SourceMetadata):
         return {
@@ -206,18 +245,18 @@ def _json_value(value: object) -> object:
     if isinstance(value, ObservedValue):
         result = {"state": value.state}
         if value.state == "value":
-            result["value"] = _json_value(value.value)
+            result["value"] = _json_value(value.value, macos=macos)
         return result
     if isinstance(value, Viewport):
         return {
-            "height": _json_value(value.height),
-            "rotation": _json_value(value.rotation),
-            "width": _json_value(value.width),
+            "height": _json_value(value.height, macos=macos),
+            "rotation": _json_value(value.rotation, macos=macos),
+            "width": _json_value(value.width, macos=macos),
         }
     if isinstance(value, RawNode):
         return {
             "attributes": [[key, item] for key, item in value.attributes],
-            "children": [_json_value(child) for child in value.children],
+            "children": [_json_value(child, macos=macos) for child in value.children],
             "tag": value.tag,
         }
     return value
@@ -325,6 +364,53 @@ def _read_attribute(
     return result
 
 
+def _read_mac2_attribute(
+    element: WebElement,
+    name: ElementAttribute,
+    gateway: _SessionOperationGateway,
+) -> AttributeObservation:
+    if name == "bounds":
+        return AttributeObservation(
+            name, "value", _parse_bounds(gateway.request(lambda: element.rect), gateway)
+        )
+    upstream = {
+        "id": "identifier",
+        "type": "amType",
+        "placeholder_value": "placeholderValue",
+        "element_type": "elementType",
+    }.get(name, name)
+    raw = gateway.request(
+        lambda: (
+            element.text
+            if name == "text"
+            else element.is_enabled()
+            if name == "enabled"
+            else element.is_displayed()
+            if name == "displayed"
+            else element.is_selected()
+            if name == "selected"
+            else element.get_attribute(upstream)
+        )
+    )
+    if name in {"enabled", "focused", "selected", "hittable", "displayed"}:
+        return (
+            AttributeObservation(name, "unknown")
+            if raw is None
+            else AttributeObservation(name, "value", _parse_boolean(raw, gateway))
+        )
+    if raw is None:
+        return AttributeObservation(name, "missing")
+    if name == "element_type":
+        if raw == "":
+            return AttributeObservation(name, "missing")
+        if isinstance(raw, str) and raw.isascii() and raw.isdecimal():
+            return AttributeObservation(name, "value", int(raw))
+        return AttributeObservation(name, "unknown")
+    if isinstance(raw, str):
+        return AttributeObservation(name, "value", raw)
+    raise _error(CommandError, "source_invalid", gateway)
+
+
 def _inspect_values(
     driver: WebDriver,
     element: Element,
@@ -332,8 +418,15 @@ def _inspect_values(
     gateway: _SessionOperationGateway,
 ) -> tuple[AttributeObservation, ...]:
     target = _resolve_required_once(driver, element, gateway)
-    cache: dict[ElementAttribute, AttributeObservation] = {}
-    result = tuple(_read_attribute(target, name, gateway, cache) for name in attributes)
+    if gateway.platform == "macos":
+        result = tuple(
+            _read_mac2_attribute(target, name, gateway) for name in attributes
+        )
+    else:
+        cache: dict[ElementAttribute, AttributeObservation] = {}
+        result = tuple(
+            _read_attribute(target, name, gateway, cache) for name in attributes
+        )
     gateway.complete("attributes_read")
     return result
 
@@ -344,11 +437,15 @@ def _inspect_element(
     attributes: tuple[ElementAttribute, ...],
     gateway: _SessionOperationGateway,
 ) -> ElementInspection:
-    values = _with_raw_id_guard(
-        driver,
-        (element,),
-        gateway,
-        lambda: _inspect_values(driver, element, attributes, gateway),
+    values = (
+        _inspect_values(driver, element, attributes, gateway)
+        if gateway.platform == "macos"
+        else _with_raw_id_guard(
+            driver,
+            (element,),
+            gateway,
+            lambda: _inspect_values(driver, element, attributes, gateway),
+        )
     )
     gateway.checkpoint(response_received=True)
 
@@ -365,9 +462,14 @@ def _inspect_element(
         "kind": "element",
         "observed_at": observed_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         "operation_id": gateway.operation_id,
-        "payload": {"attributes": [_json_value(value) for value in values]},
+        "payload": {
+            "attributes": [
+                _json_value(value, macos=gateway.platform == "macos")
+                for value in values
+            ]
+        },
         "schema": 1,
-        "scope": _json_value(scope),
+        "scope": _json_value(scope, macos=gateway.platform == "macos"),
         "upstream_completeness": "unknown",
     }
     try:
@@ -391,12 +493,29 @@ def _inspect_element(
     )
 
 
-def _validate_tree_parent(parent: object, owner: object, operation_id: str) -> Element:
+def _validate_tree_parent(
+    parent: object,
+    owner: object,
+    operation_id: str,
+    platform: Literal["android", "macos"],
+) -> Element:
     valid = _validate_owner(parent, owner, operation_id)
     for locator in _locator_chain(valid):
-        if locator.by == "xpath" or (
-            locator.by == "id" and not locator.raw_id and locator.package is None
-        ):
+        unavailable = (
+            locator.by == "xpath"
+            or locator.predicate is not None
+            or (
+                platform == "android"
+                and locator.by == "id"
+                and not locator.raw_id
+                and locator.package is None
+            )
+            or (
+                platform == "macos"
+                and locator.by not in {"id", "accessibility id", "name", "class name"}
+            )
+        )
+        if unavailable:
             raise InvalidRequestError(
                 "structure_scope_unavailable", operation_id, "not_sent"
             )
@@ -749,6 +868,383 @@ def _tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> object:
     return result
 
 
+def _mac2_viewport(displays: object, gateway: _SessionOperationGateway) -> Viewport:
+    unknown = Viewport(
+        ObservedValue("unknown"),
+        ObservedValue("unknown"),
+        ObservedValue("not_applicable"),
+    )
+    if not isinstance(displays, dict) or isinstance(displays, list):
+        raise _error(CommandError, "command_failed", gateway)
+    mains: list[tuple[float, float, float, float]] = []
+    for key, value in displays.items():
+        if not isinstance(key, str) or not isinstance(value, dict):
+            raise _error(CommandError, "command_failed", gateway)
+        display_id = value.get("id")
+        main = value.get("isMain")
+        rect = value.get("rect")
+        if (
+            type(display_id) is not int
+            or str(display_id) != key
+            or type(main) is not bool
+            or not isinstance(rect, dict)
+        ):
+            raise _error(CommandError, "command_failed", gateway)
+        parts = tuple(rect.get(name) for name in ("x", "y", "width", "height"))
+        if any(
+            isinstance(part, bool)
+            or not isinstance(part, (int, float))
+            or not math.isfinite(part)
+            for part in parts
+        ):
+            raise _error(CommandError, "command_failed", gateway)
+        x, y, width, height = cast(tuple[float, float, float, float], parts)
+        if width <= 0 or height <= 0:
+            raise _error(CommandError, "command_failed", gateway)
+        if main:
+            mains.append((x, y, width, height))
+    if len(mains) != 1:
+        return unknown
+    x, y, width, height = mains[0]
+    if (
+        x != 0
+        or y != 0
+        or not float(width).is_integer()
+        or not float(height).is_integer()
+    ):
+        return unknown
+    return Viewport(
+        ObservedValue("value", int(width)),
+        ObservedValue("value", int(height)),
+        ObservedValue("not_applicable"),
+    )
+
+
+def _parse_mac2_source(
+    source: object, viewport: Viewport, gateway: _SessionOperationGateway
+) -> _ParsedNode:
+    if not isinstance(source, str):
+        raise _error(CommandError, "source_invalid", gateway)
+    try:
+        encoded = source.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as cause:
+        raise _error(CommandError, "source_invalid", gateway) from cause
+    if len(encoded) > _MAX_XML:
+        raise _error(CommandError, "source_too_large", gateway)
+    gateway.checkpoint(response_received=True)
+    try:
+        xml_root = fromstring(
+            source, forbid_dtd=True, forbid_entities=True, forbid_external=True
+        )
+    except (DTDForbidden, EntitiesForbidden, ExternalReferenceForbidden) as cause:
+        raise _error(CommandError, "source_forbidden_xml", gateway) from cause
+    except (ParseError, ValueError) as cause:
+        raise _error(CommandError, "source_invalid", gateway) from cause
+    if not isinstance(xml_root.tag, str) or not xml_root.tag.startswith(
+        "XCUIElementType"
+    ):
+        raise _error(CommandError, "source_invalid", gateway)
+    root = _ParsedNode(xml_root.tag, tuple(xml_root.attrib.items()))
+    stack: list[tuple[XmlElement[str], _ParsedNode, int]] = [(xml_root, root, 1)]
+    count = 0
+    while stack:
+        element, parsed, depth = stack.pop()
+        count += 1
+        if (
+            count > _MAX_NODES
+            or depth > _MAX_DEPTH
+            or len(element.attrib) > _MAX_ATTRIBUTES
+        ):
+            raise _error(CommandError, "source_resource_limit", gateway)
+        names = (element.tag, *element.attrib.keys())
+        if any(not isinstance(name, str) or len(name) > _MAX_NAME for name in names):
+            raise _error(CommandError, "source_resource_limit", gateway)
+        for value in element.attrib.values():
+            try:
+                size = len(value.encode("utf-8", errors="strict"))
+            except UnicodeEncodeError as cause:
+                raise _error(CommandError, "source_invalid", gateway) from cause
+            if size > _MAX_VALUE:
+                raise _error(CommandError, "source_resource_limit", gateway)
+        element_type = parsed.attribute("elementType")
+        if element_type is not None and not (
+            element_type.isascii() and element_type.isdecimal()
+        ):
+            raise _error(CommandError, "source_invalid", gateway)
+        enabled = parsed.attribute("enabled")
+        selected = parsed.attribute("selected")
+        if enabled is not None:
+            _parse_boolean(enabled, gateway)
+        if selected is not None:
+            _parse_boolean(selected, gateway)
+        children: list[tuple[XmlElement[str], _ParsedNode, int]] = []
+        for child in element:
+            child_node = _ParsedNode(child.tag, tuple(child.attrib.items()))
+            parsed.children.append(child_node)
+            children.append((child, child_node, depth + 1))
+        stack.extend(reversed(children))
+        if count % 256 == 0:
+            gateway.checkpoint(response_received=True)
+    gateway.complete("source_parsed")
+    viewport_known = (
+        viewport.width.state == viewport.height.state == "value"
+        and type(viewport.width.value) is int
+        and type(viewport.height.value) is int
+    )
+    for node in _all_nodes((root,)):
+        raw_parts = tuple(
+            node.attribute(name) for name in ("x", "y", "width", "height")
+        )
+        if any(part is None for part in raw_parts):
+            continue
+        try:
+            x, y, width, height = (int(cast(str, part)) for part in raw_parts)
+        except ValueError as cause:
+            raise _error(CommandError, "source_invalid", gateway) from cause
+        if width < 0 or height < 0 or width == 0 or height == 0:
+            continue
+        if node.attribute("enabled") is None or not viewport_known:
+            continue
+        viewport_width = cast(int, viewport.width.value)
+        viewport_height = cast(int, viewport.height.value)
+        right, bottom = x + width, y + height
+        outside = (
+            right <= 0,
+            x >= viewport_width,
+            bottom <= 0,
+            y >= viewport_height,
+        )
+        if sum(outside) > 1:
+            continue
+        if outside[0]:
+            node.viewport_relation = "outside_left"
+        elif outside[1]:
+            node.viewport_relation = "outside_right"
+        elif outside[2]:
+            node.viewport_relation = "outside_above"
+        elif outside[3]:
+            node.viewport_relation = "outside_below"
+        elif (
+            x >= 0 and y >= 0 and right <= viewport_width and bottom <= viewport_height
+        ):
+            node.viewport_relation = "inside"
+        elif max(x, 0) < min(right, viewport_width) and max(y, 0) < min(
+            bottom, viewport_height
+        ):
+            node.viewport_relation = "intersects"
+        if node.viewport_relation == "inside":
+            node.visibility = "visible"
+        elif node.viewport_relation == "intersects":
+            node.visibility = "partially_visible"
+        elif node.viewport_relation.startswith("outside_"):
+            node.visibility = "not_visible"
+    return root
+
+
+def _mac2_xml_value(
+    node: _ParsedNode, name: str, gateway: _SessionOperationGateway
+) -> ObservedValue:
+    if name == "type":
+        return ObservedValue("value", node.tag)
+    if name == "bounds":
+        parts = tuple(node.attribute(item) for item in ("x", "y", "width", "height"))
+        if any(part is None for part in parts):
+            return ObservedValue("unknown")
+        try:
+            x, y, width, height = (int(cast(str, part)) for part in parts)
+        except ValueError as cause:
+            raise _error(CommandError, "source_invalid", gateway) from cause
+        if width < 0 or height < 0:
+            return ObservedValue("unknown")
+        return ObservedValue("value", Bounds(x, y, width, height))
+    upstream = {
+        "id": "identifier",
+        "placeholder_value": "placeholderValue",
+        "element_type": "elementType",
+    }.get(name, name)
+    raw = node.attribute(upstream)
+    if name == "text":
+        candidates = tuple(
+            node.attribute(item)
+            for item in ("value", "label", "placeholderValue", "title")
+        )
+        for candidate in candidates:
+            if candidate:
+                return ObservedValue("value", candidate)
+        return (
+            ObservedValue("value", "")
+            if any(candidate is not None for candidate in candidates)
+            else ObservedValue("missing")
+        )
+    if raw is None:
+        return ObservedValue("missing")
+    if name in {"enabled", "selected"}:
+        return ObservedValue("value", _parse_boolean(raw, gateway))
+    if name == "element_type":
+        return ObservedValue("value", int(raw))
+    return ObservedValue("value", raw)
+
+
+def _mac2_tree_node(
+    node: _ParsedNode,
+    children: tuple[TreeNode, ...],
+    gateway: _SessionOperationGateway,
+) -> TreeNode:
+    na = ObservedValue("not_applicable")
+    return TreeNode(
+        _mac2_xml_value(node, "type", gateway),
+        _mac2_xml_value(node, "id", gateway),
+        _mac2_xml_value(node, "text", gateway),
+        na,
+        na,
+        _mac2_xml_value(node, "enabled", gateway),
+        na,
+        na,
+        _mac2_xml_value(node, "selected", gateway),
+        _mac2_xml_value(node, "bounds", gateway),
+        node.visibility,
+        node.viewport_relation,
+        na,
+        children,
+        _mac2_xml_value(node, "label", gateway),
+        _mac2_xml_value(node, "title", gateway),
+        _mac2_xml_value(node, "value", gateway),
+        _mac2_xml_value(node, "placeholder_value", gateway),
+        _mac2_xml_value(node, "element_type", gateway),
+    )
+
+
+def _project_mac2_tree(
+    roots: tuple[_ParsedNode, ...],
+    keep: set[_ParsedNode] | None,
+    gateway: _SessionOperationGateway,
+) -> tuple[TreeNode, ...]:
+    projected: dict[_ParsedNode, TreeNode] = {}
+    for index, node in enumerate(reversed(_all_nodes(roots))):
+        if keep is None or node in keep:
+            children = tuple(
+                projected[child] for child in node.children if child in projected
+            )
+            projected[node] = _mac2_tree_node(node, children, gateway)
+        if index % 256 == 0:
+            gateway.checkpoint(response_received=True)
+    return tuple(projected[root] for root in roots if root in projected)
+
+
+def _mac2_tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> object:
+    result: dict[str, object] = {
+        "children": [],
+        "viewport_relation": node.viewport_relation,
+        "visible": node.visibility,
+    }
+    missing: list[str] = []
+    unknown: list[str] = []
+    na: list[str] = []
+    values = {
+        name: cast(ObservedValue, getattr(node, name)) for name in _MAC2_TREE_FIELDS
+    }
+    for name in _MAC2_TREE_FIELDS:
+        observed = values[name]
+        if observed.state == "value":
+            value = observed.value
+            if name == "type" and isinstance(value, str):
+                local = value.removeprefix("XCUIElementType")
+                if value.startswith("XCUIElementType") and local and "." not in local:
+                    result["type"], result["type_ns"] = local, "XCUIElementType"
+                else:
+                    result[name] = value
+            elif (
+                name == "bounds"
+                and isinstance(value, Bounds)
+                and value == parent_bounds
+            ):
+                result[name] = "parent"
+            elif (name, value) not in (("enabled", True), ("selected", False)):
+                result[name] = _json_value(value)
+        elif observed.state == "missing":
+            missing.append(name)
+        elif observed.state == "unknown":
+            unknown.append(name)
+        else:
+            na.append(name)
+    bounds = values["bounds"].value
+    inherited = bounds if isinstance(bounds, Bounds) else None
+    result["children"] = [_mac2_tree_json(child, inherited) for child in node.children]
+    if missing:
+        result["missing"] = missing
+    if unknown:
+        result["unknown"] = unknown
+    if na:
+        result["na"] = na
+    return result
+
+
+def _mac2_tree_result(
+    source_text: str,
+    metadata: SourceMetadata,
+    viewport: Viewport,
+    parent: Element | None,
+    gateway: _SessionOperationGateway,
+) -> TreeObservation:
+    root = _parse_mac2_source(source_text, viewport, gateway)
+    roots = (root,) if parent is None else (_resolve_local(root, parent, gateway),)
+    locator = _locator_value(parent)
+    scope = ObservationScope("root" if parent is None else "element", locator, locator)
+    observed_at = gateway.observed_at
+    if observed_at is None:
+        raise RuntimeError("tree observation has no successful Appium response")
+
+    def build(
+        keep: set[_ParsedNode] | None, coverage: Coverage, complete: bool
+    ) -> tuple[tuple[TreeNode, ...], bytes | None]:
+        projected = _project_mac2_tree(roots, keep, gateway)
+        document = {
+            "complete_for_requested_scope": complete,
+            "coverage": coverage,
+            "kind": "tree",
+            "observed_at": observed_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "operation_id": gateway.operation_id,
+            "payload": {
+                "roots": [_mac2_tree_json(node) for node in projected],
+                "viewport": _json_value(viewport),
+            },
+            "schema": 1,
+            "scope": _json_value(scope, macos=True),
+            "source": _json_value(metadata),
+            "upstream_completeness": "unknown",
+        }
+        return projected, _canonical(document, gateway)
+
+    projected, encoded = build(None, "requested_scope", True)
+    coverage: Coverage = "requested_scope"
+    complete = True
+    if encoded is None:
+        keep = _visible_keep(roots)
+        coverage = (
+            "visible_with_ancestors_and_offscreen"
+            if any(node.viewport_relation.startswith("outside_") for node in keep)
+            else "visible_with_ancestors"
+        )
+        complete = False
+        projected, encoded = build(keep, coverage, complete)
+    if encoded is None:
+        raise _error(CommandError, "observation_too_large", gateway)
+    gateway.checkpoint(response_received=True)
+    gateway.complete("observation_built")
+    return TreeObservation(
+        gateway.operation_id,
+        observed_at,
+        scope,
+        coverage,
+        complete,
+        "unknown",
+        metadata,
+        viewport,
+        projected,
+        encoded,
+    )
+
+
 def _tree_result(
     source_text: str,
     metadata: SourceMetadata,
@@ -857,6 +1353,19 @@ def _observe_tree(
     parent: Element | None,
     gateway: _SessionOperationGateway,
 ) -> TreeObservation:
+    if gateway.platform == "macos":
+        displays = gateway.request(
+            lambda: driver.execute_script("macos: listDisplays"), "displays_read"
+        )
+        viewport = _mac2_viewport(displays, gateway)
+        source = gateway.request(lambda: driver.page_source, "source_captured")
+        return _mac2_tree_result(
+            source,
+            SourceMetadata(False, True, None),
+            viewport,
+            parent,
+            gateway,
+        )
     return _source_operation(
         driver,
         gateway,
@@ -870,12 +1379,28 @@ def _resolve_local_chain(
     current = root
     matched: list[_ParsedNode] = []
     for locator in _locator_chain(element):
-        name = "resource-id" if locator.by == "id" else "content-desc"
-        matches = [
-            node
-            for node in _descendants(current)
-            if node.attribute(name) == locator.value
-        ]
+        if gateway.platform == "macos":
+            candidates = (
+                (current, *_descendants(current))
+                if not matched
+                else _descendants(current)
+            )
+            matches = [
+                node
+                for node in candidates
+                if (
+                    node.tag == locator.value
+                    if locator.by == "class name"
+                    else node.attribute("identifier") == locator.value
+                )
+            ]
+        else:
+            name = "resource-id" if locator.by == "id" else "content-desc"
+            matches = [
+                node
+                for node in _descendants(current)
+                if node.attribute(name) == locator.value
+            ]
         if not matches:
             raise _error(TargetError, "target_not_found", gateway)
         if len(matches) != 1:
@@ -945,7 +1470,15 @@ def _structure_result(
     scope_name: Literal["target", "declared_parent"],
     gateway: _SessionOperationGateway,
 ) -> RawStructureObservation:
-    root, _ = _parse_source(source_text, gateway)
+    if gateway.platform == "macos":
+        viewport = Viewport(
+            ObservedValue("unknown"),
+            ObservedValue("unknown"),
+            ObservedValue("not_applicable"),
+        )
+        root = _parse_mac2_source(source_text, viewport, gateway)
+    else:
+        root, _ = _parse_source(source_text, gateway)
     matched, target = _resolve_local_chain(root, element, gateway)
     range_node = target
     range_element = element
@@ -974,11 +1507,14 @@ def _structure_result(
             "observed_at": observed_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "operation_id": gateway.operation_id,
             "payload": {
-                "roots": [_json_value(node) for node in projected],
+                "roots": [
+                    _json_value(node, macos=gateway.platform == "macos")
+                    for node in projected
+                ],
                 "target_path": list(path),
             },
             "schema": 1,
-            "scope": _json_value(scope),
+            "scope": _json_value(scope, macos=gateway.platform == "macos"),
             "source": _json_value(metadata),
             "upstream_completeness": "unknown",
         }
@@ -1016,6 +1552,15 @@ def _inspect_structure(
     scope: Literal["target", "declared_parent"],
     gateway: _SessionOperationGateway,
 ) -> RawStructureObservation:
+    if gateway.platform == "macos":
+        source = gateway.request(lambda: driver.page_source, "source_captured")
+        return _structure_result(
+            source,
+            SourceMetadata(False, True, None),
+            element,
+            scope,
+            gateway,
+        )
     return _source_operation(
         driver,
         gateway,

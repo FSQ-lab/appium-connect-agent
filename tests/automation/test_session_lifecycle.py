@@ -19,6 +19,7 @@ import appium_connect_agent.automation._session as session_module
 from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
+    ElementValidationError,
     InvalidRequestError,
     InvalidSessionStateError,
     OperationCancelledError,
@@ -27,6 +28,7 @@ from appium_connect_agent.automation import (
     Session,
     SessionBusyError,
     SessionInfo,
+    create_mac2_session,
     create_session,
 )
 from appium_connect_agent.automation._session_client import (
@@ -1626,3 +1628,179 @@ def test_managed_cleanup_failure_and_closing_mapping_retain_usage(
 def test_session_constructor_is_not_a_public_creation_path() -> None:
     with pytest.raises(TypeError):
         Session()
+
+
+def test_mac2_capabilities_single_host_and_android_independence(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.append(
+        ResponsePlan(
+            payload=create_response(
+                capabilities={"CFBundleIdentifier": "com.apple.Calculator"}
+            )
+        )
+    )
+    with connected(service) as connection:
+        mac = create_mac2_session(
+            connection,
+            arguments=["--safe"],
+            bundle_id="com.apple.Calculator",
+            no_reset=False,
+            skip_app_kill=True,
+            show_server_logs=True,
+            server_startup_timeout_ms=12_000,
+            new_command_timeout_seconds=0,
+        )
+        android = create_session(connection, "android-device")
+        assert mac.platform == "macos"
+        assert mac.session_info().platform == "macos"
+        assert mac.session_info().device_id == "macos:local"
+        assert mac.session_info().target_app_id == "com.apple.Calculator"
+        assert android.session_info().platform == "android"
+        with pytest.raises(ResourceStateError) as busy:
+            create_mac2_session(connection)
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        mac.quit()
+        replacement = create_mac2_session(connection)
+        replacement.quit()
+        android.quit()
+
+    creates = [
+        request for request in service.lifecycle_requests() if request.method == "POST"
+    ]
+    assert appium_caps(creates[0]) == {
+        "platformName": "Mac",
+        "appium:automationName": "Mac2",
+        "appium:arguments": ["--safe"],
+        "appium:bundleId": "com.apple.Calculator",
+        "appium:newCommandTimeout": 0.0,
+        "appium:noReset": False,
+        "appium:serverStartupTimeout": 12000,
+        "appium:showServerLogs": True,
+        "appium:skipAppKill": True,
+        "appium:systemHost": "127.0.0.1",
+        "appium:systemPort": 10100,
+    }
+    assert appium_caps(creates[1])["appium:systemPort"] == 8200
+    assert appium_caps(creates[2])["appium:systemPort"] == 10100
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "expected"),
+    [
+        (
+            {
+                "CFBundleIdentifier": "/Applications/Calculator.app",
+                "appium:bundleId": "com.apple.Fallback",
+                "bundleId": "com.apple.Last",
+            },
+            "com.apple.Fallback",
+        ),
+        (
+            {
+                "CFBundleIdentifier": "bad/value",
+                "appium:bundleId": "应用.计算器",
+                "bundleId": "com.apple.Last",
+            },
+            "com.apple.Last",
+        ),
+        (
+            {
+                "CFBundleIdentifier": "relative/path",
+                "appium:bundleId": "com.apple/Calculator",
+                "bundleId": "应用",
+            },
+            None,
+        ),
+    ],
+)
+def test_mac2_response_target_requires_ascii_bundle_grammar_and_falls_back(
+    service: ProtocolService,
+    capabilities: dict[str, object],
+    expected: str | None,
+) -> None:
+    service.create_plans.append(
+        ResponsePlan(payload=create_response(capabilities=capabilities))
+    )
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        assert session.session_info().target_app_id == expected
+        session.quit()
+
+
+def test_mac2_app_bundle_and_inputs_are_validated_before_request(
+    service: ProtocolService, tmp_path: Path
+) -> None:
+    app = tmp_path.resolve() / "Sample.app"
+    contents = app / "Contents"
+    contents.mkdir(parents=True)
+    (contents / "Info.plist").write_bytes(b"plist")
+    with connected(service) as connection:
+        session = create_mac2_session(connection, app_path=app, arguments=[])
+        session.quit()
+        before = list(service.lifecycle_requests())
+        invalid = [
+            {"bundle_id": "bad/value"},
+            {"app_path": str(app)},
+            {"arguments": []},
+            {"arguments": ["x"], "bundle_id": None},
+            {"no_reset": 1},
+            {"skip_app_kill": 0},
+            {"show_server_logs": 0},
+            {"server_startup_timeout_ms": 999},
+            {"new_command_timeout_seconds": True},
+            {"new_command_timeout_seconds": 86_401},
+        ]
+        for kwargs in invalid:
+            with pytest.raises(InvalidRequestError) as caught:
+                create_mac2_session(connection, **kwargs)  # type: ignore[arg-type]
+            assert_error(
+                caught.value, InvalidRequestError, "invalid_argument", "not_sent"
+            )
+        assert service.lifecycle_requests() == before
+
+    create = service.lifecycle_requests()[0]
+    assert appium_caps(create)["appium:appPath"] == str(app)
+
+
+def test_mac2_rejects_symlinked_app_ancestor_without_echo(
+    service: ProtocolService, tmp_path: Path
+) -> None:
+    real = tmp_path.resolve() / "real"
+    contents = real / "Sample.app" / "Contents"
+    contents.mkdir(parents=True)
+    (contents / "Info.plist").write_bytes(b"plist")
+    link = tmp_path.resolve() / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    app = link / "Sample.app"
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_mac2_session(connection, app_path=app)
+    assert caught.value.code == "invalid_argument"
+    assert str(app) not in str(caught.value)
+    assert service.lifecycle_requests() == []
+
+
+def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
+    service: ProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        element = session.element("name", "result", predicate="label == 'Result'")
+        assert element.predicate == "label == 'Result'"
+        with pytest.raises(ElementValidationError) as packaged:
+            session.element("id", "value", package="com.example")
+        assert packaged.value.code == "unsupported_operation"
+        with pytest.raises(ElementValidationError) as raw:
+            session.element("id", "value", raw_id=True)
+        assert raw.value.code == "unsupported_operation"
+        with pytest.raises(ElementValidationError) as child_xpath:
+            session.element("xpath", "//Button", parent=element)
+        assert child_xpath.value.code == "unsupported_operation"
+        before = list(service.lifecycle_requests())
+        with pytest.raises(InvalidRequestError) as device:
+            session.device.back()
+        assert_error(
+            device.value, InvalidRequestError, "unsupported_operation", "not_sent"
+        )
+        assert service.lifecycle_requests() == before
+        session.quit()
