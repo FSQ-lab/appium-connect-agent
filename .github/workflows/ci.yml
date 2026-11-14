@@ -11,28 +11,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  # Match the existing lockfile registry without rewriting uv.lock.
-  UV_DEFAULT_INDEX: https://packagefeedproxy.microsoft.io/pypi/simple/
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  checks:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            name: macOS quality
-            quality: true
-          - os: windows-latest
-            name: Windows packaging
-            quality: false
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,22 +27,77 @@ jobs:
         with:
           version: "0.12.5"
           python-version: "3.11"
-          enable-cache: false
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
       - name: Sync locked development environment
-        if: matrix.quality
         run: uv sync --locked
-      - name: Sync locked package only
-        if: ${{ !matrix.quality }}
-        run: uv sync --locked --no-dev
-      - name: Quality, types, tests and import boundaries
-        if: matrix.quality
+      - name: Format, lint, strict types, and import boundaries
         run: |
           uv run --locked ruff format --check .
           uv run --locked ruff check .
-          uv run --locked mypy src tests tools/diagnose.py
-          uv run --locked pytest
+          uv run --locked mypy src tests tools/diagnose.py .github/scripts/check_distributions.py
           uv run --locked lint-imports
-          uv run --locked mypy .github/scripts/check_distributions.py
+  tests:
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Tests (Core & Runtime)
+            paths: tests/test_package_import.py tests/contracts tests/configuration tests/runtime/test_connection.py tests/runtime/test_coordination.py tests/runtime/test_diagnostics.py tests/runtime/test_installation.py tests/runtime/test_maintenance.py
+          - name: Tests (Runtime Managed)
+            paths: tests/runtime/test_managed.py
+          - name: Tests (Integrations)
+            paths: tests/integrations
+          - name: Tests (Automation)
+            paths: tests/automation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Sync locked development environment
+        run: uv sync --locked
+      - name: Run test suite shard
+        run: uv run --locked pytest -ra ${{ matrix.paths }}
+
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: Package (macOS)
+          - os: windows-latest
+            name: Package (Windows)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Sync locked package environment
+        run: uv sync --locked --no-dev
       - name: Build wheel and source distribution
         run: uv build
       - name: Check archives and isolated installations

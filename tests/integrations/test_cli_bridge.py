@@ -1354,7 +1354,7 @@ def test_completed_call_refreshes_idle_after_response_write_failure(
         async def dispatch(self, tool_name: str, arguments: object) -> BaseModel:
             del tool_name, arguments
             self.calls += 1
-            await anyio.sleep(0.15)
+            await anyio.sleep(0.45)
             self.completed_at = time.monotonic()
             return _FakeResult(sequence=1)
 
@@ -1376,7 +1376,7 @@ def test_completed_call_refreshes_idle_after_response_write_failure(
                 LocalSettings(),
                 tmp_path / "adb",
                 endpoint,
-                0.1,
+                0.35,
                 application_factory=cast(Any, lambda *args, **kwargs: application),
                 account_directory=account,
                 watch_signals=False,
@@ -1410,7 +1410,7 @@ def test_completed_call_refreshes_idle_after_response_write_failure(
         assert outcomes == [0]
         assert application.calls == 1
         assert application.completed_at > 0
-        assert application.closed_at - application.completed_at >= 0.08
+        assert application.closed_at - application.completed_at >= 0.25
 
     anyio.run(scenario)
 

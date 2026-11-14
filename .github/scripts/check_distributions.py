@@ -95,6 +95,8 @@ if sys.platform == 'darwin':
     assert hasattr(Device, 'take_screenshot') and hasattr(Device, 'tap_at') and hasattr(Device, 'swipe_between')
     assert hasattr(Element, 'inspect') and hasattr(Session, 'quit')
 else:
+    from appium_connect_agent.integrations import TOOL_CATALOG
+    assert len(TOOL_CATALOG.specs) == 19
     assert 'appium_connect_agent.runtime' not in sys.modules
 print('Isolated installed package, metadata and py.typed: OK')
 """
@@ -111,15 +113,25 @@ def run(command: list[str], cwd: Path) -> None:
 
 
 def main() -> None:
-    configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    pyproject_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    require(
+        "packagefeedproxy.microsoft.io" not in pyproject_text,
+        "Private package index is not allowed in pyproject.toml",
+    )
+    configuration = tomllib.loads(pyproject_text)
+    require(
+        "index" not in configuration.get("tool", {}).get("uv", {}),
+        "Custom uv package indexes are not allowed in pyproject.toml",
+    )
+    require(
+        "sources" not in configuration.get("tool", {}).get("uv", {}),
+        "Custom uv package sources are not allowed in pyproject.toml",
+    )
     project = configuration["project"]
     require(set(project["dependencies"]) == DEPENDENCIES, "Unapproved dependencies")
     version = str(project["version"])
     python_requirement = str(project["requires-python"])
     index_arguments: list[str] = []
-    for index in configuration.get("tool", {}).get("uv", {}).get("index", []):
-        if index.get("explicit") is True:
-            index_arguments.extend(("--index", str(index["url"])))
     stem = f"{PACKAGE}-{version}"
     expected = {
         p.relative_to(ROOT / "src").as_posix(): p.read_bytes()

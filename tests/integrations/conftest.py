@@ -109,10 +109,12 @@ if MODE in {
     _REAL_MOVE_ON_AFTER = anyio.move_on_after
     _REAL_RUN_SYNC = anyio.to_thread.run_sync
 
+    _STALL_DELAY = float(os.environ.get("ACA_TEST_STALL_DELAY", "0.05"))
+
     def accelerated_move_on_after(
         delay: float | None, shield: bool = False
     ) -> anyio.CancelScope:
-        effective = 0.05 if delay == 30.0 else delay
+        effective = _STALL_DELAY if delay == 30.0 else delay
         return _REAL_MOVE_ON_AFTER(effective, shield=shield)
 
     async def controlled_run_sync(

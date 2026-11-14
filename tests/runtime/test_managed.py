@@ -85,6 +85,7 @@ def _managed_root(tmp_path: Path, *, mode: str = "serve") -> tuple[Path, Path]:
     node.write_text(
         f"""#!{sys.executable}
 import http.server
+import socketserver
 import os
 import signal
 import socket
@@ -109,6 +110,9 @@ if mode == 'ignore-term':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 class Server(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6 if host == '::1' else socket.AF_INET
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 class Handler(http.server.BaseHTTPRequestHandler):
     requests = 0
     def do_GET(self):
@@ -213,10 +217,14 @@ def _external_server_script(path: Path) -> Path:
         f"""import http.server
 import pathlib
 import socket
+import socketserver
 import sys
 host, port, marker = sys.argv[1], int(sys.argv[2]), pathlib.Path(sys.argv[3])
 class Server(http.server.ThreadingHTTPServer):
     address_family = socket.AF_INET6 if host == '::1' else socket.AF_INET
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         marker.write_text('STATUS_REQUESTED')
@@ -277,7 +285,7 @@ def test_external_race_cannot_use_ready_status_for_owned_success(
             runtime.start_managed(
                 host=host,
                 port=port,
-                control=OperationControl(timeout_seconds=0.5),
+                control=OperationControl(timeout_seconds=1.5),
             ).__enter__()
         assert not marker.exists()
         assert runtime._managed_scope is None

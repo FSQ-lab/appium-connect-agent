@@ -656,7 +656,12 @@ def test_cancel_completion_before_threshold_has_no_stall_log(
                     TOOL_NAMES[2], {"request": {"schema_version": 1}}
                 )
 
-        async with Client(mcp_harness.parameters(mode="cancel_stalled")) as client:
+        async with Client(
+            mcp_harness.parameters(
+                mode="cancel_stalled",
+                environment={"ACA_TEST_STALL_DELAY": "1.0"},
+            )
+        ) as client:
             async with anyio.create_task_group() as group:
                 group.start_soon(release)
                 group.start_soon(call_device, client)

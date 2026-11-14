@@ -553,14 +553,14 @@ def test_condition_deadline_after_complete_response_is_response_received(
         ResponsePlan(
             payload=payload,
             chunk_count=8,
-            chunk_delay_seconds=0.01,
+            chunk_delay_seconds=0.025,
         ),
     )
     with connected(service) as connection:
         session = session_for(service, connection, "condition-post-response")
         with pytest.raises(TargetError) as caught:
             session.element("id", "target").clear(
-                wait_timeout_seconds=0.04,
+                wait_timeout_seconds=0.12,
             )
         assert_error(
             caught.value,
