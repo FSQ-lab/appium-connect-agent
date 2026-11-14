@@ -1685,6 +1685,49 @@ def test_mac2_capabilities_single_host_and_android_independence(
     assert appium_caps(creates[2])["appium:systemPort"] == 10100
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "expected"),
+    [
+        (
+            {
+                "CFBundleIdentifier": "/Applications/Calculator.app",
+                "appium:bundleId": "com.apple.Fallback",
+                "bundleId": "com.apple.Last",
+            },
+            "com.apple.Fallback",
+        ),
+        (
+            {
+                "CFBundleIdentifier": "bad/value",
+                "appium:bundleId": "应用.计算器",
+                "bundleId": "com.apple.Last",
+            },
+            "com.apple.Last",
+        ),
+        (
+            {
+                "CFBundleIdentifier": "relative/path",
+                "appium:bundleId": "com.apple/Calculator",
+                "bundleId": "应用",
+            },
+            None,
+        ),
+    ],
+)
+def test_mac2_response_target_requires_ascii_bundle_grammar_and_falls_back(
+    service: ProtocolService,
+    capabilities: dict[str, object],
+    expected: str | None,
+) -> None:
+    service.create_plans.append(
+        ResponsePlan(payload=create_response(capabilities=capabilities))
+    )
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        assert session.session_info().target_app_id == expected
+        session.quit()
+
+
 def test_mac2_app_bundle_and_inputs_are_validated_before_request(
     service: ProtocolService, tmp_path: Path
 ) -> None:
@@ -1737,7 +1780,7 @@ def test_mac2_rejects_symlinked_app_ancestor_without_echo(
     assert service.lifecycle_requests() == []
 
 
-def test_mac2_locator_rules_and_unimplemented_actions_are_zero_request(
+def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
     service: ProtocolService,
 ) -> None:
     with connected(service) as connection:
@@ -1754,11 +1797,6 @@ def test_mac2_locator_rules_and_unimplemented_actions_are_zero_request(
             session.element("xpath", "//Button", parent=element)
         assert child_xpath.value.code == "unsupported_operation"
         before = list(service.lifecycle_requests())
-        with pytest.raises(InvalidRequestError) as action:
-            element.click()
-        assert_error(
-            action.value, InvalidRequestError, "unsupported_operation", "not_sent"
-        )
         with pytest.raises(InvalidRequestError) as device:
             session.device.back()
         assert_error(

@@ -13,7 +13,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, cast
 from urllib.parse import unquote
 
-from appium_connect_agent.automation import AutomationError, Session, create_session
+from appium_connect_agent.automation import (
+    AutomationError,
+    Session,
+    create_mac2_session,
+    create_session,
+)
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import Runtime, RuntimeConnection
 
@@ -315,6 +320,13 @@ def session_for(
 ) -> Session:
     del service
     return create_session(connection, device, app_id="com.example")
+
+
+def mac_session_for(
+    service: ActionProtocolService, connection: RuntimeConnection
+) -> Session:
+    del service
+    return create_mac2_session(connection)
 
 
 def w3c_error(message: str = "failed") -> dict[str, object]:

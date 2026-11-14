@@ -275,11 +275,14 @@ def _hide_keyboard(driver: WebDriver, gateway: _SessionOperationGateway) -> bool
     return result
 
 
-def _get_clipboard_text(driver: WebDriver, gateway: _SessionOperationGateway) -> str:
+def _get_clipboard_text(
+    driver: WebDriver,
+    gateway: _SessionOperationGateway,
+    *,
+    script: str = "mobile: getClipboard",
+) -> str:
     def action() -> str:
-        result: object = driver.execute_script(
-            "mobile: getClipboard", {"contentType": "plaintext"}
-        )
+        result: object = driver.execute_script(script, {"contentType": "plaintext"})
         if not isinstance(result, str) or len(result) > 87_384:
             raise ValueError("invalid clipboard response shape or encoded size")
         encoded = result.encode("ascii", errors="strict")
@@ -299,13 +302,12 @@ def _set_clipboard_text(
     *,
     content: str,
     label: str | None,
+    script: str = "mobile: setClipboard",
 ) -> None:
     payload = {"content": content, "contentType": "plaintext"}
     if label is not None:
         payload["label"] = label
-    gateway.final_action(
-        lambda: _none(driver.execute_script("mobile: setClipboard", payload))
-    )
+    gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
     gateway.complete("action_completed")
 
 

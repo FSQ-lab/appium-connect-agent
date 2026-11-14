@@ -50,6 +50,22 @@ from ._gestures import (
     _validate_ratio,
     _validate_scroll_mapping,
 )
+from ._macos_actions import (
+    _perform_macos_drag,
+    _perform_macos_element_action,
+    _perform_macos_element_keys,
+    _perform_macos_element_scroll,
+    _perform_macos_element_swipe,
+    _validate_bundle_id,
+    _validate_launch_arguments,
+    _validate_mac_app_bundle,
+    _validate_macos_direction,
+    _validate_macos_keys,
+    _validate_modifier_flags,
+    _validate_number,
+    _validate_velocity,
+)
+from ._macos_keyboard import MacKeyStroke
 from ._models import (
     AutomationError,
     AutomationPlatform,
@@ -303,57 +319,6 @@ def _target_from_capabilities(capabilities: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _validate_mac_app_bundle(app_path: object, operation_id: str) -> str:
-    if not isinstance(app_path, Path):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    try:
-        text = str(app_path)
-        encoded = text.encode("utf-8", errors="strict")
-    except (UnicodeEncodeError, ValueError):
-        raise InvalidRequestError(
-            "invalid_argument", operation_id, "not_sent"
-        ) from None
-    if (
-        not app_path.is_absolute()
-        or "." in app_path.parts
-        or ".." in app_path.parts
-        or app_path.suffix.casefold() != ".app"
-        or not 1 <= len(encoded) <= 4_096
-        or _contains_control(text)
-    ):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    prefixes = [Path(app_path.anchor)]
-    current = prefixes[0]
-    for part in app_path.parts[1:]:
-        current /= part
-        prefixes.append(current)
-    contents = app_path / "Contents"
-    plist = contents / "Info.plist"
-    metadata: list[tuple[Path, os.stat_result]] = []
-    try:
-        for path in (*prefixes, contents, plist):
-            item = os.lstat(path)
-            if stat.S_ISLNK(item.st_mode):
-                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-            metadata.append((path, item))
-        readable = os.access(plist, os.R_OK)
-    except InvalidRequestError:
-        raise
-    except (OSError, ValueError):
-        raise InvalidRequestError(
-            "invalid_argument", operation_id, "not_sent"
-        ) from None
-    modes = {path: item.st_mode for path, item in metadata}
-    if (
-        not stat.S_ISDIR(modes[app_path])
-        or not stat.S_ISDIR(modes[contents])
-        or not stat.S_ISREG(modes[plist])
-        or not readable
-    ):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    return text
-
-
 def _validate_mac2_request(
     operation_id: str,
     bundle_id: object,
@@ -365,36 +330,14 @@ def _validate_mac2_request(
     server_startup_timeout_ms: object,
     new_command_timeout_seconds: object,
 ) -> tuple[str | None, str | None, list[str] | None, float]:
-    if bundle_id is not None and (
-        not isinstance(bundle_id, str)
-        or _MAC_BUNDLE_ID.fullmatch(bundle_id) is None
-        or not bundle_id.isascii()
-    ):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if bundle_id is not None:
+        bundle_id = _validate_bundle_id(bundle_id, operation_id)
     valid_path = (
         None if app_path is None else _validate_mac_app_bundle(app_path, operation_id)
     )
-    valid_arguments: list[str] | None = None
-    if arguments is not None:
-        if isinstance(arguments, (str, bytes)) or not isinstance(arguments, Sequence):
-            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        try:
-            valid_arguments = list(arguments)
-        except Exception:
-            raise InvalidRequestError(
-                "invalid_argument", operation_id, "not_sent"
-            ) from None
-        if len(valid_arguments) > 64 or (bundle_id is None and valid_path is None):
-            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        for item in valid_arguments:
-            if not isinstance(item, str) or len(item) > 4_096 or "\0" in item:
-                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-            try:
-                item.encode("utf-8", errors="strict")
-            except UnicodeEncodeError:
-                raise InvalidRequestError(
-                    "invalid_argument", operation_id, "not_sent"
-                ) from None
+    valid_arguments = _validate_launch_arguments(arguments, operation_id)
+    if valid_arguments is not None and bundle_id is None and valid_path is None:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if type(no_reset) is not bool or type(show_server_logs) is not bool:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if skip_app_kill is not None and type(skip_app_kill) is not bool:
@@ -454,8 +397,8 @@ def _mac_target_from_capabilities(capabilities: Mapping[str, Any]) -> str | None
         value = capabilities.get(key)
         if (
             isinstance(value, str)
-            and 1 <= len(value) <= 255
-            and not _contains_control(value)
+            and value.isascii()
+            and _MAC_BUNDLE_ID.fullmatch(value) is not None
         ):
             return value
     return None
@@ -963,25 +906,38 @@ class Session:
         element: Element,
         operation: _PreparedOperation,
         *,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> None:
-        """Wait for one Element and issue one native single-click command."""
         operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_macos(operation_id)
+        if self._platform == "android" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_action(
-                driver,
-                valid_element,
-                gateway,
-                kind="single",
-                duration_ms=None,
-                condition_deadline=started + wait_timeout,
+            lambda driver, gateway: (
+                _perform_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    kind="single",
+                    duration_ms=None,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "android"
+                else _perform_macos_element_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="click",
+                    modifier_flags=modifier_flags,
+                    condition_deadline=started + wait_timeout,
+                )
             ),
         )
 
@@ -990,24 +946,95 @@ class Session:
         element: Element,
         operation: _PreparedOperation,
         *,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> None:
-        """Wait for one Element and issue one native double-click command."""
         operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_macos(operation_id)
+        if self._platform == "android" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_action(
+            lambda driver, gateway: (
+                _perform_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    kind="double",
+                    duration_ms=None,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "android"
+                else _perform_macos_element_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="doubleClick",
+                    modifier_flags=modifier_flags,
+                    condition_deadline=started + wait_timeout,
+                )
+            ),
+        )
+
+    def _right_click(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_macos_element_action(
                 driver,
                 valid_element,
                 gateway,
-                kind="double",
-                duration_ms=None,
+                script="rightClick",
+                modifier_flags=modifier_flags,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def _hover(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_macos_element_action(
+                driver,
+                valid_element,
+                gateway,
+                script="hover",
+                modifier_flags=modifier_flags,
                 condition_deadline=started + wait_timeout,
             ),
         )
@@ -1018,26 +1045,40 @@ class Session:
         operation: _PreparedOperation,
         *,
         duration_ms: int = 500,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> None:
-        """Wait for one Element and issue one native long-click command."""
         operation_id, control, started, deadline = operation
         valid_element = _validate_owner(element, self, operation_id)
         duration = _validate_duration(duration_ms, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_macos(operation_id)
+        if self._platform == "android" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_action(
-                driver,
-                valid_element,
-                gateway,
-                kind="long",
-                duration_ms=duration,
-                condition_deadline=started + wait_timeout,
+            lambda driver, gateway: (
+                _perform_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    kind="long",
+                    duration_ms=duration,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "android"
+                else _perform_macos_element_action(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="press",
+                    modifier_flags=modifier_flags,
+                    duration_seconds=duration / 1000.0,
+                    condition_deadline=started + wait_timeout,
+                )
             ),
         )
 
@@ -1055,7 +1096,6 @@ class Session:
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1082,7 +1122,6 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1093,6 +1132,102 @@ class Session:
                 gateway,
                 action="clear",
                 text=None,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def _send_macos_keys(
+        self,
+        element: Element,
+        keys: Sequence[str | MacKeyStroke],
+        operation: _PreparedOperation,
+        *,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_keys = _validate_macos_keys(keys, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_macos_element_keys(
+                driver,
+                valid_element,
+                gateway,
+                keys=valid_keys,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def _scroll_by(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        delta_x: float,
+        delta_y: float,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_delta_x = _validate_number(delta_x, operation_id)
+        valid_delta_y = _validate_number(delta_y, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_macos_element_scroll(
+                driver,
+                valid_element,
+                gateway,
+                delta_x=valid_delta_x,
+                delta_y=valid_delta_y,
+                modifier_flags=modifier_flags,
+                condition_deadline=started + wait_timeout,
+            ),
+        )
+
+    def _macos_swipe(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        velocity: float | None = None,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_direction = _validate_macos_direction(direction, operation_id)
+        valid_velocity = _validate_velocity(velocity, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_macos_element_swipe(
+                driver,
+                valid_element,
+                gateway,
+                direction=valid_direction,
+                velocity=valid_velocity,
+                modifier_flags=modifier_flags,
                 condition_deadline=started + wait_timeout,
             ),
         )
@@ -1225,31 +1360,56 @@ class Session:
         destination: Element,
         operation: _PreparedOperation,
         *,
-        destination_x_ratio: float,
-        destination_y_ratio: float,
+        destination_x_ratio: float = 0.5,
+        destination_y_ratio: float = 0.5,
+        duration_ms: int | None = None,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> None:
-        """Drag one displayed Element to a point inside another."""
         operation_id, control, started, deadline = operation
         valid_source = _validate_owner(source, self, operation_id)
         valid_destination = _validate_owner(destination, self, operation_id)
         x_ratio = _validate_ratio(destination_x_ratio, operation_id)
         y_ratio = _validate_ratio(destination_y_ratio, operation_id)
+        valid_duration = (
+            None
+            if duration_ms is None
+            else _validate_duration(duration_ms, operation_id)
+        )
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_source, valid_destination), operation_id)
-        self._reject_macos(operation_id)
+        if self._platform == "android" and (
+            valid_duration is not None or modifier_flags is not None
+        ):
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_drag_and_drop(
-                driver,
-                valid_source,
-                valid_destination,
-                gateway,
-                x_ratio=x_ratio,
-                y_ratio=y_ratio,
-                condition_deadline=started + wait_timeout,
+            lambda driver, gateway: (
+                _perform_drag_and_drop(
+                    driver,
+                    valid_source,
+                    valid_destination,
+                    gateway,
+                    x_ratio=x_ratio,
+                    y_ratio=y_ratio,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "android"
+                else _perform_macos_drag(
+                    driver,
+                    valid_source,
+                    valid_destination,
+                    gateway,
+                    x_ratio=x_ratio,
+                    y_ratio=y_ratio,
+                    duration_seconds=(500 if valid_duration is None else valid_duration)
+                    / 1000.0,
+                    modifier_flags=modifier_flags,
+                    condition_deadline=started + wait_timeout,
+                )
             ),
         )
 

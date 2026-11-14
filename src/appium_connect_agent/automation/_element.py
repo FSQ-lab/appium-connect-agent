@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from appium_connect_agent.runtime import OperationControl
 
+from ._macos_keyboard import MacKeyStroke
 from ._models import (
     AutomationPlatform,
     ElementAttribute,
@@ -89,25 +91,68 @@ class Element:
     def click(
         self,
         *,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> None:
         owner, operation = _bind_operation(self, control)
-        owner._click(self, operation, wait_timeout_seconds=wait_timeout_seconds)
+        owner._click(
+            self,
+            operation,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
 
     def double_click(
         self,
         *,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> None:
         owner, operation = _bind_operation(self, control)
-        owner._double_click(self, operation, wait_timeout_seconds=wait_timeout_seconds)
+        owner._double_click(
+            self,
+            operation,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def right_click(
+        self,
+        *,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._right_click(
+            self,
+            operation,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def hover(
+        self,
+        *,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._hover(
+            self,
+            operation,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
 
     def long_click(
         self,
         *,
         duration_ms: int = 500,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> None:
@@ -116,6 +161,7 @@ class Element:
             self,
             operation,
             duration_ms=duration_ms,
+            key_modifier_flags=key_modifier_flags,
             wait_timeout_seconds=wait_timeout_seconds,
         )
 
@@ -150,6 +196,56 @@ class Element:
         owner, operation = _bind_operation(self, control)
         owner._replace_element_value(
             self, text, operation, wait_timeout_seconds=wait_timeout_seconds
+        )
+
+    def send_macos_keys(
+        self,
+        keys: Sequence[str | MacKeyStroke],
+        *,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._send_macos_keys(
+            self, keys, operation, wait_timeout_seconds=wait_timeout_seconds
+        )
+
+    def scroll_by(
+        self,
+        *,
+        delta_x: float,
+        delta_y: float,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._scroll_by(
+            self,
+            operation,
+            delta_x=delta_x,
+            delta_y=delta_y,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def macos_swipe(
+        self,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        velocity: float | None = None,
+        key_modifier_flags: int | None = None,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._macos_swipe(
+            self,
+            operation,
+            direction=direction,
+            velocity=velocity,
+            key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
         )
 
     def swipe_gesture(
@@ -207,8 +303,10 @@ class Element:
         self,
         destination: Element,
         *,
-        destination_x_ratio: float,
-        destination_y_ratio: float,
+        destination_x_ratio: float = 0.5,
+        destination_y_ratio: float = 0.5,
+        duration_ms: int | None = None,
+        key_modifier_flags: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> None:
@@ -219,6 +317,8 @@ class Element:
             operation,
             destination_x_ratio=destination_x_ratio,
             destination_y_ratio=destination_y_ratio,
+            duration_ms=duration_ms,
+            key_modifier_flags=key_modifier_flags,
             wait_timeout_seconds=wait_timeout_seconds,
         )
 

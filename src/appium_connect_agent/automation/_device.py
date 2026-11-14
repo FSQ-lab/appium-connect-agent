@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -9,6 +11,22 @@ from typing import TYPE_CHECKING, Literal
 from appium_connect_agent.runtime import OperationControl
 
 from ._element import _PreparedOperation, _valid_package
+from ._macos_actions import (
+    _macos_execute_bool,
+    _macos_execute_none,
+    _macos_pointer_action,
+    _macos_query_app_state,
+    _macos_send_keys,
+    _modifier_payload,
+    _validate_bundle_id,
+    _validate_launch_arguments,
+    _validate_mac_app_bundle,
+    _validate_mac_app_path_syntax,
+    _validate_macos_keys,
+    _validate_modifier_flags,
+    _validate_number,
+)
+from ._macos_keyboard import MacKeyStroke
 from ._models import InvalidRequestError
 from ._system_actions import (
     _activate_app,
@@ -51,43 +69,114 @@ class Device:
     def activate_app(
         self, app_id: str, *, control: OperationControl | None = None
     ) -> None:
-        """Activate an explicit package, without waiting for a business page."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        _check_app_id(app_id, operation_id)
-        owner._reject_macos(operation_id)
+        valid_app_id = (
+            _validate_bundle_id(app_id, operation_id)
+            if owner.platform == "macos"
+            else _checked_app_id(app_id, operation_id)
+        )
         owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _activate_app(driver, gateway, app_id),
+            lambda driver, gateway: (
+                _macos_execute_none(
+                    driver,
+                    gateway,
+                    "macos: activateApp",
+                    {"bundleId": valid_app_id},
+                )
+                if owner.platform == "macos"
+                else _activate_app(driver, gateway, valid_app_id)
+            ),
         )
 
     def terminate_app(
         self, app_id: str, *, control: OperationControl | None = None
     ) -> bool:
-        """Force-stop an explicit package; preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        _check_app_id(app_id, operation_id)
-        owner._reject_macos(operation_id)
+        valid_app_id = (
+            _validate_bundle_id(app_id, operation_id)
+            if owner.platform == "macos"
+            else _checked_app_id(app_id, operation_id)
+        )
         return owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _terminate_app(driver, gateway, app_id),
+            lambda driver, gateway: (
+                _macos_execute_bool(
+                    driver,
+                    gateway,
+                    "macos: terminateApp",
+                    {"bundleId": valid_app_id},
+                )
+                if owner.platform == "macos"
+                else _terminate_app(driver, gateway, valid_app_id)
+            ),
         )
 
     def query_app_state(
         self, app_id: str, *, control: OperationControl | None = None
     ) -> int:
-        """Read one official state sample (0, 1, 3 or 4), not health."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        _check_app_id(app_id, operation_id)
-        owner._reject_macos(operation_id)
+        valid_app_id = (
+            _validate_bundle_id(app_id, operation_id)
+            if owner.platform == "macos"
+            else _checked_app_id(app_id, operation_id)
+        )
         return owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _query_app_state(driver, gateway, app_id),
+            lambda driver, gateway: (
+                _macos_query_app_state(driver, gateway, valid_app_id)
+                if owner.platform == "macos"
+                else _query_app_state(driver, gateway, valid_app_id)
+            ),
+        )
+
+    def launch_app(
+        self,
+        *,
+        bundle_id: str | None = None,
+        app_path: Path | None = None,
+        arguments: Sequence[str] | None = None,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_bundle_id = (
+            None if bundle_id is None else _validate_bundle_id(bundle_id, operation_id)
+        )
+        valid_arguments = _validate_launch_arguments(arguments, operation_id)
+        valid_path_value = (
+            None
+            if app_path is None
+            else _validate_mac_app_path_syntax(app_path, operation_id)
+        )
+        if valid_bundle_id is None and valid_path_value is None:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        if owner.platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        valid_path = (
+            None
+            if valid_path_value is None
+            else _validate_mac_app_bundle(valid_path_value, operation_id)
+        )
+        payload: dict[str, object] = {}
+        if valid_bundle_id is not None:
+            payload["bundleId"] = valid_bundle_id
+        if valid_path is not None:
+            payload["path"] = valid_path
+        if valid_arguments is not None:
+            payload["arguments"] = valid_arguments
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _macos_execute_none(
+                driver, gateway, "macos: launchApp", payload
+            ),
         )
 
     def install_app(
@@ -100,8 +189,8 @@ class Device:
         """Install one local APK without activating or verifying the app."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         if owner.platform == "macos":
-            if not isinstance(app_path, Path) or type(allow_test_packages) is not bool:
-                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            _validate_apk_path_lexical(app_path, operation_id)
+            _check_bool(allow_test_packages, operation_id)
             owner._reject_macos(operation_id)
         app_path = _check_app_path(app_path, operation_id)
         allow_test_packages = _check_bool(allow_test_packages, operation_id)
@@ -122,7 +211,7 @@ class Device:
     ) -> bool:
         """Remove one explicit package and preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        _check_app_id(app_id, operation_id)
+        app_id = _checked_app_id(app_id, operation_id)
         owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
@@ -214,9 +303,17 @@ class Device:
 
     def get_clipboard_text(self, *, control: OperationControl | None = None) -> str:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        owner._reject_macos(operation_id)
         return owner._run_operation(
-            operation_id, control, deadline, _get_clipboard_text
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _get_clipboard_text(
+                driver,
+                gateway,
+                script="macos: getClipboard"
+                if owner.platform == "macos"
+                else "mobile: getClipboard",
+            ),
         )
 
     def set_clipboard_text(
@@ -229,13 +326,20 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         content = _clipboard_content(text, operation_id)
         label = _label(label, operation_id)
-        owner._reject_macos(operation_id)
+        if owner.platform == "macos" and label is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         owner._run_operation(
             operation_id,
             control,
             deadline,
             lambda driver, gateway: _set_clipboard_text(
-                driver, gateway, content=content, label=label
+                driver,
+                gateway,
+                content=content,
+                label=label,
+                script="macos: setClipboard"
+                if owner.platform == "macos"
+                else "mobile: setClipboard",
             ),
         )
 
@@ -278,22 +382,137 @@ class Device:
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        owner._reject_macos(operation_id)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
 
     def tap_at(
         self, x: int, y: int, *, control: OperationControl | None = None
     ) -> None:
-        """Send one explicit screen-coordinate touch click gesture."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_x = _coordinate(x, operation_id)
         valid_y = _coordinate(y, operation_id)
-        owner._reject_macos(operation_id)
         owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _tap_at(driver, gateway, x=valid_x, y=valid_y),
+            lambda driver, gateway: (
+                _macos_pointer_action(
+                    driver,
+                    gateway,
+                    script="macos: click",
+                    payload={"x": valid_x, "y": valid_y},
+                )
+                if owner.platform == "macos"
+                else _tap_at(driver, gateway, x=valid_x, y=valid_y)
+            ),
+        )
+
+    def click_at(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: Literal["left", "right"] = "left",
+        double: bool = False,
+        key_modifier_flags: int | None = None,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_x = _coordinate(x, operation_id)
+        valid_y = _coordinate(y, operation_id)
+        valid_button = _check_button(button, operation_id)
+        valid_double = _check_bool(double, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        if valid_button == "right" and valid_double:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        if owner.platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        script = (
+            "macos: rightClick"
+            if valid_button == "right"
+            else "macos: doubleClick"
+            if valid_double
+            else "macos: click"
+        )
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _macos_pointer_action(
+                driver,
+                gateway,
+                script=script,
+                payload={
+                    "x": valid_x,
+                    "y": valid_y,
+                    **_modifier_payload(modifier_flags),
+                },
+            ),
+        )
+
+    def hover_at(
+        self,
+        x: int,
+        y: int,
+        *,
+        key_modifier_flags: int | None = None,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_x = _coordinate(x, operation_id)
+        valid_y = _coordinate(y, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        if owner.platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _macos_pointer_action(
+                driver,
+                gateway,
+                script="macos: hover",
+                payload={
+                    "x": valid_x,
+                    "y": valid_y,
+                    **_modifier_payload(modifier_flags),
+                },
+            ),
+        )
+
+    def scroll_at(
+        self,
+        x: int,
+        y: int,
+        *,
+        delta_x: float,
+        delta_y: float,
+        key_modifier_flags: int | None = None,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_x = _coordinate(x, operation_id)
+        valid_y = _coordinate(y, operation_id)
+        valid_delta_x = _validate_number(delta_x, operation_id)
+        valid_delta_y = _validate_number(delta_y, operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        if owner.platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _macos_pointer_action(
+                driver,
+                gateway,
+                script="macos: scroll",
+                payload={
+                    "x": valid_x,
+                    "y": valid_y,
+                    "deltaX": valid_delta_x,
+                    "deltaY": valid_delta_y,
+                    **_modifier_payload(modifier_flags),
+                },
+            ),
         )
 
     def swipe_between(
@@ -304,30 +523,84 @@ class Device:
         end_y: int,
         *,
         duration_ms: int = 200,
+        key_modifier_flags: int | None = None,
         control: OperationControl | None = None,
     ) -> None:
-        """Send one explicit single-finger W3C touch swipe between two screen points."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_sx = _coordinate(start_x, operation_id)
         valid_sy = _coordinate(start_y, operation_id)
         valid_ex = _coordinate(end_x, operation_id)
         valid_ey = _coordinate(end_y, operation_id)
         valid_duration = _duration_ms(duration_ms, operation_id)
-        owner._reject_macos(operation_id)
+        modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
+        if owner.platform == "android" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _swipe_between(
-                driver,
-                gateway,
-                start_x=valid_sx,
-                start_y=valid_sy,
-                end_x=valid_ex,
-                end_y=valid_ey,
-                duration_ms=valid_duration,
+            lambda driver, gateway: (
+                _swipe_between(
+                    driver,
+                    gateway,
+                    start_x=valid_sx,
+                    start_y=valid_sy,
+                    end_x=valid_ex,
+                    end_y=valid_ey,
+                    duration_ms=valid_duration,
+                )
+                if owner.platform == "android"
+                else _macos_pointer_action(
+                    driver,
+                    gateway,
+                    script="macos: clickAndDrag",
+                    payload={
+                        "startX": valid_sx,
+                        "startY": valid_sy,
+                        "endX": valid_ex,
+                        "endY": valid_ey,
+                        **_modifier_payload(modifier_flags),
+                    },
+                    duration_seconds=valid_duration / 1000.0,
+                )
             ),
         )
+
+    def send_keys(
+        self,
+        keys: Sequence[str | MacKeyStroke],
+        *,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_keys = _validate_macos_keys(keys, operation_id)
+        if owner.platform == "android":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _macos_send_keys(driver, gateway, valid_keys),
+        )
+
+
+def _validate_apk_path_lexical(app_path: object, operation_id: str) -> Path:
+    if not isinstance(app_path, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        text = str(app_path)
+        text.encode("utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if (
+        not app_path.is_absolute()
+        or app_path.suffix != ".apk"
+        or any(unicodedata.category(character) == "Cc" for character in text)
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return app_path
 
 
 def _check_app_path(app_path: object, operation_id: str) -> Path:
@@ -350,9 +623,16 @@ def _check_bool(value: object, operation_id: str) -> bool:
     return value
 
 
-def _check_app_id(app_id: str, operation_id: str) -> None:
+def _checked_app_id(app_id: str, operation_id: str) -> str:
     if not _valid_package(app_id):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return app_id
+
+
+def _check_button(value: object, operation_id: str) -> Literal["left", "right"]:
+    if value not in ("left", "right") or not isinstance(value, str):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return value
 
 
 def _bind_operation(
