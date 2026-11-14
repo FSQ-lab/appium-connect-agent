@@ -49,6 +49,10 @@ _ACTIONS = (
 class DeviceProtocolService(ActionProtocolService):
     @staticmethod
     def _kind(request: Request) -> str:
+        if request.method == "GET" and request.path.endswith("/screenshot"):
+            return "take_screenshot"
+        if request.method == "POST" and request.path.endswith("/actions"):
+            return "swipe_between"
         if request.path.endswith("/back"):
             return "back"
         if request.path.endswith("/execute/sync") and request.body is not None:
@@ -58,6 +62,10 @@ class DeviceProtocolService(ActionProtocolService):
                 return (
                     "long_press_keycode" if args.get("isLongPress") else "press_keycode"
                 )
+            if script == "mobile: clickGesture":
+                args = request.body["args"][0]
+                if "elementId" not in args:
+                    return "tap_at"
             kinds = {
                 "mobile: hideKeyboard": "hide_keyboard",
                 "mobile: getClipboard": "get_clipboard_text",

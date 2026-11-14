@@ -15,6 +15,8 @@ from ._system_actions import (
     _alert,
     _back,
     _clipboard_content,
+    _coordinate,
+    _duration_ms,
     _get_clipboard_text,
     _hide_keyboard,
     _install_app,
@@ -26,6 +28,9 @@ from ._system_actions import (
     _set_clipboard_text,
     _status_bar,
     _status_bar_command,
+    _swipe_between,
+    _take_screenshot,
+    _tap_at,
     _terminate_app,
 )
 
@@ -250,6 +255,57 @@ class Device:
             deadline,
             lambda driver, gateway: _alert(
                 driver, gateway, accept=False, button_label=button_label
+            ),
+        )
+
+    def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
+        """Capture one bounded validated PNG screenshot in memory."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        return owner._run_operation(operation_id, control, deadline, _take_screenshot)
+
+    def tap_at(
+        self, x: int, y: int, *, control: OperationControl | None = None
+    ) -> None:
+        """Send one explicit screen-coordinate touch click gesture."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_x = _coordinate(x, operation_id)
+        valid_y = _coordinate(y, operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _tap_at(driver, gateway, x=valid_x, y=valid_y),
+        )
+
+    def swipe_between(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        duration_ms: int = 200,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Send one explicit single-finger W3C touch swipe between two screen points."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_sx = _coordinate(start_x, operation_id)
+        valid_sy = _coordinate(start_y, operation_id)
+        valid_ex = _coordinate(end_x, operation_id)
+        valid_ey = _coordinate(end_y, operation_id)
+        valid_duration = _duration_ms(duration_ms, operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _swipe_between(
+                driver,
+                gateway,
+                start_x=valid_sx,
+                start_y=valid_sy,
+                end_x=valid_ex,
+                end_y=valid_ey,
+                duration_ms=valid_duration,
             ),
         )
 

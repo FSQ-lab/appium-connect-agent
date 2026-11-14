@@ -4,7 +4,7 @@
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
 版本 `0.1.0` 是内部骨架元数据，不代表发布承诺。
 
-Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作及本地 APK 安装/包卸载；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、Native 只读观测、Element click/text/IME/gesture、Device back/keycode/keyboard/clipboard/alert/status-bar，以及应用 activate/terminate/query-state/install/remove；不提供自动动作链、动作后观测、自动导航、重试、fallback、回滚、HTTP、`clear_app`、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入设备操作实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
+Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在固定 macOS / Android Native / UiAutomator2 组合下提供设备发现、Session、结构观测、Element 动作、Device 系统与应用操作、本地 APK 安装/包卸载，以及只读屏幕 PNG 截图与显式屏幕坐标单指触控；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供`clear_app`、数据删除保证或真实多设备资格。Integrations 当前基于唯一不可变 `TOOL_CATALOG` 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、前期面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、Native 只读观测、Element click/text/IME/gesture、Device back/keycode/keyboard/clipboard/alert/status-bar，以及应用 activate/terminate/query-state/install/remove；不提供自动动作链、动作后观测、自动导航、重试、fallback、回滚、HTTP、`clear_app`、跨进程 attach/recovery 或多 Session 产品能力。项目长期自动化目标平台边界仅计划覆盖 Android (`uiautomator2`)、iOS (`xcuitest`) 与 macOS (`mac2`)，当前仅 Android Native 已进入设备操作实现与限定验收。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`（与当前 FSQ 仓库版本锁另行对齐前不声明同 venv 混装）。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
 ## Runtime 进度入口
 
@@ -394,6 +394,35 @@ uncertain、关闭本地client并保留device/systemPort。安装/卸载当前ta
 
 当前Automation范围不提供`clear_app`。真实安装/卸载仍须另获明确设备、服务、专用无账号/个人数据APK、签名/版本/testOnly样本、允许force-stop/包卸载及潜在数据副作用和恢复证据授权；不能用SystemUI、Launcher、Settings、输入法、Appium helper或业务应用代替。协议测试、HTTP None/bool或源码证据不能证明真实包、版本、签名和数据效果；当前交付状态见
 [Automation 台账](docs/tasks/automation-delivery-ledger.md)。
+
+### 只读屏幕 PNG 截图与显式屏幕坐标触控（AIF-11）
+
+在已创建的 Android Native Session 上，通过绑定的 `session.device` 捕获当前屏幕 PNG 字节流或执行明确屏幕像素坐标的单指点击与起止点滑动（`Integrations` 现有 19 工具目录与 schema 保持不变）：
+
+```python
+from appium_connect_agent.runtime import OperationControl
+
+
+png_bytes = session.device.take_screenshot(
+    control=OperationControl(timeout_seconds=15),
+)
+session.device.tap_at(
+    540,
+    1200,
+    control=OperationControl(timeout_seconds=15),
+)
+session.device.swipe_between(
+    540,
+    1600,
+    540,
+    600,
+    duration_ms=250,
+    control=OperationControl(timeout_seconds=15),
+)
+```
+
+- `take_screenshot` 发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的字节数不超过 32 MiB（`33,554,432` bytes），并顺序遍历校验全流 PNG chunk 二进制帧与每个 chunk 的 CRC32（唯一首块 13 字节正宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）。返回的 `bytes` 仅保留在调用方内存中，绝不落盘或写入日志、异常消息与默认证据。
+- `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。三者均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
 
 ### 当前平台最小模块收口
 

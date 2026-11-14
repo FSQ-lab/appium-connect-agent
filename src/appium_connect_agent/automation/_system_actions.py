@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import math
+import struct
 import time
-from collections.abc import Callable
+import zlib
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal
 
 from appium.webdriver.webdriver import WebDriver
+from selenium.webdriver.common.actions import interaction
+from selenium.webdriver.common.actions.mouse_button import MouseButton
+from selenium.webdriver.common.actions.pointer_input import PointerInput
+from selenium.webdriver.remote.command import Command
 
 from ._models import InvalidRequestError, OperationTimeoutError
 
@@ -172,11 +179,17 @@ def _status_bar(
 
 
 def _integer(value: object, minimum: int, operation_id: str) -> int:
-    if (
-        not isinstance(value, int)
-        or isinstance(value, bool)
-        or not (minimum <= value <= 2_147_483_647)
-    ):
+    if type(value) is not int or not (minimum <= value <= 2_147_483_647):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return value
+
+
+def _coordinate(value: object, operation_id: str) -> int:
+    return _integer(value, 0, operation_id)
+
+
+def _duration_ms(value: object, operation_id: str) -> int:
+    if type(value) is not int or not (1 <= value <= 60_000):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return value
 
@@ -306,4 +319,150 @@ def _alert(
     payload = {} if button_label is None else {"buttonLabel": button_label}
     script = "mobile: acceptAlert" if accept else "mobile: dismissAlert"
     gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
+    gateway.complete("action_completed")
+
+
+_SCREENSHOT_RAW_CHAR_LIMIT = 45_900_000
+_SCREENSHOT_COMPACT_B64_LIMIT = 44_739_244
+_SCREENSHOT_DECODED_MIN_BYTES = 58
+_SCREENSHOT_DECODED_MAX_BYTES = 33_554_432
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PNG_CHUNK_MAX_LEN = 2_147_483_647
+
+
+def _is_png_chunk_type(chunk_type: bytes) -> bool:
+    return len(chunk_type) == 4 and all(
+        (65 <= byte <= 90) or (97 <= byte <= 122) for byte in chunk_type
+    )
+
+
+def _validate_png_container(data: bytes) -> None:
+    total = len(data)
+    if not (
+        _SCREENSHOT_DECODED_MIN_BYTES <= total <= _SCREENSHOT_DECODED_MAX_BYTES
+    ) or not data.startswith(_PNG_SIGNATURE):
+        raise ValueError("invalid PNG container header or size")
+    offset = len(_PNG_SIGNATURE)
+    chunk_index = 0
+    idat_bytes = 0
+    saw_iend = False
+    while offset < total:
+        if offset + 8 > total:
+            raise ValueError("truncated PNG chunk header")
+        (chunk_len,) = struct.unpack_from(">I", data, offset)
+        if chunk_len > _PNG_CHUNK_MAX_LEN:
+            raise ValueError("PNG chunk length exceeds int32 bound")
+        chunk_type = data[offset + 4 : offset + 8]
+        if not _is_png_chunk_type(chunk_type):
+            raise ValueError("invalid PNG chunk type")
+        data_start = offset + 8
+        data_end = data_start + chunk_len
+        crc_end = data_end + 4
+        if crc_end > total:
+            raise ValueError("truncated PNG chunk body")
+        (expected_crc,) = struct.unpack_from(">I", data, data_end)
+        actual_crc = zlib.crc32(memoryview(data)[offset + 4 : data_end]) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise ValueError("PNG chunk CRC mismatch")
+        if chunk_index == 0:
+            if chunk_type != b"IHDR" or chunk_len != 13:
+                raise ValueError("PNG must start with 13-byte IHDR")
+            width, height = struct.unpack_from(">II", data, data_start)
+            if not (1 <= width <= _PNG_CHUNK_MAX_LEN) or not (
+                1 <= height <= _PNG_CHUNK_MAX_LEN
+            ):
+                raise ValueError("invalid PNG dimensions")
+        elif chunk_type == b"IHDR":
+            raise ValueError("duplicate PNG IHDR chunk")
+        elif chunk_type == b"IDAT":
+            idat_bytes += chunk_len
+        elif chunk_type == b"IEND":
+            if chunk_len != 0 or crc_end != total or idat_bytes < 1:
+                raise ValueError("invalid PNG IEND or empty IDAT payload")
+            saw_iend = True
+            break
+        offset = crc_end
+        chunk_index += 1
+    if not saw_iend:
+        raise ValueError("missing PNG IEND chunk")
+
+
+def _decode_screenshot_response(response: object) -> bytes:
+    if not isinstance(response, Mapping) or "value" not in response:
+        raise ValueError("screenshot response missing value")
+    raw = response["value"]
+    if type(raw) is not str or not (1 <= len(raw) <= _SCREENSHOT_RAW_CHAR_LIMIT):
+        raise ValueError("invalid screenshot value shape or length")
+    try:
+        raw_ascii = raw.encode("ascii", errors="strict")
+    except UnicodeEncodeError as cause:
+        raise ValueError("screenshot payload is not ASCII") from cause
+    compact = raw_ascii.translate(None, b"\r\n")
+    if (
+        not compact
+        or len(compact) % 4 != 0
+        or len(compact) > _SCREENSHOT_COMPACT_B64_LIMIT
+    ):
+        raise ValueError("invalid screenshot base64 length")
+    try:
+        decoded = base64.b64decode(compact, validate=True)
+    except binascii.Error as cause:
+        raise ValueError("invalid screenshot base64 content") from cause
+    _validate_png_container(decoded)
+    return decoded
+
+
+def _take_screenshot(driver: WebDriver, gateway: _SessionOperationGateway) -> bytes:
+    def action() -> bytes:
+        response: object = driver.execute(Command.SCREENSHOT)
+        return _decode_screenshot_response(response)
+
+    result = gateway.final_action(action)
+    gateway.complete("screenshot_captured")
+    return result
+
+
+def _tap_at(
+    driver: WebDriver, gateway: _SessionOperationGateway, *, x: int, y: int
+) -> None:
+    gateway.final_action(
+        lambda: _none(driver.execute_script("mobile: clickGesture", {"x": x, "y": y}))
+    )
+    gateway.complete("action_completed")
+
+
+def _swipe_between(
+    driver: WebDriver,
+    gateway: _SessionOperationGateway,
+    *,
+    start_x: int,
+    start_y: int,
+    end_x: int,
+    end_y: int,
+    duration_ms: int,
+) -> None:
+    gateway.checkpoint()
+    deadline = gateway.operation_deadline
+    if deadline is not None and duration_ms / 1000.0 >= deadline - time.monotonic():
+        gateway.checkpoint()
+        raise gateway.failure(OperationTimeoutError, "operation_timeout", "not_sent")
+
+    touch = PointerInput(  # type: ignore[no-untyped-call]
+        interaction.POINTER_TOUCH, "touch"
+    )
+    touch.create_pointer_move(duration=0, x=start_x, y=start_y, origin="viewport")
+    touch.create_pointer_down(button=MouseButton.LEFT)  # type: ignore[no-untyped-call]
+    touch.create_pointer_move(duration=duration_ms, x=end_x, y=end_y, origin="viewport")
+    touch.create_pointer_up(button=MouseButton.LEFT)  # type: ignore[no-untyped-call]
+    payload: dict[str, object] = {
+        "actions": [touch.encode()]  # type: ignore[no-untyped-call]
+    }
+
+    def action() -> None:
+        response: object = driver.execute(Command.W3C_ACTIONS, payload)
+        if not isinstance(response, Mapping) or "value" not in response:
+            raise ValueError("W3C actions response missing value")
+        _none(response["value"])
+
+    gateway.final_action(action)
     gateway.complete("action_completed")

@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、Element 单击/双击/长按和必要等待、Element 文本输入/清空/替换，以及 Element 滑动、滚动、受限官方滚动查找和拖放。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载和只读屏幕 PNG 截图与显式屏幕坐标单指触控。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -385,3 +385,13 @@ Detailed Interface, compatibility evidence, reuse decision, privacy and verifica
 - Final request schemas must pass the real FSQ OpenAI `ensure_strict_json_schema` and Gemini `google_schema` converters. The current twelve MCP `inputSchema` canonical SHA-256 values and both current transformed-schema sets must remain unchanged; all seven final new schemas and nineteen transformed schemas are pinned only from implementation classes. Done requires strict schema/dispatch/controlled-protocol/three-shell/FSQ dual-converter/privacy/fivefold-timeout/quality/packaging verification, separately authorized representative safe-device/app/package actions with clean baseline restoration, and a new independent full implementation review with zero open findings. No Integrations evidence makes Automation, Integrations, the platform, a specific Host, or the project Done.
 
 Detailed Interface, exact catalog metadata, schema evidence, reuse decision, privacy/resource boundaries, verification obligations, and deferred scope are in [the confirmed design](docs/superpowers/specs/2026-11-13-integrations-device-app-tools-design.md) and the Integrations module SPEC's `INT-TOOLS-02` section.
+
+## Automation Device Read-Only Screenshot And Screen-Coordinate Touch（AIF-11）
+
+本节定义 Issue #27 经用户 SPEC Gate 确认的 AIF-11 契约增量；依据为[已确认 AIF-11 设计](docs/superpowers/specs/2026-11-13-automation-aif-11-screenshot-pointer-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- 延续 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0，以及锁定 `Appium-Python-Client==6.0.8`、`selenium==4.51.0`、CPython 3.11；复用既有可信 `Device` 绑定、唯一 `Session` 非阻塞 gate、一次 `operation_id`/总预算、取消优先、no-replay 与 `response_unknown` 隔离机制。`Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 19 工具目录与 schema）及产品/开发依赖均 no-delta。
+- 在绑定的 `Device` 上新增三个同步方法：`take_screenshot(*, control: OperationControl | None = None) -> bytes`、`tap_at(x: int, y: int, *, control: OperationControl | None = None) -> None` 与 `swipe_between(start_x: int, start_y: int, end_x: int, end_y: int, *, duration_ms: int = 200, control: OperationControl | None = None) -> None`。不新增 `Session`/`Element` 别名、裁剪/多屏截图、多指触控、任意动作链或隐式坐标缩放。
+- `take_screenshot` 固定发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的不可变字节流不超过 32 MiB（`33,554,432` bytes），并完成 PNG 8 字节签名与全 chunk 序列 framing/CRC32 校验（首块 13 字节正整数宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）；非法形状、非法 Base64、损坏/非 PNG chunk 或超限统一 `CommandError/command_failed/response_received`，成功记 `screenshot_captured`。截图字节仅在内存返回给直接调用方，严禁落盘或进入日志、异常与默认证据。
+- `tap_at` 与 `swipe_between` 的全部坐标必须为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 必须为排除 `bool` 的实际整数 `1..60,000`。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于当时剩余总预算，不足时取消优先否则 `OperationTimeoutError/operation_timeout/not_sent` 零请求拒绝。`tap_at` 固定发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）并校验 `None` 返回；`swipe_between` 固定使用锁定 Selenium 公开 `PointerInput(interaction.POINTER_TOUCH, "touch")` 经 `driver.execute(Command.W3C_ACTIONS, {"actions": [touch.encode()]})` 发送一次仅含单个 `touch` 指针的四步序列（起点 0ms move → down → `duration_ms` 终点 move → up）并严格校验响应 `Mapping` 显式包含键 `"value"` 且 `response["value"] is None`；两者成功均记 `action_completed`，开始发送后绝不重放。
+- 详细输入边界、协议载荷、隐私约束与验证义务见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-11 条款。

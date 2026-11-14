@@ -92,6 +92,7 @@ if sys.platform == 'darwin':
     assert combinations[0].appium_version == '3.7.0'
     assert combinations[0].driver_version == '8.7.0'
     assert hasattr(Device, 'install_app') and hasattr(Device, 'remove_app')
+    assert hasattr(Device, 'take_screenshot') and hasattr(Device, 'tap_at') and hasattr(Device, 'swipe_between')
     assert hasattr(Element, 'inspect') and hasattr(Session, 'quit')
 else:
     assert 'appium_connect_agent.runtime' not in sys.modules

@@ -1,6 +1,13 @@
 # Automation 需求交接台账
 
-当前进度更新：2026-10-28。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+当前进度更新：2026-11-14。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+
+## 当前 AIF-11 进度（Issue #27）
+
+- TaskID `AUTO-AIF11-IMPL-WORKER-01`（关联 GitHub Issue #27），固定组合 `macOS arm64 / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0 / Appium-Python-Client==6.0.8 / selenium==4.51.0 / CPython 3.11.16`，仅涉 `Automation` 模块（`Runtime`/`Contracts`/`Configuration` 及 `Integrations` 现有 19 工具目录与 schema 100% no-delta，零新增或升级第三方依赖）。
+- 经独立设计审查 `Issue27DesignSpecAudit`（`Full -> Repair-01 -> Repair-02 PASS, 0 open findings`）与用户 SPEC Gate 确认（`issuecomment-6867568752`），在绑定 `Session.device` 新增三个同步公开方法：`Device.take_screenshot(*, control=None) -> bytes`（单次 `Command.SCREENSHOT`，有界 Base64 解码上限 32 MiB，全流 PNG chunk framing + CRC32 + 唯一首块 13B 正宽高 `IHDR` + 累计非空 `IDAT` + 末块 0B `IEND` 无尾随字节，记 `screenshot_captured`，仅内存返回、零落盘/零日志回显）、`Device.tap_at(x, y, *, control=None) -> None`（实际整数 `0..2^31-1`，单次 `mobile: clickGesture`）与 `Device.swipe_between(start_x, start_y, end_x, end_y, *, duration_ms=200, control=None) -> None`（`duration_ms` `1..60,000`，显式 `OperationControl` 下发送前要求 `duration_ms/1000.0 < remaining_budget`，单 `touch` 指针四步 `Command.W3C_ACTIONS` 并严格校验显式 `"value" in response and response["value"] is None`）。
+- Herdr Worker `issue-27` 与 commander 验证：`tests/automation/test_screenshot_pointer.py`（111 passed，含审查补齐的 3 方法 × disconnect/header/body 传输超时与 in-flight 取消隔离矩阵）+ `test_device_actions.py`（287 passed）+ `tests/integrations/test_toolcall_core.py` / `tests/contracts` / `tests/configuration`（共 523 passed）；全仓 `ruff format --check .`（161 files）、`ruff check .`、`mypy src tests`（87 files）、`lint-imports`（6 kept, 0 broken）、`uv build` 与隔离 wheel/sdist 检查（`.github/scripts/check_distributions.py`）全部通过；独立实现审查 `Issue27FullImplAudit`（`Full -> Repair-01 PASS, 0 open findings`）通过，判定 **AIF-11 限定范围 Done**。
+- 获准正式安装 wheel（SHA-256 `e99596df56eca3de57cec5d61a6c1d802449407d5e3af8fdaf17aaf08dd442d2`）Pixel 6（Android 17 API 37）Calculator 安全真机闭环通过：受管 `Runtime.start_managed`（`127.0.0.1:55806`，Appium `3.7.0`）→ `create_session` → `terminate_app`/`activate_app`（state `4`）→ `observe_tree`（viewport `1080x2400`）→ `take_screenshot`（内存接收 `139,117` bytes，核验 PNG 头、`IHDR` `1080x2400` 与末尾 `IEND` 后即刻销毁内存引用、零磁盘持久化）→ `tap_at` 点击 `digit_7` 中心后 `formula` 读回 `"7"` → 恢复空串 `""` → 安全区 `swipe_between(duration_ms=250)` 成功 → `terminate_app` 恢复 Calculator state `1` → `session.quit()`（`closed`, `busy=false`）→ 受管 Appium 自动停止（`service.json="stopped"`）且后续 `Runtime.diagnose()` 正常复用同一账号锁。Automation 模块整体仍保持既有 `device-validation-blocked-known-clean` / module non-Done 边界不变。
 
 ## 当前最小模块收口进度
 

@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款。其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款，Device只读屏幕PNG截图与显式屏幕坐标单指触控见AIF-11条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、应用生命周期、应用安装与卸载契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
+只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、状态栏面板、应用生命周期、应用安装与卸载、Device 只读屏幕 PNG 截图与显式屏幕坐标单指触控契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -603,4 +603,43 @@
 - 真实smoke不主动制造transport unknown。自然发生response unknown、Session uncertain或owned Session无法确认closed时立即停止，不发restore/query/remove/quit/DELETE；当前run非pass，设备/端点在owner确认旧工作停止和安全基线恢复前不得复用，人工恢复须另获授权。
 - 当前限定Done要求：AIF-01～10限定证据可读取且仍有效；当前HEAD未过滤全量pytest、Ruff、strict mypy、import-linter、build及wheel/sdist隔离安装通过；代表性单设备smoke通过；所有owned Session closed且replacement成功，Calculator最终query1、Settings固定文本恢复；无未决unknown/敏感泄漏/副作用；当前完整差异和证据索引经新独立full审查pass。
 - 最终状态必须命名为“Automation当前平台最小收口Done”，并同时声明：无`clear_app`、无数据删除保证、无专用App完整矩阵、无所有能力同链、无真实多设备资格、无Integrations/其他平台/远程云/自管服务。缺任一Done门槛时不得用“基本Done”或历史证据拼接替代。
+
+## AIF-11 Device Read-Only Screenshot And Screen-Coordinate Touch
+
+本节定义 Issue #27、FeatureID `AIF-11` 的已确认契约增量；对应详细设计为 [AIF-11 详细设计](../../docs/superpowers/specs/2026-11-13-automation-aif-11-screenshot-pointer-design.md)。未列出的既有契约不变；契约确认不替代实现验证、独立审查或真实设备授权。
+
+### Dependencies And Ownership
+
+- 当前组合延续 macOS 宿主 / Android Native / Appium 3.7.0 / UiAutomator2 8.7.0 / `Appium-Python-Client==6.0.8` / `selenium==4.51.0` / CPython 3.11，以及实际资格组件 Android driver 14.2.0、`appium-adb` 16.0.5、device-server 10.6.6、Settings 8.0.9。
+- 仅在已批准用途内复用锁定 Selenium 公开 `Command.SCREENSHOT`、`PointerInput(interaction.POINTER_TOUCH, "touch")`、`MouseButton.LEFT`、`Command.W3C_ACTIONS`、`driver.execute_script("mobile: clickGesture", ...)`，既有可信 `Device` 绑定、唯一 `Session` gateway、`OperationControl` 及 CPython 3.11 标准库 `base64`/`struct`/`zlib`/`time`；零新增或升级产品/开发依赖，不引入 `Pillow` 等图像处理库。
+- `Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 19 工具目录、顺序与 JSON Schema）均 no-delta。三个新方法仅归属所属 `Session` 创建的可信 `Device`（`session.device`）；不新增 `Session`/`Element` 别名、坐标值对象、图片包装类或全局当前设备。
+
+### Public Interface And Input Boundaries
+
+| 同步公开签名 | 返回 |
+| --- | --- |
+| `Device.take_screenshot(*, control: OperationControl | None = None)` | `bytes` |
+| `Device.tap_at(x: int, y: int, *, control: OperationControl | None = None)` | `None` |
+| `Device.swipe_between(start_x: int, start_y: int, end_x: int, end_y: int, *, duration_ms: int = 200, control: OperationControl | None = None)` | `None` |
+
+- 一次公共调用只产生一个 `operation_id`、`started` 和可选 `deadline`。可信 `Device` 绑定与全部纯值参数校验在获取 `_operation_gate` 及任何网络请求之前执行；任何非法参数抛 `InvalidRequestError/invalid_argument/not_sent`，非法优先于 `session_busy`。
+- `x`、`y`、`start_x`、`start_y`、`end_x`、`end_y` 均必须满足 `type(value) is int`（严格排除 `bool`、`float`、`str` 及子类）且 `0 <= value <= 2_147_483_647`；拒绝负坐标，不做静默截断（clamp）或参考分辨率缩放；允许 `start == end` 原样发送单次底层序列。
+- `swipe_between` 的 `duration_ms` 为仅关键字参数（默认 `200`），必须满足 `type(duration_ms) is int`（严格排除 `bool`、`float` 及子类）且 `1 <= duration_ms <= 60_000`。
+
+### Fixed Protocol Mapping, PNG Integrity And Budget Gate
+
+- **`take_screenshot`**：在 `gateway.final_action` 内执行一次公开 `driver.execute(Command.SCREENSHOT)`（`GET /session/{sessionId}/screenshot`；不调用依赖可选 `sharp` 的 `mobile: viewportScreenshot`）。响应必须在 gateway action callable 内通过以下有限 PNG chunk 容器完整性校验（不做 zlib 像素解压），否则统一抛 `CommandError/command_failed/response_received`（保留异常链且不记完成步骤）：
+  1. 响应为 `Mapping` 且显式包含键 `"value"`，`response["value"]` 为实际 `str` 且原始长度 `<= 45,900,000`；去除可选 `\r`/`\n` 后为非空、长度为 4 整数倍且 `<= 44,739,244`（`4 * ceil(33,554,432 / 3)`）的 ASCII Base64 字符串；
+  2. `base64.b64decode(..., validate=True)` 严格解码成功，且解码后字节长度满足 `58 <= len(png_bytes) <= 33,554_432`（精确 32 MiB 硬交付上限；由于 `44,739,244` 个 Base64 字符也可编码 `32 MiB + 1` 字节，上限由解码后长度检查最终保证。该限制为锁定客户端接收 JSON 后的解码与返回上限，不声称为底层 socket 读取硬上限）；
+  3. 前 8 字节精确为 PNG 签名 `b"\x89PNG\r\n\x1a\n"`；从偏移 `8` 起按 PNG chunk 帧（`length: uint32_be`、`chunk_type: 4 ASCII letters`、`data`、`crc: uint32_be`）顺序遍历全流：每个 chunk 长度 `<= 2_147_483_647`、完整无越界、4 字节类型全为 ASCII 字母（`A-Z`/`a-z`）且 CRC32 与 `zlib.crc32(type_and_data) & 0xFFFFFFFF` 精确匹配；第 0 个 chunk 必须为唯一 13 字节 `IHDR` 且大端无符号 32 位宽高均满足 `1 <= width, height <= 2_147_483_647`；在 `IEND` 前必须至少包含一个 `IDAT` 且累计 `IDAT` 数据总长 `>= 1`（拒绝无 `IDAT` 或 57 字节零长度 `IDAT` 空壳）；末块必须为 0 字节 `IEND` 且结束位置精确等于 `len(png_bytes)`（无尾随字节）。
+  4. 全部通过后记唯一完成步骤 `screenshot_captured` 并返回不可变 `bytes`。
+- **`tap_at`**：在 `gateway.final_action` 内固定执行一次 `driver.execute_script("mobile: clickGesture", {"x": x, "y": y})`；客户端交付值必须精确为 `None`（否则 `CommandError/command_failed/response_received`），成功后记 `action_completed` 并返回 `None`。
+- **`swipe_between`**：进入 Session gate 后、发送请求前先执行 `gateway.checkpoint()`；若存在显式 `OperationControl`（`operation_deadline is not None`）且 `duration_ms / 1000.0 >= operation_deadline - time.monotonic()`，重查取消优先级后抛 `OperationTimeoutError/operation_timeout/not_sent`，零请求并保持 Session `active`。预算充足时在 `gateway.final_action` 内使用锁定 Selenium 公开 `PointerInput(interaction.POINTER_TOUCH, "touch")` 与 `MouseButton.LEFT`，通过 `driver.execute(Command.W3C_ACTIONS, {"actions": [touch.encode()]})`（不调用丢弃返回值的 `ActionBuilder.perform()`，不附带空 keyboard/wheel 设备，不额外发送 no-op `DELETE /actions`）发送一次 `POST /session/{sessionId}/actions`，固定包含单个 `id="touch"`、`pointerType="touch"` 指针的四步有序动作：`pointerMove(origin="viewport", duration=0, x=start_x, y=start_y)` → `pointerDown(button=0, duration=0)` → `pointerMove(origin="viewport", duration=duration_ms, x=end_x, y=end_y)` → `pointerUp(button=0, duration=0)`。严格校验返回 `Mapping` 显式包含键 `"value"` 且 `response["value"] is None`（缺失 `"value"` 键或非 `None` 均抛 `CommandError/command_failed/response_received`），成功后记 `action_completed` 并返回 `None`。
+
+### Lifecycle, Privacy And Verification Boundary
+
+- 三方法与 `Element`、`observe_tree`、其他 `Device` 方法及 `quit` 共享唯一非阻塞 Session gate、`Session`/`RuntimeConnection` 活跃检查、final 严格成功优先于响应后取消/超时、no-replay 与 `response_unknown -> uncertain` 资源保留规则；包括只读 `take_screenshot` 在内，`response_unknown` 均使 Session 进入 `uncertain` 且不自动恢复或重试。
+- 坐标动作成功仅表示底层手势命令传输完成，不保证坐标位于当前可视区域、命中控件或产生业务页面效果。
+- 截图 PNG `bytes` 与远端 Base64 文本可能含敏感屏幕内容，仅在内存返回给当前直接调用方；严禁写入日志、落盘文件、受控异常消息、测试固定快照或仓库持久化证据。
+- 永久受控测试须使用锁定真实 `Appium-Python-Client==6.0.8` / `selenium==4.51.0` 和本地 HTTP 协议服务覆盖精确 HTTP 路由与载荷（含单 `touch` 指针无冗余设备，以及缺失 `"value"` 键与服务端非 `null` 拒绝）、合法 67 字节最小 1×1 PNG、57 字节空 IDAT/无 IDAT/坏 chunk CRC/尾随字节/Base64/32MiB±1 边界、坐标与 `duration_ms` 类型/值域边界、`duration_ms` 剩余预算门禁、共享 gate、取消/超时/unknown 隔离及异常零泄漏；另须通过全仓质量、发行物隔离安装、独立完整差异审查及获准无敏感页面（Calculator）真机内存截图与坐标触控闭环验收。
 
