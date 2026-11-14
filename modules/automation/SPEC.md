@@ -657,7 +657,7 @@
 ### Mac2 Element Locators
 
 - `ElementBy` 支持 `id`、`accessibility id`、`xpath`、`name`、`class name`、`-ios predicate string`、`-ios class chain`。Android 仍仅支持前三项且拒绝 predicate。
-- Mac2 Element 禁止 package 与 raw_id，禁止 parent+xpath。可选 predicate 必须为 1..4096 code points 的严格 UTF-8 非 NUL 字符串。解析先按主 locator 查询，再按 `-ios predicate string` 查询，在同一 operation gateway/deadline 内以非空 WebElement id 求交；保留主结果顺序并按 id 去重，继续执行唯一性合同。Mac2 不执行 Android `disableIdLocatorAutocompletion` Settings transaction。
+- Mac2 Element 禁止 package 与 raw_id，禁止 parent+xpath；因为 `WebDriverAgentMac`（`FBElementCache.m`）每次 `find_elements` 为同一控件分配全新随机 `NSUUID`，非 `None` 的可选 `predicate`（1..4096 code points 严格 UTF-8 非 NUL 字符串）仅支持 `id`、`accessibility id`、`name`、`class name` 与 `-ios predicate string` 五种策略（`xpath + predicate` 与 `-ios class chain + predicate` 在创建时返回 `unsupported_operation`），并在单次 `-ios predicate string` 请求内无损合取为 `identifier == "<escaped>" AND (<predicate>)`、`amType == "<escaped>" AND (<predicate>)` 或 `(<value>) AND (<predicate>)` 后强制唯一性合同。Mac2 不执行 Android `disableIdLocatorAutocompletion` Settings transaction。
 - AUTO-MAC-01A 尚未启用 Mac2 Element 动作与 Device 方法。各方法先完成纯值参数校验，再在 gate 与任何外部请求前返回 `unsupported_operation/not_sent`；后续 AUTO-MAC-01B 单独激活。
 
 ### XCUI Attribute And Structure Observation

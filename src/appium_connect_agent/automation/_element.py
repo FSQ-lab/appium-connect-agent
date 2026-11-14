@@ -460,6 +460,8 @@ def _make_element(
         if package is not None or raw_id:
             raise ElementValidationError("unsupported_operation")
         if predicate is not None:
+            if by in ("xpath", "-ios class chain"):
+                raise ElementValidationError("unsupported_operation")
             if (
                 not isinstance(predicate, str)
                 or not 1 <= len(predicate) <= 4_096

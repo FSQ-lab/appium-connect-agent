@@ -85,6 +85,7 @@ def diagnose(
 ```python
 AutomationPlatform: TypeAlias = Literal["android", "macos"]
 
+
 def create_mac2_session(
     connection: RuntimeConnection,
     *,
@@ -115,7 +116,7 @@ def create_mac2_session(
 - `ElementBy = Literal["id", "accessibility id", "xpath", "name", "class name", "-ios predicate string", "-ios class chain"]`.
 - `Session.element(by, value, *, parent=None, package=None, raw_id=False, predicate=None) -> Element`:
   - Android: `by` in `{"id", "accessibility id", "xpath"}`, `predicate is None`.
-  - Mac2: `by` in all 7 values, `package is None`, `raw_id is False`, `parent + xpath` rejected, optional `predicate` (`1..4096` UTF-8 without NUL) intersected by non-empty `WebElement.id` in primary order with unique-match enforcement.
+  - Mac2: `by` in all 7 values, `package is None`, `raw_id is False`, `parent + xpath` rejected; optional `predicate` (`1..4096` UTF-8 without NUL, supported for `id`, `accessibility id`, `name`, `class name`, `-ios predicate string`; rejected with `unsupported_operation` for `xpath` and `-ios class chain`) is compiled into a single `-ios predicate string` conjunction (`identifier == "<escaped>" AND (<predicate>)`, `amType == "<escaped>" AND (<predicate>)`, or `(<value>) AND (<predicate>)`) so WDA Mac's per-request fresh `FBElementCache` UUIDs never break conjunction, with unique-match enforcement.
 - **Android JSON Byte-Stability**: Android `LocatorValue` JSON keeps exact 5 keys (`by`, `package`, `parent`, `raw_id`, `value`) and all three Android observation `to_json()` outputs remain **100% byte-identical**. Mac2 observation serializes `"predicate": value.predicate` in `scope.locator` / `scope.range_locator`.
 - **Mac2 `Element.inspect`**: 14 XCUI attributes (`id`, `text`, `type`, `label`, `title`, `value`, `placeholder_value`, `element_type`, `enabled`, `focused`, `selected`, `hittable`, `displayed`, `bounds`); cross-platform mismatches fail `unsupported_operation/not_sent`.
 - **Mac2 `observe_tree` & `inspect_structure`**:

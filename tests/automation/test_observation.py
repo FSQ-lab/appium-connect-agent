@@ -3031,24 +3031,27 @@ def test_reversed_exact_edge_with_orthogonal_outside_conflict_is_unknown(
         session.quit()
 
 
-def test_mac2_predicate_intersection_preserves_primary_order_and_json(
+def test_mac2_predicate_conjunction_builds_single_wda_query_and_preserves_json(
     service: ElementProtocolService,
 ) -> None:
-    service.matches[(None, "name", "result")] = ["a", "b", "a"]
-    service.matches[(None, "-ios predicate string", "label == 'Result'")] = ["b"]
+    combined = 'identifier == "res\\"ult" AND (label == \'Result\')'
+    service.matches[(None, "-ios predicate string", combined)] = ["b"]
     service.attributes[("b", "identifier")] = "result-id"
     with connected(service) as connection:
         session = mac_session_for(service, connection)
-        element = session.element("name", "result", predicate="label == 'Result'")
+        element = session.element("name", 'res"ult', predicate="label == 'Result'")
         result = element.inspect(attributes=("id",))
         decoded = document(result)
         assert result.attributes[0].value == "result-id"
         assert decoded["scope"]["locator"]["predicate"] == "label == 'Result'"
         finds = service.of_kind("find")
         assert [request.body for request in finds] == [
-            {"using": "name", "value": "result"},
-            {"using": "-ios predicate string", "value": "label == 'Result'"},
+            {"using": "-ios predicate string", "value": combined},
         ]
+        for unsupported_by in ("xpath", "-ios class chain"):
+            with pytest.raises(ElementValidationError) as exc_info:
+                session.element(unsupported_by, "//*", predicate="label == 'Result'")
+            assert exc_info.value.code == "unsupported_operation"
         session.quit()
 
 

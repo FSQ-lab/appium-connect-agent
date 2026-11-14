@@ -72,6 +72,29 @@ def _validate_wait_timeout(value: object, operation_id: str) -> float:
     return normalized
 
 
+def _predicate_string_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _combined_predicate_query(
+    by: str, value: str, predicate: str
+) -> tuple[str, str] | None:
+    if by in ("id", "accessibility id", "name"):
+        return (
+            "-ios predicate string",
+            f"identifier == {_predicate_string_literal(value)} AND ({predicate})",
+        )
+    if by == "class name":
+        return (
+            "-ios predicate string",
+            f"amType == {_predicate_string_literal(value)} AND ({predicate})",
+        )
+    if by == "-ios predicate string":
+        return ("-ios predicate string", f"({value}) AND ({predicate})")
+    return None
+
+
 def _find_elements(
     context: WebDriver | WebElement, by: str, value: str
 ) -> Sequence[WebElement]:
@@ -94,35 +117,13 @@ def _resolve_unique_locator_once(
             else gateway.wait_request(action, condition_deadline)
         )
 
-    matches = request(lambda: _find_elements(context, by, value))
+    query_by = by
+    query_value = value
     if predicate is not None:
-        predicate_matches = request(
-            lambda: _find_elements(context, "-ios predicate string", predicate)
-        )
-        try:
-            allowed: set[str] = set()
-            for match in predicate_matches:
-                element_id = match.id
-                if not isinstance(element_id, str) or not element_id:
-                    raise ValueError
-                allowed.add(element_id)
-            unique: list[WebElement] = []
-            seen: set[str] = set()
-            for match in matches:
-                element_id = match.id
-                if not isinstance(element_id, str) or not element_id:
-                    raise ValueError
-                if element_id in allowed and element_id not in seen:
-                    seen.add(element_id)
-                    unique.append(match)
-            matches = unique
-        except (AttributeError, ValueError):
-            raise CommandError(
-                "command_failed",
-                gateway.operation_id,
-                "response_received",
-                completed_steps=gateway.completed_steps,
-            ) from None
+        combined = _combined_predicate_query(by, value, predicate)
+        assert combined is not None
+        query_by, query_value = combined
+    matches = request(lambda: _find_elements(context, query_by, query_value))
     if not matches:
         return None
     if len(matches) != 1:
