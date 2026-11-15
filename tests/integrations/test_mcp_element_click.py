@@ -28,6 +28,8 @@ from .conftest import CANARY, SECRET_PATH, TOOL_NAMES, McpHarness
 
 def _request(**values: object) -> dict[str, object]:
     request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
     if "locator" in values and "mode" not in values and "intent" not in values:
         request.setdefault("kind", "single")
     return {"request": request}
@@ -139,6 +141,8 @@ def test_click_is_eighth_destructive_tool_with_strict_schema(
     assert [branch["properties"]["kind"]["const"] for branch in branches] == [
         "single",
         "double",
+        "right",
+        "hover",
         "long",
     ]
     for branch in branches:
@@ -166,9 +170,9 @@ def test_click_is_eighth_destructive_tool_with_strict_schema(
         locator_schema = _schema_target(input_root, branch["properties"]["locator"])
         assert locator_schema["additionalProperties"] is False
         assert set(locator_schema["required"]) == {"by", "value"}
-    assert "duration_ms" not in branches[0]["properties"]
-    assert "duration_ms" not in branches[1]["properties"]
-    assert branches[2]["properties"]["duration_ms"] == {
+    for branch in branches[:4]:
+        assert "duration_ms" not in branch["properties"]
+    assert branches[4]["properties"]["duration_ms"] == {
         "default": 500,
         "maximum": 60000,
         "minimum": 1,
@@ -195,6 +199,8 @@ def test_click_is_eighth_destructive_tool_with_strict_schema(
     assert data_schema["properties"]["action"]["enum"] == [
         "click",
         "double_click",
+        "right_click",
+        "hover",
         "long_click",
     ]
     assert data_schema["properties"]["session_state"]["const"] == "active"

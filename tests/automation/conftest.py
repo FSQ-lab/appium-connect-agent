@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from appium_connect_agent.automation import _session_coordination
+from appium_connect_agent.runtime import _coordination
 
 
 @pytest.fixture(autouse=True)
@@ -13,3 +16,16 @@ def fresh_process_coordinator(monkeypatch: pytest.MonkeyPatch) -> None:
         "_COORDINATOR",
         _session_coordination._Coordinator(),
     )
+    monkeypatch.setattr(
+        _session_coordination,
+        "_MAC2_COORDINATOR",
+        _session_coordination._Coordinator(10100, 10199),
+    )
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent protocol tests from contending with another project worktree."""
+    home = tmp_path.resolve() / "runtime-account"
+    home.mkdir()
+    monkeypatch.setattr(_coordination, "_account_home", lambda: home)

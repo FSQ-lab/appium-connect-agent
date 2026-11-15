@@ -8,6 +8,8 @@ from uuid import uuid4
 
 _MIN_SYSTEM_PORT = 8200
 _MAX_SYSTEM_PORT = 8299
+_MIN_MAC2_SYSTEM_PORT = 10100
+_MAX_MAC2_SYSTEM_PORT = 10199
 
 
 class _DeviceBusy(Exception):
@@ -36,10 +38,16 @@ class _Reservation:
 class _Coordinator:
     """Atomically reserves only identities; it never stores Session objects."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        min_system_port: int = _MIN_SYSTEM_PORT,
+        max_system_port: int = _MAX_SYSTEM_PORT,
+    ) -> None:
         self._lock = Lock()
         self._devices: dict[str, str] = {}
         self._ports: dict[int, str] = {}
+        self._min_system_port = min_system_port
+        self._max_system_port = max_system_port
 
     def reserve(self, device_id: str) -> _Reservation:
         with self._lock:
@@ -48,7 +56,9 @@ class _Coordinator:
             port = next(
                 (
                     candidate
-                    for candidate in range(_MIN_SYSTEM_PORT, _MAX_SYSTEM_PORT + 1)
+                    for candidate in range(
+                        self._min_system_port, self._max_system_port + 1
+                    )
                     if candidate not in self._ports
                 ),
                 None,
@@ -69,7 +79,12 @@ class _Coordinator:
 
 
 _COORDINATOR = _Coordinator()
+_MAC2_COORDINATOR = _Coordinator(_MIN_MAC2_SYSTEM_PORT, _MAX_MAC2_SYSTEM_PORT)
 
 
 def _reserve(device_id: str) -> _Reservation:
     return _COORDINATOR.reserve(device_id)
+
+
+def _reserve_mac2() -> _Reservation:
+    return _MAC2_COORDINATOR.reserve("macos:local")

@@ -72,6 +72,29 @@ def _validate_wait_timeout(value: object, operation_id: str) -> float:
     return normalized
 
 
+def _predicate_string_literal(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _combined_predicate_query(
+    by: str, value: str, predicate: str
+) -> tuple[str, str] | None:
+    if by in ("id", "accessibility id", "name"):
+        return (
+            "-ios predicate string",
+            f"identifier == {_predicate_string_literal(value)} AND ({predicate})",
+        )
+    if by == "class name":
+        return (
+            "-ios predicate string",
+            f"amType == {_predicate_string_literal(value)} AND ({predicate})",
+        )
+    if by == "-ios predicate string":
+        return ("-ios predicate string", f"({value}) AND ({predicate})")
+    return None
+
+
 def _find_elements(
     context: WebDriver | WebElement, by: str, value: str
 ) -> Sequence[WebElement]:
@@ -84,16 +107,23 @@ def _resolve_unique_locator_once(
     value: str,
     gateway: _SessionOperationGateway,
     *,
+    predicate: str | None = None,
     condition_deadline: float | None = None,
 ) -> WebElement | None:
-    def action() -> Sequence[WebElement]:
-        return _find_elements(context, by, value)
+    def request(action: Callable[[], Sequence[WebElement]]) -> Sequence[WebElement]:
+        return (
+            gateway.request(action)
+            if condition_deadline is None
+            else gateway.wait_request(action, condition_deadline)
+        )
 
-    matches = (
-        gateway.request(action)
-        if condition_deadline is None
-        else gateway.wait_request(action, condition_deadline)
-    )
+    query_by = by
+    query_value = value
+    if predicate is not None:
+        combined = _combined_predicate_query(by, value, predicate)
+        assert combined is not None
+        query_by, query_value = combined
+    matches = request(lambda: _find_elements(context, query_by, query_value))
     if not matches:
         return None
     if len(matches) != 1:
@@ -123,6 +153,7 @@ def _resolve_unique_once(
             locator.value,
             gateway,
             condition_deadline=condition_deadline,
+            predicate=locator.predicate,
         )
         if target is None:
             return None

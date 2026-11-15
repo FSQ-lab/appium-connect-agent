@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
 import secrets
+import stat
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -23,9 +26,11 @@ from appium_connect_agent.automation import (
     Element,
     ElementInspection,
     ElementValidationError,
+    MacKeyStroke,
     RawStructureObservation,
     Session,
     TreeObservation,
+    create_mac2_session,
     create_session,
     list_devices,
 )
@@ -48,21 +53,30 @@ from ._bridge import (
 from ._catalog import TOOL_CATALOG, JsonValue, ToolSpec
 from ._models import (
     AUTOMATION_MODULE_STATUS,
+    MAX_INTEGRATION_SCREENSHOT_BYTES,
+    AndroidPlatformData,
+    AndroidSessionOpenRequest,
+    AppActivateRequest,
+    AppLaunchRequest,
     AppLifecycleActivateData,
+    AppLifecycleBranch,
     AppLifecycleData,
+    AppLifecycleLaunchData,
     AppLifecycleQueryStateData,
-    AppLifecycleRequest,
     AppLifecycleResult,
     AppLifecycleTerminateData,
+    AppPackageBranch,
     AppPackageData,
     AppPackageInstallData,
     AppPackageInstallRequest,
     AppPackageRemoveData,
     AppPackageRemoveRequest,
-    AppPackageRequest,
     AppPackageResult,
+    AppQueryStateRequest,
+    AppTerminateRequest,
     AttributesObserveRequest,
     AutomationModuleStatus,
+    CapabilityData,
     CapabilityLimitations,
     CapabilityResult,
     CliCapabilityData,
@@ -89,6 +103,17 @@ from ._models import (
     DeviceKeyResult,
     DeviceListData,
     DeviceListResult,
+    DevicePointerBranch,
+    DevicePointerClickRequest,
+    DevicePointerData,
+    DevicePointerDragRequest,
+    DevicePointerHoverRequest,
+    DevicePointerResult,
+    DevicePointerScrollRequest,
+    DevicePointerTapRequest,
+    DeviceScreenshotData,
+    DeviceScreenshotRequest,
+    DeviceScreenshotResult,
     DeviceStatusBarData,
     DeviceStatusBarRequest,
     DeviceStatusBarResult,
@@ -104,6 +129,10 @@ from ._models import (
     ElementImeActionData,
     ElementImeActionRequest,
     ElementImeActionResult,
+    ElementMacosSwipeData,
+    ElementMacosSwipeRequest,
+    ElementScrollByData,
+    ElementScrollByRequest,
     ElementScrollData,
     ElementScrollRequest,
     ElementScrollToData,
@@ -116,16 +145,22 @@ from ._models import (
     ElementTextRequest,
     ElementTextResult,
     ElementTextSendRequest,
+    HoverClickRequest,
     LocatorV1,
     LongClickRequest,
+    MacosElementKeysRequest,
+    MacosKeysBranch,
+    MacosKeysData,
+    MacosKeysResult,
+    MacosPlatformData,
     McpCapabilityData,
     McpCapabilityResult,
     ObservationData,
     ObservationDocument,
     ObservationResult,
     ObserveRequest,
-    PlatformData,
     PrivateRequestValidationError,
+    RightClickRequest,
     RuntimeCheck,
     RuntimeCheckData,
     RuntimeCheckResult,
@@ -133,7 +168,7 @@ from ._models import (
     RuntimeReport,
     SessionCloseResult,
     SessionData,
-    SessionOpenRequest,
+    SessionOpenBranch,
     SessionOpenResult,
     SessionStatusResult,
     SingleClickRequest,
@@ -172,6 +207,7 @@ class ApplicationError(Exception):
 @dataclass(slots=True)
 class _SessionEntry:
     handle: str
+    platform: Literal["android", "macos"]
     device_id: str
     target_app_id: str | None
     state: SessionState
@@ -183,8 +219,22 @@ class _SessionEntry:
 @dataclass(frozen=True, slots=True)
 class _Tombstone:
     handle: str
+    platform: Literal["android", "macos"]
     device_id: str
     target_app_id: str | None
+
+
+def _validate_adb_executable(path: Path) -> Path:
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise ValueError("adb_executable_invalid")
+    try:
+        metadata = path.stat()
+        executable = os.access(path, os.X_OK)
+    except (OSError, ValueError):
+        raise ValueError("adb_executable_invalid") from None
+    if not stat.S_ISREG(metadata.st_mode) or not executable:
+        raise ValueError("adb_executable_invalid")
+    return path
 
 
 class Application:
@@ -193,14 +243,16 @@ class Application:
     def __init__(
         self,
         settings: LocalSettings,
-        adb_executable: Path,
+        adb_executable: Path | None = None,
         *,
         surface: Literal["mcp", "toolcall", "cli"],
     ) -> None:
         if surface not in {"mcp", "toolcall", "cli"}:
             raise ValueError("unsupported application surface")
         self._settings = settings
-        self._adb_executable = adb_executable
+        self._adb_executable = (
+            None if adb_executable is None else _validate_adb_executable(adb_executable)
+        )
         self._surface = surface
         self._workers = WorkerRegistry()
         self._runtime_owner = RuntimeOwner()
@@ -347,6 +399,7 @@ class Application:
     def _session_data(self, entry: _SessionEntry) -> SessionData:
         return SessionData(
             ownership=self._surface,
+            platform=entry.platform,
             session_handle=entry.handle,
             session_state=entry.state,
             device_id=entry.device_id,
@@ -374,21 +427,25 @@ class Application:
         return SessionStatusResult(**values)
 
     def capabilities(self) -> CapabilityResult:
-        platform = PlatformData(
-            host="macos", target="android_native", driver="uiautomator2"
+        platforms = (
+            AndroidPlatformData(
+                host="macos", target="android_native", driver="uiautomator2"
+            ),
+            MacosPlatformData(host="macos", target="macos_desktop", driver="mac2"),
         )
         limitations: CapabilityLimitations = (
-            "native_observation_element_actions_device_system_controls_and_app_management",
+            "android_and_macos_native_automation",
             "no_automatic_post_action_observation",
             "clipboard_current_caller_only",
             "status_bar_output_current_caller_only",
-            "local_apk_path_only",
+            "local_apk_and_macos_app_paths_only",
             "package_remove_no_data_deletion_guarantee",
             "ime_requires_explicit_element_and_action",
-            "gesture_coordinates_not_exposed",
+            "explicit_screen_coordinates_only",
             "no_automatic_navigation",
             "no_node_cache",
             "observation_document_65536_bytes",
+            "screenshot_png_3000000_bytes",
             "single_session_capacity",
             "opaque_handle_process_local",
             "no_session_attach_recovery",
@@ -397,47 +454,44 @@ class Application:
             "automation_module_e2e_unqualified",
             "no_specific_host_qualification",
         )
+        data: CapabilityData
         if self._surface == "mcp":
-            return McpCapabilityResult(
-                schema_version=1,
-                call_id=self._call_id(),
-                execution="completed",
-                operation_id=None,
-                request_state=None,
-                warnings=(),
-                automation_module_status=self._module_status(),
-                data=McpCapabilityData(
-                    integration_form="mcp",
-                    transport="stdio",
-                    protocol_target="2026-07-28",
-                    host_compatibility="unqualified",
-                    adb_configured=True,
-                    platform=platform,
-                    tools=TOOL_CATALOG.mcp_names,
-                    limitations=limitations,
-                ),
+            data = McpCapabilityData(
+                integration_form="mcp",
+                transport="stdio",
+                protocol_target="2026-07-28",
+                tools=TOOL_CATALOG.mcp_names,
+                host_compatibility="unqualified",
+                adb_configured=self._adb_executable is not None,
+                platforms=platforms,
+                limitations=limitations,
             )
-        if self._surface == "toolcall":
-            return ToolCallCapabilityResult(
-                schema_version=1,
-                call_id=self._call_id(),
-                execution="completed",
-                operation_id=None,
-                request_state=None,
-                warnings=(),
-                automation_module_status=self._module_status(),
-                data=ToolCallCapabilityData(
-                    integration_form="toolcall",
-                    transport="in_process",
-                    protocol_target=None,
-                    host_compatibility="unqualified",
-                    adb_configured=True,
-                    platform=platform,
-                    tools=TOOL_CATALOG.tool_names,
-                    limitations=limitations,
-                ),
+            result_type: type[CapabilityResult] = McpCapabilityResult
+        elif self._surface == "toolcall":
+            data = ToolCallCapabilityData(
+                integration_form="toolcall",
+                transport="in_process",
+                protocol_target=None,
+                tools=TOOL_CATALOG.tool_names,
+                host_compatibility="unqualified",
+                adb_configured=self._adb_executable is not None,
+                platforms=platforms,
+                limitations=limitations,
             )
-        return CliCapabilityResult(
+            result_type = ToolCallCapabilityResult
+        else:
+            data = CliCapabilityData(
+                integration_form="cli",
+                transport="unix_socket",
+                protocol_target=None,
+                tools=TOOL_CATALOG.tool_names,
+                host_compatibility="unqualified",
+                adb_configured=self._adb_executable is not None,
+                platforms=platforms,
+                limitations=limitations,
+            )
+            result_type = CliCapabilityResult
+        return result_type(
             schema_version=1,
             call_id=self._call_id(),
             execution="completed",
@@ -445,16 +499,7 @@ class Application:
             request_state=None,
             warnings=(),
             automation_module_status=self._module_status(),
-            data=CliCapabilityData(
-                integration_form="cli",
-                transport="unix_socket",
-                protocol_target=None,
-                host_compatibility="unqualified",
-                adb_configured=True,
-                platform=platform,
-                tools=TOOL_CATALOG.tool_names,
-                limitations=limitations,
-            ),
+            data=data,
         )
 
     def _runtime_blocked(self) -> bool:
@@ -469,9 +514,12 @@ class Application:
     async def runtime_check(
         self,
         mode: Literal["static", "external_connection"],
+        target_driver: Literal["uiautomator2", "mac2"],
         timeout_seconds: float,
     ) -> RuntimeCheckResult:
         call_id = self._call_id()
+        if mode == "external_connection" and target_driver == "mac2":
+            self._raise_not_sent(call_id, "unsupported_operation")
         if mode == "external_connection" and self._settings.server_mode != "external":
             self._raise_not_sent(call_id, "runtime_mode_mismatch")
         if self._runtime_blocked():
@@ -487,7 +535,9 @@ class Application:
             ) -> tuple[DiagnosticReport, RuntimeConnectionData | None]:
                 runtime = Runtime(self._settings)
                 if mode == "static":
-                    return runtime.diagnose(control=control), None
+                    return runtime.diagnose(
+                        target_driver=target_driver, control=control
+                    ), None
                 with runtime.connect(control=control) as connection:
                     return connection.report, RuntimeConnectionData(
                         ownership="external",
@@ -525,9 +575,12 @@ class Application:
 
     async def devices_list(self, timeout_seconds: float) -> DeviceListResult:
         call_id = self._call_id()
+        adb_executable = self._adb_executable
+        if adb_executable is None:
+            self._raise_not_sent(call_id, "adb_not_configured")
 
         def discover(control: OperationControl) -> tuple[DeviceInfo, ...]:
-            return list_devices(self._adb_executable, control=control)
+            return list_devices(adb_executable, control=control)
 
         try:
             devices_value = await self._workers.run(timeout_seconds, discover)
@@ -594,6 +647,15 @@ class Application:
                 raise RuntimeError("published Session entry has no Session")
             return entry, session
 
+    def _require_session_platform(
+        self,
+        entry: _SessionEntry,
+        platform: Literal["android", "macos"],
+        call_id: str,
+    ) -> None:
+        if entry.platform != platform:
+            self._raise_not_sent(call_id, "unsupported_operation", entry=entry)
+
     @staticmethod
     def _element(session: Session, locator: LocatorV1) -> Element:
         chain: list[LocatorV1] = []
@@ -602,14 +664,20 @@ class Application:
             chain.append(current)
             current = current.parent
         parent: Element | None = None
+        by_map = {
+            "accessibility_id": "accessibility id",
+            "class_name": "class name",
+            "ios_predicate_string": "-ios predicate string",
+            "ios_class_chain": "-ios class chain",
+        }
         for item in reversed(chain):
-            by = "accessibility id" if item.by == "accessibility_id" else item.by
             parent = session.element(
-                by,
+                by_map.get(item.by, item.by),
                 item.value,
                 parent=parent,
                 package=item.package,
                 raw_id=item.raw_id,
+                predicate=item.predicate,
             )
         if parent is None:
             raise RuntimeError("locator chain unexpectedly produced no Element")
@@ -732,22 +800,41 @@ class Application:
             try:
                 element = self._element(session, request.locator)
                 control = budget.control()
-                action: Literal["click", "double_click", "long_click"]
+                action: Literal[
+                    "click", "double_click", "right_click", "hover", "long_click"
+                ]
                 if isinstance(request, SingleClickRequest):
                     element.click(
+                        key_modifier_flags=request.key_modifier_flags,
                         wait_timeout_seconds=request.wait_timeout_seconds,
                         control=control,
                     )
                     action = "click"
                 elif isinstance(request, DoubleClickRequest):
                     element.double_click(
+                        key_modifier_flags=request.key_modifier_flags,
                         wait_timeout_seconds=request.wait_timeout_seconds,
                         control=control,
                     )
                     action = "double_click"
+                elif isinstance(request, RightClickRequest):
+                    element.right_click(
+                        key_modifier_flags=request.key_modifier_flags,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    action = "right_click"
+                elif isinstance(request, HoverClickRequest):
+                    element.hover(
+                        key_modifier_flags=request.key_modifier_flags,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    action = "hover"
                 elif isinstance(request, LongClickRequest):
                     element.long_click(
                         duration_ms=request.duration_ms,
+                        key_modifier_flags=request.key_modifier_flags,
                         wait_timeout_seconds=request.wait_timeout_seconds,
                         control=control,
                     )
@@ -792,6 +879,7 @@ class Application:
         )
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def ime_action_once(budget: OperationBudget) -> ElementImeActionResult:
             try:
@@ -901,11 +989,43 @@ class Application:
                         destination,
                         destination_x_ratio=request.destination_x_ratio,
                         destination_y_ratio=request.destination_y_ratio,
+                        duration_ms=request.duration_ms,
+                        key_modifier_flags=request.key_modifier_flags,
                         wait_timeout_seconds=request.wait_timeout_seconds,
                         control=control,
                     )
                     data = ElementDragAndDropData(
                         intent="drag_and_drop",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementScrollByRequest):
+                    element = self._element(session, request.locator)
+                    element.scroll_by(
+                        delta_x=request.delta_x,
+                        delta_y=request.delta_y,
+                        key_modifier_flags=request.key_modifier_flags,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementScrollByData(
+                        intent="scroll_by",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementMacosSwipeRequest):
+                    element = self._element(session, request.locator)
+                    element.macos_swipe(
+                        direction=request.direction,
+                        velocity=request.velocity,
+                        key_modifier_flags=request.key_modifier_flags,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementMacosSwipeData(
+                        intent="macos_swipe",
                         can_scroll_more=None,
                         session_state="active",
                         busy=False,
@@ -1004,6 +1124,7 @@ class Application:
         )
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def back_once(budget: OperationBudget) -> DeviceBackResult:
             try:
@@ -1049,6 +1170,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def key_once(budget: OperationBudget) -> DeviceKeyResult:
             try:
@@ -1089,6 +1211,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def hide_once(budget: OperationBudget) -> DeviceKeyboardHideResult:
             try:
@@ -1119,6 +1242,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def clipboard_once(budget: OperationBudget) -> DeviceClipboardResult:
             try:
@@ -1165,6 +1289,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def alert_once(budget: OperationBudget) -> DeviceAlertResult:
             try:
@@ -1200,6 +1325,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def status_bar_once(budget: OperationBudget) -> DeviceStatusBarResult:
             try:
@@ -1227,7 +1353,7 @@ class Application:
 
         return await self._run_ui_worker(budget, status_bar_once, call_id, entry)
 
-    async def app_lifecycle(self, request: AppLifecycleRequest) -> AppLifecycleResult:
+    async def app_lifecycle(self, request: AppLifecycleBranch) -> AppLifecycleResult:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
@@ -1236,12 +1362,12 @@ class Application:
             try:
                 control = budget.control()
                 data: AppLifecycleData
-                if request.intent == "activate":
+                if isinstance(request, AppActivateRequest):
                     session.device.activate_app(request.app_id, control=control)
                     data = AppLifecycleActivateData(
                         intent="activate", session_state="active", busy=False
                     )
-                elif request.intent == "terminate":
+                elif isinstance(request, AppTerminateRequest):
                     terminated = session.device.terminate_app(
                         request.app_id, control=control
                     )
@@ -1251,9 +1377,9 @@ class Application:
                         session_state="active",
                         busy=False,
                     )
-                else:
+                elif isinstance(request, AppQueryStateRequest):
                     app_state = cast(
-                        Literal[0, 1, 3, 4],
+                        Literal[0, 1, 2, 3, 4],
                         session.device.query_app_state(request.app_id, control=control),
                     )
                     data = AppLifecycleQueryStateData(
@@ -1262,6 +1388,20 @@ class Application:
                         session_state="active",
                         busy=False,
                     )
+                elif isinstance(request, AppLaunchRequest):
+                    session.device.launch_app(
+                        bundle_id=request.bundle_id,
+                        app_path=(
+                            None if request.app_path is None else Path(request.app_path)
+                        ),
+                        arguments=request.arguments,
+                        control=control,
+                    )
+                    data = AppLifecycleLaunchData(
+                        intent="launch", session_state="active", busy=False
+                    )
+                else:
+                    raise AssertionError("unsupported application lifecycle request")
                 self._assert_device_action_complete(
                     session, "application lifecycle action"
                 )
@@ -1280,10 +1420,11 @@ class Application:
 
         return await self._run_ui_worker(budget, lifecycle_once, call_id, entry)
 
-    async def app_package(self, request: AppPackageRequest) -> AppPackageResult:
+    async def app_package(self, request: AppPackageBranch) -> AppPackageResult:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "android", call_id)
 
         def package_once(budget: OperationBudget) -> AppPackageResult:
             try:
@@ -1326,7 +1467,160 @@ class Application:
 
         return await self._run_ui_worker(budget, package_once, call_id, entry)
 
-    def _reserve_open(self, request: SessionOpenRequest, call_id: str) -> _SessionEntry:
+    async def device_screenshot(
+        self, request: DeviceScreenshotRequest
+    ) -> DeviceScreenshotResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def screenshot_once(budget: OperationBudget) -> DeviceScreenshotResult:
+            try:
+                png = session.device.take_screenshot(control=budget.control())
+                if len(png) > MAX_INTEGRATION_SCREENSHOT_BYTES:
+                    self._raise_error(
+                        ToolErrorData(
+                            schema_version=1,
+                            call_id=call_id,
+                            code="screenshot_too_large",
+                            operation_id=None,
+                            request_state="response_received",
+                            completed_steps=("screenshot_captured",),
+                            cleanup_status="not_needed",
+                            cleanup_error_count=0,
+                            warnings=(),
+                            session_handle=entry.handle,
+                            session_state="active",
+                        )
+                    )
+                self._assert_device_action_complete(session, "screenshot")
+                return DeviceScreenshotResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DeviceScreenshotData(
+                        byte_length=len(png),
+                        png_base64=base64.b64encode(png).decode("ascii"),
+                        session_state="active",
+                        busy=False,
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, screenshot_once, call_id, entry)
+
+    async def device_pointer(self, request: DevicePointerBranch) -> DevicePointerResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+
+        def pointer_once(budget: OperationBudget) -> DevicePointerResult:
+            try:
+                control = budget.control()
+                device = session.device
+                if isinstance(request, DevicePointerTapRequest):
+                    device.tap_at(request.x, request.y, control=control)
+                elif isinstance(request, DevicePointerClickRequest):
+                    device.click_at(
+                        request.x,
+                        request.y,
+                        button=request.button,
+                        double=request.double,
+                        key_modifier_flags=request.key_modifier_flags,
+                        control=control,
+                    )
+                elif isinstance(request, DevicePointerHoverRequest):
+                    device.hover_at(
+                        request.x,
+                        request.y,
+                        key_modifier_flags=request.key_modifier_flags,
+                        control=control,
+                    )
+                elif isinstance(request, DevicePointerScrollRequest):
+                    device.scroll_at(
+                        request.x,
+                        request.y,
+                        delta_x=request.delta_x,
+                        delta_y=request.delta_y,
+                        key_modifier_flags=request.key_modifier_flags,
+                        control=control,
+                    )
+                elif isinstance(request, DevicePointerDragRequest):
+                    device.swipe_between(
+                        request.start_x,
+                        request.start_y,
+                        request.end_x,
+                        request.end_y,
+                        duration_ms=request.duration_ms,
+                        key_modifier_flags=request.key_modifier_flags,
+                        control=control,
+                    )
+                else:
+                    raise AssertionError("unsupported Device pointer request")
+                self._assert_device_action_complete(session, "pointer action")
+                return DevicePointerResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=DevicePointerData(
+                        intent=request.intent, session_state="active", busy=False
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, pointer_once, call_id, entry)
+
+    async def macos_keys(self, request: MacosKeysBranch) -> MacosKeysResult:
+        budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
+        call_id = self._call_id()
+        entry, session = self._prepare_ui_operation(request.session_handle, call_id)
+        self._require_session_platform(entry, "macos", call_id)
+
+        def keys_once(budget: OperationBudget) -> MacosKeysResult:
+            try:
+                strokes = tuple(
+                    MacKeyStroke(key=item.key, modifier_flags=item.modifier_flags)
+                    for item in request.keys
+                )
+                control = budget.control()
+                if isinstance(request, MacosElementKeysRequest):
+                    element = self._element(session, request.locator)
+                    element.send_macos_keys(
+                        strokes,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                else:
+                    session.device.send_keys(strokes, control=control)
+                self._assert_device_action_complete(session, "macOS key action")
+                return MacosKeysResult(
+                    schema_version=1,
+                    call_id=call_id,
+                    execution="completed",
+                    operation_id=None,
+                    request_state=None,
+                    warnings=(),
+                    automation_module_status=self._module_status(),
+                    data=MacosKeysData(
+                        target=request.target, session_state="active", busy=False
+                    ),
+                )
+            finally:
+                self._sync_session_entry(entry, session)
+
+        return await self._run_ui_worker(budget, keys_once, call_id, entry)
+
+    def _reserve_open(self, request: SessionOpenBranch, call_id: str) -> _SessionEntry:
         if not self._runtime_gate.acquire(blocking=False):
             self._raise_not_sent(call_id, "session_capacity_reached")
         try:
@@ -1342,10 +1636,17 @@ class Application:
                     handle = self._new_handle_locked()
                 except ValueError:
                     self._raise_not_sent(call_id, "handle_generation_failed")
+                if isinstance(request, AndroidSessionOpenRequest):
+                    device_id = request.device_id
+                    target_app_id = request.app_id
+                else:
+                    device_id = "macos:local"
+                    target_app_id = request.bundle_id
                 entry = _SessionEntry(
                     handle=handle,
-                    device_id=request.device_id,
-                    target_app_id=request.app_id,
+                    platform=request.platform,
+                    device_id=device_id,
+                    target_app_id=target_app_id,
                     state="active",
                     busy=True,
                     published=False,
@@ -1384,7 +1685,7 @@ class Application:
                 self._runtime_active = False
         return failure
 
-    async def session_open(self, request: SessionOpenRequest) -> SessionOpenResult:
+    async def session_open(self, request: SessionOpenBranch) -> SessionOpenResult:
         budget = OperationBudget(
             time.monotonic() + request.timeout_seconds,
             Event(),
@@ -1411,22 +1712,38 @@ class Application:
                 connection = self._runtime_owner.enter(runtime, scope)
                 with self._registry_lock:
                     self._runtime_active = True
-                session = create_session(
-                    connection,
-                    request.device_id,
-                    app_id=request.app_id,
-                    app_path=(
-                        None if request.app_path is None else Path(request.app_path)
-                    ),
-                    auto_launch=request.auto_launch,
-                    force_app_launch=request.force_app_launch,
-                    no_reset=True,
-                    full_reset=False,
-                    should_terminate_app=request.should_terminate_app,
-                    new_command_timeout_seconds=request.new_command_timeout_seconds,
-                    capabilities=None,
-                    control=budget.control(),
-                )
+                if isinstance(request, AndroidSessionOpenRequest):
+                    session = create_session(
+                        connection,
+                        request.device_id,
+                        app_id=request.app_id,
+                        app_path=(
+                            None if request.app_path is None else Path(request.app_path)
+                        ),
+                        auto_launch=request.auto_launch,
+                        force_app_launch=request.force_app_launch,
+                        no_reset=True,
+                        full_reset=False,
+                        should_terminate_app=request.should_terminate_app,
+                        new_command_timeout_seconds=request.new_command_timeout_seconds,
+                        capabilities=None,
+                        control=budget.control(),
+                    )
+                else:
+                    session = create_mac2_session(
+                        connection,
+                        bundle_id=request.bundle_id,
+                        app_path=(
+                            None if request.app_path is None else Path(request.app_path)
+                        ),
+                        arguments=request.arguments,
+                        no_reset=request.no_reset,
+                        skip_app_kill=request.skip_app_kill,
+                        show_server_logs=False,
+                        server_startup_timeout_ms=None,
+                        new_command_timeout_seconds=request.new_command_timeout_seconds,
+                        control=budget.control(),
+                    )
                 info = session.session_info()
                 if info.state != "active":
                     raise RuntimeError("create_session returned a non-active Session")
@@ -1506,6 +1823,7 @@ class Application:
                     self._raise_not_sent(call_id, "session_not_found")
                 data = SessionData(
                     ownership=self._surface,
+                    platform=tombstone.platform,
                     session_handle=tombstone.handle,
                     session_state="closed",
                     device_id=tombstone.device_id,
@@ -1523,6 +1841,7 @@ class Application:
     ) -> SessionData:
         tombstone = _Tombstone(
             handle=entry.handle,
+            platform=entry.platform,
             device_id=entry.device_id,
             target_app_id=entry.target_app_id,
         )
@@ -1539,6 +1858,7 @@ class Application:
                 self._tombstones.popitem(last=False)
         return SessionData(
             ownership=self._surface,
+            platform=tombstone.platform,
             session_handle=tombstone.handle,
             session_state="closed",
             device_id=tombstone.device_id,
@@ -1558,6 +1878,7 @@ class Application:
             if tombstone is not None:
                 return SessionData(
                     ownership=self._surface,
+                    platform=tombstone.platform,
                     session_handle=tombstone.handle,
                     session_state="closed",
                     device_id=tombstone.device_id,
@@ -1754,18 +2075,18 @@ class Application:
         def sanitize_evidence(value: str) -> str:
             return "path=[redacted]" if value.startswith("path=") else value
 
-        if (report.host, report.target, report.driver) != (
-            "macOS",
-            "Android",
-            "UiAutomator2",
-        ):
+        pair = (report.target, report.driver)
+        if report.host != "macOS" or pair not in {
+            ("Android", "UiAutomator2"),
+            ("macOS", "Mac2"),
+        }:
             raise ValueError("runtime report platform is outside the fixed contract")
         return RuntimeReport(
             operation_id=report.operation_id,
             observed_at=observed_at,
             host="macOS",
-            target="Android",
-            driver="UiAutomator2",
+            target=cast(Literal["Android", "macOS"], report.target),
+            driver=cast(Literal["UiAutomator2", "Mac2"], report.driver),
             checks=tuple(
                 RuntimeCheck(
                     check_id=check.check_id,

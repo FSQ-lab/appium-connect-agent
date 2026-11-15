@@ -134,7 +134,6 @@ def test_missing_repeated_and_positional_arguments_fail_before_all_io(
 ) -> None:
     cases: tuple[list[str], ...] = (
         [],
-        ["--config", str(mcp_harness.config)],
         ["--adb-executable", str(mcp_harness.adb)],
         ["--help"],
         ["--version"],
@@ -167,6 +166,51 @@ def test_missing_repeated_and_positional_arguments_fail_before_all_io(
             list(args),
             secrets=(str(mcp_harness.config), str(mcp_harness.adb)),
         )
+
+
+def test_config_only_bootstrap_never_infers_adb_from_environment(
+    mcp_harness: McpHarness,
+) -> None:
+    fake_sdk = mcp_harness.root / "fake-sdk"
+    platform_tools = fake_sdk / "platform-tools"
+    platform_tools.mkdir(parents=True)
+    inferred_adb = platform_tools / "adb"
+    record = mcp_harness.root / "inferred-adb-called"
+    inferred_adb.write_text(
+        "#!"
+        + sys.executable
+        + f"\nfrom pathlib import Path\nPath({str(record)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    inferred_adb.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+    async def scenario() -> None:
+        parameters = mcp_harness.parameters(
+            mode="passthrough",
+            args=["--config", str(mcp_harness.config)],
+            environment={
+                "ANDROID_HOME": str(fake_sdk),
+                "PATH": str(platform_tools) + os.pathsep + os.environ.get("PATH", ""),
+            },
+        )
+        async with Client(parameters) as client:
+            capability = await client.call_tool(
+                TOOL_NAMES[0], {"request": {"schema_version": 1}}
+            )
+            devices = await client.call_tool(
+                TOOL_NAMES[2], {"request": {"schema_version": 1}}
+            )
+        assert capability.is_error is False
+        assert capability.structured_content["data"]["adb_configured"] is False
+        assert devices.is_error is True
+        error_text = getattr(devices.content[0], "text", "")
+        error = json.loads(error_text.split("ACA_ERROR ", 1)[1])
+        assert error["code"] == "adb_not_configured"
+        assert error["request_state"] == "not_sent"
+
+    anyio.run(scenario)
+    assert not record.exists()
+    assert mcp_harness.events() == []
 
 
 def test_every_ascii_short_option_is_rejected(
@@ -325,36 +369,23 @@ def test_missing_adb_option_never_falls_back_to_env_path_toml_or_sdk_roots(
     sdk_root = mcp_harness.root / "sdk"
     (sdk_root / "platform-tools").mkdir(parents=True)
     (sdk_root / "platform-tools/adb").symlink_to(candidate)
-    adb_config = mcp_harness.root / "adb-in-toml.toml"
-    adb_config.write_text(
-        "[runtime]\n" + f'adb_executable = "{candidate}"\n', encoding="utf-8"
+    cases: tuple[dict[str, str], ...] = (
+        {"ADB_EXECUTABLE": str(candidate)},
+        {"ACA_ADB_EXECUTABLE": str(candidate)},
+        {"APPIUM_CONNECT_AGENT_ADB_EXECUTABLE": str(candidate)},
+        {"PATH": str(path_root)},
+        {"ANDROID_HOME": str(sdk_root)},
+        {"ANDROID_SDK_ROOT": str(sdk_root)},
     )
-    sdk_config = mcp_harness.root / "sdk-in-toml.toml"
-    sdk_config.write_text(
-        "[runtime]\n" + f'android_sdk_root = "{sdk_root}"\n',
-        encoding="utf-8",
-    )
-    cases: tuple[tuple[Path, dict[str, str]], ...] = (
-        (mcp_harness.config, {"ADB_EXECUTABLE": str(candidate)}),
-        (mcp_harness.config, {"ACA_ADB_EXECUTABLE": str(candidate)}),
-        (
-            mcp_harness.config,
-            {"APPIUM_CONNECT_AGENT_ADB_EXECUTABLE": str(candidate)},
-        ),
-        (mcp_harness.config, {"PATH": str(path_root)}),
-        (adb_config, {}),
-        (sdk_config, {}),
-        (mcp_harness.config, {"ANDROID_HOME": str(sdk_root)}),
-        (mcp_harness.config, {"ANDROID_SDK_ROOT": str(sdk_root)}),
-    )
-    for config, environment in cases:
+    for environment in cases:
         marker.unlink(missing_ok=True)
-        invoke_rejected(
-            mcp_harness,
-            ["--config", str(config)],
+        result = mcp_harness.run(
+            ["--config", str(mcp_harness.config)],
+            mode="normal",
             environment=environment,
-            secrets=(str(config), str(candidate), str(path_root), str(sdk_root)),
         )
+        assert result.returncode == 0
+        assert result.stdout == ""
         assert not marker.exists()
 
 
@@ -366,7 +397,6 @@ def test_each_negative_bootstrap_path_keeps_transport_runtime_and_adb_at_zero(
     secret_adb = mcp_harness.root / f"{CANARY}-adb"
     secret_adb.write_text("not executable", encoding="utf-8")
     cases = (
-        (["--config", str(secret_config)], "bootstrap_invalid"),
         (["--adb-executable", str(secret_adb)], "bootstrap_invalid"),
         (
             mcp_harness.arguments(config=secret_config, adb=secret_adb),
@@ -958,7 +988,11 @@ def test_active_session_broken_stdout_cleans_once_and_exits_zero(
                 "params": {
                     "name": TOOL_NAMES[3],
                     "arguments": {
-                        "request": {"schema_version": 1, "device_id": "device"}
+                        "request": {
+                            "schema_version": 1,
+                            "platform": "android",
+                            "device_id": "device",
+                        }
                     },
                 },
             }

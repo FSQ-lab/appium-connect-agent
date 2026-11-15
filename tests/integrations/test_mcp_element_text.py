@@ -24,7 +24,10 @@ from .conftest import CANARY, TOOL_NAMES, McpHarness
 
 
 def _request(**values: object) -> dict[str, object]:
-    return {"request": {"schema_version": 1, **values}}
+    request = {"schema_version": 1, **values}
+    if "device_id" in values:
+        request["platform"] = "android"
+    return {"request": request}
 
 
 def _locator(

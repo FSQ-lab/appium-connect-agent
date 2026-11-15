@@ -37,6 +37,68 @@ from appium_connect_agent.runtime import (
 from appium_connect_agent.runtime._diagnostics import _Operation
 from appium_connect_agent.runtime._http import HTTPResult
 
+
+class _LockTrace:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.held: dict[int, set[str]] = {}
+        self.requests: list[tuple[int, str, frozenset[str]]] = []
+        self.violations: list[str] = []
+
+
+class _InstrumentedLock:
+    def __init__(self, wrapped: Any, name: str, trace: _LockTrace) -> None:
+        self._wrapped = wrapped
+        self._name = name
+        self._trace = trace
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        thread_id = threading.get_ident()
+        other = "usage_lock" if self._name == "managed_guard" else "managed_guard"
+        with self._trace.lock:
+            held = frozenset(self._trace.held.get(thread_id, set()))
+            self._trace.requests.append((thread_id, self._name, held))
+            if other in held:
+                violation = f"{thread_id}:{other}->{self._name}"
+                self._trace.violations.append(violation)
+                raise AssertionError(violation)
+        acquired = bool(self._wrapped.acquire(blocking, timeout))
+        if acquired:
+            with self._trace.lock:
+                self._trace.held.setdefault(thread_id, set()).add(self._name)
+        return acquired
+
+    def release(self) -> None:
+        thread_id = threading.get_ident()
+        self._wrapped.release()
+        with self._trace.lock:
+            held = self._trace.held[thread_id]
+            held.remove(self._name)
+            if not held:
+                del self._trace.held[thread_id]
+
+    def __enter__(self) -> _InstrumentedLock:
+        if not self.acquire():
+            raise AssertionError("instrumented lock acquisition failed")
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object,
+    ) -> None:
+        del exc_type, exc_value, traceback
+        self.release()
+
+
+def _instrument_managed_locks(runtime: Runtime, scope: Any, trace: _LockTrace) -> None:
+    runtime._managed_guard = _InstrumentedLock(
+        runtime._managed_guard, "managed_guard", trace
+    )  # type: ignore[assignment]
+    scope._usage_lock = _InstrumentedLock(scope._usage_lock, "usage_lock", trace)
+
+
 READY = b'{"value":{"ready":true,"build":{"version":"3.15.0"}}}'
 
 
@@ -980,6 +1042,7 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
 ) -> None:
     _, node = _managed_root(tmp_path)
     runtime = Runtime(LocalSettings(node_executable=node))
+    assert runtime.managed_cleanup_pending is False
     scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
     connection = scope.__enter__()
     usage = connection.acquire_usage()
@@ -994,6 +1057,7 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
 
     monkeypatch.setattr(cast(Any, _managed).os, "killpg", observed)
     scope.__exit__(RuntimeError, primary, None)
+    assert runtime.managed_cleanup_pending is True
     assert signals == []
     attached = primary.__dict__["runtime_managed_cleanup_error"]
     assert isinstance(attached, ServiceLifecycleError)
@@ -1005,7 +1069,254 @@ def test_usage_blocked_exit_preserves_body_error_and_sends_no_signal(
     usage.release()
     assert signals == []
     runtime.cleanup_managed()
+    assert runtime.managed_cleanup_pending is False
     assert signal.SIGTERM in signals
+
+
+def test_cleanup_pending_concurrent_state_transitions_do_not_deadlock(
+    tmp_path: Path,
+) -> None:
+    _, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+    connection = scope.__enter__()
+    usage = connection.acquire_usage()
+    start = threading.Event()
+    exit_done = threading.Event()
+    release_done = threading.Event()
+    cleanup_done = threading.Event()
+    pending_observed = threading.Event()
+    observations: list[bool] = []
+    failures: list[BaseException] = []
+
+    def observe() -> None:
+        start.wait()
+        while not cleanup_done.is_set():
+            value = runtime.managed_cleanup_pending
+            observations.append(value)
+            if value:
+                pending_observed.set()
+            time.sleep(0.001)
+        observations.append(runtime.managed_cleanup_pending)
+
+    def exit_scope() -> None:
+        start.wait()
+        try:
+            scope.__exit__(None, None, None)
+        except ServiceLifecycleError as error:
+            if error.code != "service_in_use":
+                failures.append(error)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            exit_done.set()
+
+    def release_usage() -> None:
+        start.wait()
+        exit_done.wait()
+        if not pending_observed.wait(timeout=5.0):
+            failures.append(AssertionError("cleanup pending was not observed"))
+        try:
+            usage.release()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            release_done.set()
+
+    def cleanup() -> None:
+        start.wait()
+        release_done.wait()
+        try:
+            runtime.cleanup_managed()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            cleanup_done.set()
+
+    threads = [
+        threading.Thread(target=observe, daemon=True),
+        threading.Thread(target=exit_scope, daemon=True),
+        threading.Thread(target=release_usage, daemon=True),
+        threading.Thread(target=cleanup, daemon=True),
+    ]
+    completed: list[bool] = []
+    try:
+        for thread in threads:
+            thread.start()
+        start.set()
+        for thread in threads:
+            thread.join(timeout=5.0)
+            completed.append(not thread.is_alive())
+    finally:
+        start.set()
+        exit_done.set()
+        pending_observed.set()
+        release_done.set()
+        cleanup_done.set()
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(timeout=5.0)
+        with suppress(BaseException):
+            usage.release()
+        with suppress(BaseException):
+            scope.__exit__(None, None, None)
+        if runtime.managed_cleanup_pending:
+            with suppress(BaseException):
+                runtime.cleanup_managed()
+
+    assert all(completed)
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+    assert True in observations
+    assert observations[-1] is False
+    assert runtime.managed_cleanup_pending is False
+    scope_owner, cleanup_owner = runtime._snapshot_managed_state()
+    assert scope_owner is cleanup_owner is None
+
+
+def test_managed_and_usage_locks_are_never_nested_in_either_direction(
+    tmp_path: Path,
+) -> None:
+    probe = _LockTrace()
+    probe_guard = _InstrumentedLock(threading.Lock(), "managed_guard", probe)
+    probe_usage = _InstrumentedLock(threading.Lock(), "usage_lock", probe)
+    with (
+        probe_guard,
+        pytest.raises(AssertionError, match="managed_guard->usage_lock"),
+        probe_usage,
+    ):
+        pytest.fail("nested usage lock unexpectedly acquired")
+    with (
+        probe_usage,
+        pytest.raises(AssertionError, match="usage_lock->managed_guard"),
+        probe_guard,
+    ):
+        pytest.fail("nested managed guard unexpectedly acquired")
+    assert len(probe.violations) == 2
+    assert probe.held == {}
+
+    trace = _LockTrace()
+    observed_paths: dict[str, set[str]] = {}
+
+    def exercise(name: str, expected: set[str], action: Any) -> Any:
+        start = len(trace.requests)
+        result = action()
+        requested = {lock_name for _, lock_name, _ in trace.requests[start:]}
+        observed_paths[name] = requested
+        assert expected <= requested
+        return result
+
+    _, node = _managed_root(tmp_path)
+    runtime = Runtime(LocalSettings(node_executable=node))
+    scope = cast(
+        Any,
+        runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1")),
+    )
+    _instrument_managed_locks(runtime, scope, trace)
+    try:
+        connection = cast(
+            RuntimeConnection,
+            exercise(
+                "start_managed",
+                {"managed_guard", "usage_lock"},
+                scope.__enter__,
+            ),
+        )
+        usage = exercise("acquire_usage", {"usage_lock"}, connection.acquire_usage)
+        exercise("usage.release", {"usage_lock"}, usage.release)
+        connection = cast(
+            RuntimeConnection,
+            exercise(
+                "restart_managed",
+                {"managed_guard", "usage_lock"},
+                lambda: runtime.restart_managed(connection),
+            ),
+        )
+        exercise(
+            "stop_managed",
+            {"managed_guard", "usage_lock"},
+            lambda: runtime.stop_managed(connection),
+        )
+    finally:
+        with suppress(BaseException):
+            scope.__exit__(None, None, None)
+        if runtime.managed_cleanup_pending:
+            with suppress(BaseException):
+                runtime.cleanup_managed()
+
+    second_runtime = Runtime(LocalSettings(node_executable=node))
+    second_scope = cast(
+        Any,
+        second_runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1")),
+    )
+    _instrument_managed_locks(second_runtime, second_scope, trace)
+    second_usage: Any = None
+    try:
+        second_connection = cast(
+            RuntimeConnection,
+            exercise(
+                "start_managed_pending_path",
+                {"managed_guard", "usage_lock"},
+                second_scope.__enter__,
+            ),
+        )
+        second_usage = exercise(
+            "acquire_usage_pending_path",
+            {"usage_lock"},
+            second_connection.acquire_usage,
+        )
+
+        def exit_with_usage() -> None:
+            with pytest.raises(ServiceLifecycleError) as blocked:
+                second_scope.__exit__(None, None, None)
+            assert blocked.value.code == "service_in_use"
+
+        exercise(
+            "usage>0 early __exit__",
+            {"managed_guard", "usage_lock"},
+            exit_with_usage,
+        )
+        assert (
+            exercise(
+                "managed_cleanup_pending",
+                {"managed_guard"},
+                lambda: second_runtime.managed_cleanup_pending,
+            )
+            is True
+        )
+        exercise("usage.release pending path", {"usage_lock"}, second_usage.release)
+        second_usage = None
+        exercise(
+            "cleanup_managed",
+            {"managed_guard", "usage_lock"},
+            second_runtime.cleanup_managed,
+        )
+    finally:
+        if second_usage is not None:
+            with suppress(BaseException):
+                second_usage.release()
+        with suppress(BaseException):
+            second_scope.__exit__(None, None, None)
+        if second_runtime.managed_cleanup_pending:
+            with suppress(BaseException):
+                second_runtime.cleanup_managed()
+
+    expected_paths = {
+        "start_managed",
+        "acquire_usage",
+        "usage.release",
+        "restart_managed",
+        "stop_managed",
+        "usage>0 early __exit__",
+        "managed_cleanup_pending",
+        "cleanup_managed",
+    }
+    assert expected_paths <= observed_paths.keys()
+    assert trace.violations == []
+    assert trace.held == {}
+    for _, requested, held in trace.requests:
+        other = "usage_lock" if requested == "managed_guard" else "managed_guard"
+        assert other not in held
 
 
 def test_sigterm_ignoring_child_is_killed_and_all_resources_close(
@@ -1161,6 +1472,7 @@ def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
         assert owner.state == "cleanup_pending"
         assert runtime._managed_scope is owner
         assert runtime._managed_cleanup is owner
+        assert runtime.managed_cleanup_pending is True
         assert cast(Any, scope).process is process
         assert _service_state(root) == "cleanup_pending"
         other = Runtime(LocalSettings(node_executable=node))
@@ -1178,6 +1490,7 @@ def test_cleanup_failure_retains_owner_then_explicit_retry_recovers(
         assert cast(Any, scope).process is None
         assert runtime._managed_scope is None
         assert runtime._managed_cleanup is None
+        assert runtime.managed_cleanup_pending is False
         assert _service_state(root) == "stopped"
         with _coordination.account_lock():
             pass

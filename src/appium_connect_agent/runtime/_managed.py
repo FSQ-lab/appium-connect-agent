@@ -373,25 +373,24 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
 
     def _begin_terminal_disposal(self) -> None:
         operation = self.operation or _Operation(self.control, None)
-        with self.runtime._managed_guard:
-            if not self._registered or self.runtime._managed_scope is not self:
+        if not self._registered or not self.runtime._owns_managed_scope(self):
+            raise operation.error(InvalidStateError, "connection_closed")
+        with self._usage_lock:
+            if (
+                self.state
+                not in (
+                    "active",
+                    "close_requested",
+                    "cleanup_pending",
+                )
+                or self._usages <= 0
+            ):
                 raise operation.error(InvalidStateError, "connection_closed")
-            with self._usage_lock:
-                if (
-                    self.state
-                    not in (
-                        "active",
-                        "close_requested",
-                        "cleanup_pending",
-                    )
-                    or self._usages <= 0
-                ):
-                    raise operation.error(InvalidStateError, "connection_closed")
-                self._usages -= 1
-                if self.state == "active":
-                    self.state = "close_requested"
-                    self._connection = None
-                    self._generation += 1
+            self._usages -= 1
+            if self.state == "active":
+                self.state = "close_requested"
+                self._connection = None
+                self._generation += 1
 
     def _continue_terminal_disposal(self, control: OperationControl) -> None:
         operation = _Operation(
@@ -412,7 +411,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 failure.runtime_managed_cleanup_error = record_error
             with self._usage_lock:
                 self.state = "cleanup_pending"
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             raise failure
         self._cleanup(operation, None)
 
@@ -444,43 +443,38 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         operation: _Operation,
         state: Literal["stopping", "restarting"],
     ) -> None:
-        with self.runtime._managed_guard:
-            if self.runtime._managed_scope is not self:
+        if not self.runtime._owns_managed_scope(self):
+            raise operation.error(InvalidStateError, "connection_closed")
+        with self._usage_lock:
+            if self.state in (
+                "stopping",
+                "restarting",
+                "close_requested",
+                "cleanup_pending",
+            ):
+                raise operation.error(InvalidStateError, "connection_closing")
+            if (
+                self.state != "active"
+                or self._connection is not connection
+                or self._owner_thread != get_ident()
+            ):
                 raise operation.error(InvalidStateError, "connection_closed")
-            with self._usage_lock:
-                if self.state in (
-                    "stopping",
-                    "restarting",
-                    "close_requested",
-                    "cleanup_pending",
-                ):
-                    raise operation.error(InvalidStateError, "connection_closing")
-                if (
-                    self.state != "active"
-                    or self._connection is not connection
-                    or self._owner_thread != get_ident()
-                ):
-                    raise operation.error(InvalidStateError, "connection_closed")
-                if self._usages:
-                    raise operation.error(ServiceLifecycleError, "service_in_use")
-                operation.checkpoint()
-                self.state = state
-                self._connection = None
-                self._generation += 1
-                self.operation = operation
+            if self._usages:
+                raise operation.error(ServiceLifecycleError, "service_in_use")
+            operation.checkpoint()
+            self.state = state
+            self._connection = None
+            self._generation += 1
+            self.operation = operation
 
     def _register(self, operation: _Operation) -> None:
-        with self.runtime._managed_guard:
-            if self.runtime._managed_scope is not None:
-                raise operation.error(EnvironmentBusyError, "environment_busy")
-            self.runtime._managed_scope = self
-            self._registered = True
+        self.runtime._register_managed_scope(self, operation)
+        self._registered = True
 
     def _clear_registration(self) -> None:
-        with self.runtime._managed_guard:
-            if self._registered and self.runtime._managed_scope is self:
-                self.runtime._managed_scope = None
-                self._registered = False
+        if self._registered:
+            self.runtime._clear_managed_scope(self)
+            self._registered = False
 
     def _record(self, state: str, operation: _Operation) -> None:
         _atomic_json(
@@ -899,7 +893,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 self.state = "cleanup_pending"
                 self._connection = None
                 self._generation += 1
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             error.__dict__["runtime_managed_cleanup_error"] = cleanup_error
 
     def _stop_owned(self, operation: _Operation) -> None:
@@ -914,10 +908,10 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 self._record("cleanup_pending", operation)
             with self._usage_lock:
                 self.state = "cleanup_pending"
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             raise
         self.process = None
-        self.runtime._managed_cleanup = None
+        self.runtime._set_managed_cleanup(None)
 
     def _finish_closed(self, original: BaseException | None) -> None:
         try:
@@ -925,12 +919,12 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
         except BaseException:
             with self._usage_lock:
                 self.state = "cleanup_pending"
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             raise
         if not released:
             with self._usage_lock:
                 self.state = "cleanup_pending"
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             return
         with self._usage_lock:
             self._connection = None
@@ -939,7 +933,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
             self.state = "closed"
         self.runtime._active_thread = None
         self._clear_registration()
-        self.runtime._managed_cleanup = None
+        self.runtime._set_managed_cleanup(None)
 
     def stop(self, connection: RuntimeConnection, control: OperationControl) -> None:
         operation = _Operation(
@@ -965,11 +959,11 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 self._record("cleanup_pending", operation)
             with self._usage_lock:
                 self.state = "cleanup_pending"
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             error.__dict__["runtime_managed_cleanup_error"] = cleanup
             return
         self.process = None
-        self.runtime._managed_cleanup = None
+        self.runtime._set_managed_cleanup(None)
         with self._usage_lock:
             self.state = "stopped"
 
@@ -1047,7 +1041,7 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
                 self._record("cleanup_pending", operation)
             except BaseException as record_error:
                 failure.runtime_managed_cleanup_error = record_error
-            self.runtime._managed_cleanup = self
+            self.runtime._set_managed_cleanup(self)
             if exc_value is not None:
                 exc_value.__dict__["runtime_managed_cleanup_error"] = failure
                 return
@@ -1069,9 +1063,9 @@ class _ManagedScope(AbstractContextManager[RuntimeConnection]):
 
 
 def cleanup_managed(runtime: Runtime, control: OperationControl) -> None:
-    pending = runtime._managed_cleanup
+    scope, pending = runtime._snapshot_managed_state()
     if pending is None:
-        if runtime._managed_scope is not None:
+        if scope is not None:
             operation = _Operation(
                 control, runtime._on_progress, phase="cleaning_managed"
             )

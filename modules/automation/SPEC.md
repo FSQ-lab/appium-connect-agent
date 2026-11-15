@@ -644,3 +644,58 @@
 - 截图 PNG `bytes` 与远端 Base64 文本可能含敏感屏幕内容，仅在内存返回给当前直接调用方；严禁写入日志、落盘文件、受控异常消息、测试固定快照或仓库持久化证据。
 - 永久受控测试须使用锁定真实 `Appium-Python-Client==6.0.8` / `selenium==4.51.0` 和本地 HTTP 协议服务覆盖精确 HTTP 路由与载荷（含单 `touch` 指针无冗余设备，以及缺失 `"value"` 键与服务端非 `null` 拒绝）、合法 67 字节最小 1×1 PNG、57 字节空 IDAT/无 IDAT/坏 chunk CRC/尾随字节/Base64/32MiB±1 边界、坐标与 `duration_ms` 类型/值域边界、`duration_ms` 剩余预算门禁、共享 gate、取消/超时/unknown 隔离及异常零泄漏；另须通过全仓质量、发行物隔离安装、独立完整差异审查及获准无敏感页面（Calculator）真机内存截图与坐标触控闭环验收。
 
+
+## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
+
+### Platform And Session Interface
+
+- `AutomationPlatform` 为 `Literal["android", "macos"]`。`SessionInfo` 在既有六字段后追加默认 `platform="android"`；Android 调用与序列化语义不变。公开入口 `create_mac2_session(connection, *, bundle_id=None, app_path=None, arguments=None, no_reset=True, skip_app_kill=None, show_server_logs=False, server_startup_timeout_ms=None, new_command_timeout_seconds=300.0, control=None)` 创建本机 Mac2 Session。
+- Mac2 固定发送 `platformName=Mac`、`appium:automationName=Mac2`、`appium:systemHost=127.0.0.1`，使用独立 `10100..10199` 端口池与单宿主槽位 `macos:local`。它不占用 Android `8200..8299` 端口或设备槽；同进程重叠 Mac2 创建在请求前返回 `device_busy/not_sent`。Session 继续复用既有非阻塞 gate、Runtime usage lease、confirmed quit 释放与 retained uncertain Session 错误合同。
+- `bundle_id` 可省略，否则必须为 1..255 ASCII 且匹配 `[A-Za-z0-9][A-Za-z0-9.-]{0,254}`。`app_path` 只接受绝对 `Path` `.app` bundle；从文件系统根到 bundle、`Contents`、`Info.plist` 的每级 `lstat` 必须无 symlink，bundle/Contents 为目录，Info.plist 为可读普通文件。路径严格 UTF-8、最多 4096 bytes、无控制字符，并以原值发送为 `appium:appPath`。
+- `arguments` 可省略；提供时要求已有 bundle_id 或 app_path，必须为非 str/bytes 的 `Sequence[str]`，最多 64 项，每项严格 UTF-8、最多 4096 code points且无 NUL。布尔参数必须为实际 bool；startup timeout 为 `1000..600000` ms 的实际 int；new-command timeout 为 `0..86400` 的有限数值。全部纯值校验发生在 usage、reservation 与请求前，受控错误不回显路径、arguments 或上游异常原文。
+- `SessionInfo(platform="macos", device_id="macos:local")` 的 `target_app_id` 优先使用显式 bundle_id，否则按 `CFBundleIdentifier`、`appium:bundleId`、`bundleId` 顺序接受合法响应字符串。
+
+### Mac2 Element Locators
+
+- `ElementBy` 支持 `id`、`accessibility id`、`xpath`、`name`、`class name`、`-ios predicate string`、`-ios class chain`。Android 仍仅支持前三项且拒绝 predicate。
+- Mac2 Element 禁止 package 与 raw_id，禁止 parent+xpath；因为 `WebDriverAgentMac`（`FBElementCache.m`）每次 `find_elements` 为同一控件分配全新随机 `NSUUID`，非 `None` 的可选 `predicate`（1..4096 code points 严格 UTF-8 非 NUL 字符串）仅支持 `id`、`accessibility id`、`name`、`class name` 与 `-ios predicate string` 五种策略（`xpath + predicate` 与 `-ios class chain + predicate` 在创建时返回 `unsupported_operation`），并在单次 `-ios predicate string` 请求内无损合取为 `identifier == "<escaped>" AND (<predicate>)`、`amType == "<escaped>" AND (<predicate>)` 或 `(<value>) AND (<predicate>)` 后强制唯一性合同。Mac2 不执行 Android `disableIdLocatorAutocompletion` Settings transaction。
+- AUTO-MAC-01A 尚未启用 Mac2 Element 动作与 Device 方法。各方法先完成纯值参数校验，再在 gate 与任何外部请求前返回 `unsupported_operation/not_sent`；后续 AUTO-MAC-01B 单独激活。
+
+### XCUI Attribute And Structure Observation
+
+- Mac2 `Element.inspect` 只接受最多 14 个不重复属性：`id,text,type,label,title,value,placeholder_value,element_type,enabled,focused,selected,hittable,displayed,bounds`。跨平台专属属性在 gate/I/O 前返回 `unsupported_operation/not_sent`。读取使用 Mac2 公开 XCUI 属性与 WebElement state/text/rect；`element_type` 的非负十进制字符串转 int，缺失为 missing，非法值为 unknown。
+- Mac2 `observe_tree` 不读写 Android Settings。它先执行一次 `macos: listDisplays`，严格验证 display map；仅在恰好一个主屏位于 `(0,0)` 且宽高为正整数时生成已知 Viewport，否则生成 unknown Viewport。随后取得一次 page source。`inspect_structure` 直接取得 page source。SourceMetadata 固定 `enable_multi_windows=False, allow_invisible_elements=True, snapshot_max_depth=None`。
+- XCUI XML 继续使用 defusedxml，并沿用 4 MiB、20000 nodes、128 depth、64 attributes/node 等安全上限。根 tag 必须以 `XCUIElementType` 开头，且根自身是顶层真实节点。节点映射保留 type/identifier/label/title/value/placeholderValue/elementType/enabled/selected 与整数 x/y/width/height；text 严格按 `value -> label -> placeholderValue -> title -> ""` 合成。零尺寸或未知 Viewport 节点保持 unknown 可见性；已知正尺寸结合主屏计算 relation/visibility。
+- Mac2 tree JSON 字段为 `type,id,text,label,title,value,placeholder_value,element_type,enabled,selected,bounds`；`XCUIElementType` 拆为 namespace，默认 enabled=true 与 selected=false 省略，父子同 bounds 使用 `"parent"`。完整文档沿用 65536-byte full→visible+ancestors→`observation_too_large` 合同。
+- Mac2 局部结构链只接受无 predicate 的 `id`、`accessibility id`、`name`、`class name`；前三者精确匹配 XML `identifier`，后者精确匹配 tag。xpath、predicate 与 iOS predicate/class-chain locator 在任何外部请求前返回 `structure_scope_unavailable/not_sent`。
+- Android `LocatorValue` JSON 继续只含 `by,package,parent,raw_id,value` 五键，既有 TreeObservation、ElementInspection、RawStructureObservation canonical bytes 不变；Mac2 scope locator 额外序列化 `predicate`。
+
+## AUTO-MAC-01B Mac2 Desktop Element And Device Actions
+
+### Dependencies, Values And Cross-Platform Gate
+
+- 本增量固定复用 `Appium-Python-Client==6.0.8`、`selenium==4.51.0`、AUTO-MAC-01A 的 Mac2 Session/唯一 Element resolver/非阻塞 operation gateway，以及 Python 3.11 标准库；零新增或升级依赖，不暴露 WebDriver、elementId、raw HTTP 或私有客户端入口。
+- `appium_connect_agent.automation` 公开 `MACOS_MODIFIER_CAPS_LOCK=1`、`MACOS_MODIFIER_SHIFT=2`、`MACOS_MODIFIER_CONTROL=4`、`MACOS_MODIFIER_OPTION=8`、`MACOS_MODIFIER_COMMAND=16`、`MACOS_MODIFIER_FUNCTION=32`，以及不可变 `MacKeyStroke(key: str, modifier_flags: int = 0)`。
+- 所有 `modifier_flags` / `key_modifier_flags` 必须为严格 `int`（排除 `bool`）且位于 `0..63`。按键序列必须为排除 `str`/`bytes` 的 `Sequence[str | MacKeyStroke]`，含 `1..1024` 项；每个 key 必须为严格 UTF-8、无 NUL、恰好一个 Unicode 字符或 WDA `AMKeyboardUtils.m` 定义的 `XCUIKeyboardKey*` 名称。序列化只发送字符串或 `{"key": key, "modifierFlags": flags}`。
+- 所有纯值校验发生在 Session gate 和外部请求前。Android 既有动作保持原协议；Mac2 专属动作在 Android 上返回 `unsupported_operation/not_sent`，Android 专属动作在 Mac2 上同样零请求拒绝。受控错误、日志与证据不得回显按键、剪贴板文本、路径或应用参数。
+
+### Element Interface And Protocol Mapping
+
+- `click`、`double_click`、`long_click` 增加可选 `key_modifier_flags`；Mac2 分别发送一次 `macos: click`、`macos: doubleClick`、`macos: press`。新增 `right_click` 与 `hover`，分别发送 `macos: rightClick` 与 `macos: hover`。除 hover 只要求唯一且 displayed 外，其他点击动作要求唯一、displayed、enabled；press 的 `duration_ms / 1000.0` 必须严格小于剩余总预算。
+- `send_keys` 与 `clear` 在 Mac2 上复用 W3C WebElement 路由、现有严格 UTF-8/大小/末尾字面 `\\n` 校验及唯一 displayed+enabled 等待。`replace_element_value` 仍为 Android 专属，在 Mac2 上零请求拒绝。
+- `send_macos_keys` 发送一次 `macos: keys`（含 `elementId`）；`scroll_by` 发送一次 `macos: scroll`；`macos_swipe` 发送一次 `macos: swipe`。scroll delta 必须为排除 bool 的有限数值；direction 只取 up/down/left/right；velocity 可省略，否则必须为有限正数。三者分别按契约等待唯一 displayed+enabled 或 displayed 目标。
+- `drag_and_drop` 的目标比例默认均为 `0.5`。Android 只接受 `duration_ms=None` 且 `key_modifier_flags=None`，继续发送既有 `mobile: dragGesture`。Mac2 duration 默认 500ms，否则为严格整数 `1..60000`；等待 source/destination 唯一且 displayed，读取正尺寸 rect，按 source 中心与 destination 内部比例点计算整数坐标，在剩余预算门禁后发送一次 `macos: clickAndDrag`。
+- Mac2 的 `swipe_gesture`、`scroll_gesture`、`scroll`、`perform_editor_action` 保持 `unsupported_operation/not_sent`。所有 Mac2 execute-method 动作只接受精确 `None` 成功值；非法返回为 `command_failed/response_received`，不重放。
+
+### Device Interface And Protocol Mapping
+
+- `take_screenshot` 在 Mac2 上复用 AIF-11 的 W3C `Command.SCREENSHOT` 与 32 MiB PNG framing/CRC32 完整校验。`get_clipboard_text` / `set_clipboard_text` 分别映射 `macos: getClipboard` / `macos: setClipboard`，复用严格 Base64、UTF-8 与 65536-byte 边界；Mac2 不支持非 None label。
+- `activate_app`、`terminate_app`、`query_app_state` 在 Mac2 上按 1..255 ASCII Apple bundle ID grammar 校验并映射 `macos: activateApp`、`macos: terminateApp`、`macos: queryAppState`；返回分别严格为 None、bool、`0..4` 的实际 int。`launch_app` 至少提供 bundle_id 或绝对非 symlink `.app` bundle 路径，可附最多 64 个无 NUL 严格 UTF-8 arguments，发送一次 `macos: launchApp`；Android 只做纯语法校验后零请求拒绝，不为路径执行 lstat。
+- `tap_at` 在 Mac2 上发送 `macos: click`。新增 `click_at`、`hover_at`、`scroll_at` 与系统级 `send_keys`，分别映射获证 Mac2 execute methods。坐标必须为严格整数 `0..2147483647`；`click_at` 只接受 left/right、严格 bool double，拒绝 right+double；scroll delta 为有限数值。
+- `swipe_between` 在 Android 上维持单 touch W3C actions，非 None modifier 零请求拒绝；Mac2 在 duration 预算门禁后发送一次 `macos: clickAndDrag`。Android 专属 `back`、keycode、hide-keyboard、alert、status-bar、install/remove 在 Mac2 上继续零请求拒绝。
+- 所有成功动作只表示固定协议命令取得合法终态，不保证控件命中、业务页面变化、文本最终值、应用健康或手势效果。沿用 gateway 的单 operation_id、共享总预算、成功事实优先、no-replay、response_unknown 转 uncertain 与资源保留合同。
+
+### Verification Boundary
+
+- 永久受控测试必须使用锁定真实 Python 客户端连接本地 `ThreadingHTTPServer(poll_interval=0.01)`，覆盖精确路由/载荷/返回类型、Element 等待与几何、按键与修饰位、坐标/数值/路径边界、跨平台零请求门禁、预算门禁、非法响应、共享 gate、取消/超时/unknown 与既有 Android 回归。
+- 受控协议测试通过不等于真实 Mac2 桌面链路验收。获准真实 Calculator 冒烟须由集成 owner 使用固定 Mac2 资格环境执行，并单独记录 Session 关闭、应用恢复、隐私与副作用证据。

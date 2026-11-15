@@ -628,3 +628,26 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - 多Session/队列、attach/persistence、第二Registry/gate、HTTP/remote、provider专用模型、通用Agent插件或新平台/Host资格。
 
 完整已确认设计、库复用、FSQ双转换器实证、隐私/五倍timeout边界及已由commander合入的精确根SPEC delta全文见[INT-TOOLS-02设计](../../docs/superpowers/specs/2026-11-13-integrations-device-app-tools-design.md)。
+
+## INT-MAC-01 macOS Mac2 And Optional ADB Cutover
+
+本节是已确认的 clean cutover 合同；与此前 Android-only 或 19-tool 条款冲突时以本节及根 SPEC 的 INT-MAC-01 条款为准。实施与验收状态以 Issue #33 为准，SPEC 本身不授予设备、提交、push、merge 或发布权限。
+
+### Single source and bootstrap
+
+- 唯一不可变 `TOOL_CATALOG` 精确有序包含 22 项：原 19 项后固定追加 `appium.device.screenshot`、`appium.device.pointer`、`appium.macos.keys`；ToolCall/CLI 名称仅将点号替换为下划线。MCP、FSQ ToolCall 与 Unix-socket CLI 继续共享同一 `Application`、request schema、Session Registry、预算与错误语义。
+- `Application`、`SyncApplication`、MCP bootstrap 与 CLI daemon bootstrap 的 `adb_executable` 可省略。非 `None` 值必须在协议或设备 I/O 前通过绝对、现存、普通可执行文件校验；capability 以 `adb_configured` 报告该事实。省略时不读取或推导 `PATH`、`ANDROID_HOME` 或 SDK，`devices.list` 零 worker/零 I/O 返回 `adb_not_configured/not_sent`，Mac2 路径可独立工作。
+- capability 固定按序报告 Android UiAutomator2 与 macOS Mac2 两个平台分支；`runtime.check` 增加 `target_driver=uiautomator2|mac2`，其中 `external_connection+mac2` 在 Runtime I/O 前返回 `unsupported_operation/not_sent`。
+
+### Multi-platform session and tools
+
+- `session.open` 是以显式 `platform=android|macos` 判别的 closed union。Android 分支调用公开 `create_session`；macOS 分支调用公开 `create_mac2_session`，接受已验证的 bundle ID、词法绝对 `.app` 路径、arguments、reset/kill 与 command-timeout 参数。Session entry、status、close 与 tombstone 全程保存并返回平台；Mac2 的设备 ID 固定为 `macos:local`。
+- Locator 支持 `id`、`accessibility_id`、`xpath`、`name`、`class_name`、`ios_predicate_string`、`ios_class_chain` 与可选 predicate，并原样交给 Automation 公开 Interface 权威校验。Android observation locator 文档继续省略 predicate 键；Mac2 文档保留显式 `predicate: null|string`。
+- click 固定五分支并支持 modifier flags；gesture 固定六分支；application lifecycle 固定 activate、terminate、query_state、launch 四分支。Android-only Device/package 工具在 Mac2 Session 上零下层 I/O 返回 `unsupported_operation/not_sent`，`macos.keys` 在 Android Session 上同样拒绝；observation、Element 通用操作、lifecycle、screenshot 与 pointer 可跨平台使用。
+- screenshot 只返回 Base64 PNG；原始 PNG 上限精确为 3,000,000 bytes，超限返回 `screenshot_too_large/response_received` 且 `completed_steps=[screenshot_captured]`。pointer 固定 tap、click、hover、scroll、drag 五分支且不回显坐标；macOS keys 固定 system/element 两分支、精确 46 个已确认 named key 与单字符 key，不回显按键或 locator。
+
+### Privacy, reuse and limits
+
+- `SessionOpenRequest`、`AppLifecycleRequest`、`AppPackageRequest`、`DeviceClipboardRequest`、`DevicePointerRequest`、`MacosKeysRequest` 使用同一私有 RootModel 校验错误；`.app`/`.apk` 路径、arguments、clipboard set、keystrokes、locator、坐标及下层标识不得进入错误文本、日志、stderr 或持久证据。
+- 零新增或升级依赖；只使用已批准版本的 Pydantic、MCP、AnyIO、Python 标准库及 Runtime/Automation/Contracts 公开 Interface，禁止导入下层私有模块或建立第二协议/registry/tool 表。
+- 不交付自动导航、后观测、验证、retry/replay/rollback、attach/recovery、clear-app、HTTP、任意 shell/script、ADB 推导、多 Session、其他平台或具体 Host 资格。完整字段、schema、错误、帧边界及验证矩阵见[INT-MAC-01 详细设计](../../docs/superpowers/specs/2026-11-14-integrations-macos-mac2-tools-design.md)。

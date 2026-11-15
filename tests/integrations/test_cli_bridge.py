@@ -99,7 +99,7 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
-        application = Application(LocalSettings(), tmp_path / "adb", surface="cli")
+        application = Application(LocalSettings(), None, surface="cli")
         result = await application.dispatch(
             "appium_capabilities_get", {"schema_version": 1}
         )
@@ -109,12 +109,15 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
             "transport": "unix_socket",
             "protocol_target": None,
             "host_compatibility": "unqualified",
-            "adb_configured": True,
-            "platform": {
-                "host": "macos",
-                "target": "android_native",
-                "driver": "uiautomator2",
-            },
+            "adb_configured": False,
+            "platforms": [
+                {
+                    "host": "macos",
+                    "target": "android_native",
+                    "driver": "uiautomator2",
+                },
+                {"host": "macos", "target": "macos_desktop", "driver": "mac2"},
+            ],
             "tools": list(TOOL_CATALOG.tool_names),
             "limitations": list(application.capabilities().data.limitations),
         }
@@ -456,7 +459,6 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
 
     monkeypatch.setattr(subprocess, "Popen", _FakeProcess)
     config = tmp_path / "private-config.toml"
-    adb = tmp_path / "private-adb"
     assert (
         cli.main(
             (
@@ -464,8 +466,6 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
                 "start",
                 "--config",
                 os.fspath(config),
-                "--adb-executable",
-                os.fspath(adb),
                 "--socket",
                 os.fspath(socket_path),
             )
@@ -477,10 +477,10 @@ def test_start_uses_private_framed_bootstrap_and_ack_without_sensitive_argv(
     assert not worker.is_alive()
     command_text = " ".join(captured["command"])
     assert os.fspath(config) not in command_text
-    assert os.fspath(adb) not in command_text
     assert os.fspath(socket_path) not in command_text
     assert captured["ack"] == b"\x06"
     bootstrap = decode_json_object(captured["bootstrap"], maximum=16 * 1024)
+    assert bootstrap["adb_executable"] is None
     assert bootstrap["idle_timeout_seconds"] == 900.0
     options = cast(dict[str, object], captured["options"])
     command = cast(list[str], captured["command"])
@@ -735,6 +735,77 @@ def test_child_startup_exception_rolls_back_before_ack(
                 os.close(descriptor)
 
 
+@pytest.mark.parametrize("value", [None, "a", "a" * 4096])
+def test_bootstrap_adb_executable_accepts_exact_bounds(value: str | None) -> None:
+    request = BootstrapRequest(
+        protocol_version=1,
+        config="config.toml",
+        adb_executable=value,
+        socket="bridge.sock",
+        idle_timeout_seconds=1.0,
+    )
+    assert request.adb_executable == value
+
+
+@pytest.mark.parametrize("value", ["", "a" * 4097, "\ud800"])
+def test_bootstrap_adb_executable_rejects_before_application_without_echo(
+    value: str,
+) -> None:
+    with pytest.raises(ValueError) as caught:
+        BootstrapRequest(
+            protocol_version=1,
+            config="config.toml",
+            adb_executable=value,
+            socket="bridge.sock",
+            idle_timeout_seconds=1.0,
+        )
+    if value:
+        assert value not in str(caught.value)
+
+
+@pytest.mark.parametrize("value", ["", "a" * 4097, "\ud800"])
+def test_invalid_bootstrap_frame_never_constructs_application_or_echoes_input(
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bootstrap_read, bootstrap_write = os.pipe()
+    ready_read, ready_write = os.pipe()
+
+    def forbidden_run(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("Application construction must not be reached")
+
+    monkeypatch.setattr(anyio, "run", forbidden_run)
+    payload = json.dumps(
+        {
+            "protocol_version": 1,
+            "config": "config.toml",
+            "adb_executable": value,
+            "socket": "bridge.sock",
+            "idle_timeout_seconds": 1.0,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    try:
+        cli._write_fd_frame(bootstrap_write, payload)
+        os.close(bootstrap_write)
+        bootstrap_write = -1
+        assert (
+            cli._daemon_child(["--daemon-child", str(bootstrap_read), str(ready_write)])
+            == 2
+        )
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+    finally:
+        for descriptor in (bootstrap_write, ready_read, ready_write):
+            if descriptor >= 0:
+                with suppress(OSError):
+                    os.close(descriptor)
+
+
 class _StatefulResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -909,7 +980,7 @@ def test_new_device_tool_calls_through_actual_cli_daemon(
                     "call",
                     "appium_session_open",
                     "--json-args",
-                    '{"schema_version":1,"device_id":"cli-device-tools"}',
+                    '{"schema_version":1,"platform":"android","device_id":"cli-device-tools"}',
                     "--socket",
                     os.fspath(endpoint),
                 )
@@ -974,7 +1045,7 @@ def test_idle_timeout_closes_application_and_removes_socket(
         endpoint = account / "bridge.sock"
         outcome = await create_and_serve_daemon(
             LocalSettings(),
-            tmp_path / "adb",
+            None,
             endpoint,
             0.05,
             account_directory=account,
@@ -1427,7 +1498,7 @@ def test_stop_cancels_partial_header_before_releasing_endpoint(
         async def daemon() -> None:
             result = await create_and_serve_daemon(
                 LocalSettings(),
-                tmp_path / "adb",
+                None,
                 endpoint,
                 30.0,
                 account_directory=account,

@@ -32,6 +32,9 @@ TOOL_NAMES = (
     "appium.device.status_bar",
     "appium.app.lifecycle",
     "appium.app.package",
+    "appium.device.screenshot",
+    "appium.device.pointer",
+    "appium.macos.keys",
 )
 AUTOMATION_STATUS = {
     "feature_qualification": "aif_01_to_10_individually_done",
@@ -287,10 +290,14 @@ elif MODE != "passthrough":
             ),
         }
 
-    def diagnose(self: object, control: object = None) -> DiagnosticReport:
-        record("runtime_diagnose", **control_values(control))
+    def diagnose(
+        self: object,
+        target_driver: str = "uiautomator2",
+        control: object = None,
+    ) -> DiagnosticReport:
+        record("runtime_diagnose", target_driver=target_driver, **control_values(control))
+        current = report()
         if MODE == "runtime_known":
-            current = report()
             error = RuntimeTimeoutError(
                 "operation_timeout", current.operation_id, current
             )

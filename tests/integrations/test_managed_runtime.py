@@ -134,12 +134,12 @@ def test_managed_session_lifecycle_is_shared_by_non_mcp_surfaces(
                 managed_port=4723,
                 managed_base_path="/wd/hub",
             ),
-            tmp_path / "adb",
+            None,
             surface=cast(Literal["toolcall", "cli"], surface),
         )
         opened = await application.dispatch(
             "appium_session_open",
-            {"schema_version": 1, "device_id": "device-1"},
+            {"schema_version": 1, "platform": "android", "device_id": "device-1"},
         )
         opened_value = opened.model_dump(mode="json")
         assert opened_value["data"]["ownership"] == surface
@@ -184,13 +184,17 @@ def test_managed_uncertain_shutdown_is_degraded_without_destructive_retry(
                 managed_host="127.0.0.1",
                 managed_port=4723,
             ),
-            tmp_path / "adb",
+            None,
             surface=cast(Literal["toolcall", "cli"], surface),
         )
         with pytest.raises(application_module.ApplicationError) as caught:
             await application.dispatch(
                 "appium_session_open",
-                {"schema_version": 1, "device_id": "device-uncertain"},
+                {
+                    "schema_version": 1,
+                    "platform": "android",
+                    "device_id": "device-uncertain",
+                },
             )
         assert caught.value.data.code == "session_create_unknown"
         assert caught.value.data.session_state == "uncertain"

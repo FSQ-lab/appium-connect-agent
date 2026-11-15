@@ -45,7 +45,7 @@ class _ApplicationFactory(Protocol):
     def __call__(
         self,
         settings: LocalSettings,
-        adb_executable: Path,
+        adb_executable: Path | None,
         *,
         surface: Literal["cli"],
     ) -> Application: ...
@@ -274,7 +274,7 @@ async def serve_daemon(
 
 async def create_and_serve_daemon(
     settings: LocalSettings,
-    adb_executable: Path,
+    adb_executable: Path | None,
     socket_path: Path,
     idle_timeout_seconds: float,
     *,

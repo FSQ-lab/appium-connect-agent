@@ -48,14 +48,14 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "52d5d369bd0f0173fe18918a7ababa47a8aad7f85356163aa890ca9d75178c57"
+    "43d35ec7fa39418fe68a6e8d5059f2f56396feacd0861cf67850cd8fd91dc922"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3720
+CAPABILITY_MAX_CANONICAL_BYTES = 3858
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
-SESSION_OPEN_MAX_CANONICAL_BYTES = 5601
-SESSION_STATUS_MAX_CANONICAL_BYTES = 5604
-SESSION_CLOSE_MAX_CANONICAL_BYTES = 5601
+SESSION_OPEN_MAX_CANONICAL_BYTES = 5622
+SESSION_STATUS_MAX_CANONICAL_BYTES = 5625
+SESSION_CLOSE_MAX_CANONICAL_BYTES = 5622
 ELEMENT_TEXT_MAX_CANONICAL_BYTES = 2493
 ELEMENT_CLICK_MAX_CANONICAL_BYTES = 2491
 DEVICE_BACK_MAX_CANONICAL_BYTES = 2490
@@ -82,6 +82,9 @@ ERROR_WIRE_BYTES = {
     TOOL_NAMES[16]: 6892,
     TOOL_NAMES[17]: 6888,
     TOOL_NAMES[18]: 6886,
+    TOOL_NAMES[19]: 6892,
+    TOOL_NAMES[20]: 6889,
+    TOOL_NAMES[21]: 6885,
 }
 
 
@@ -205,6 +208,7 @@ def maximum_session_results() -> tuple[
     ) -> SessionData:
         return SessionData(
             ownership="mcp",
+            platform="android",
             session_handle="s_" + ("a" * 32),
             session_state=state,
             device_id="\U00010000" * 1024,
@@ -334,24 +338,19 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
 
         request_fields = {
             TOOL_NAMES[0]: {"schema_version"},
-            TOOL_NAMES[1]: {"schema_version", "mode", "timeout_seconds"},
-            TOOL_NAMES[2]: {"schema_version", "timeout_seconds"},
-            TOOL_NAMES[3]: {
+            TOOL_NAMES[1]: {
                 "schema_version",
-                "device_id",
-                "app_id",
-                "app_path",
-                "auto_launch",
-                "force_app_launch",
-                "should_terminate_app",
-                "new_command_timeout_seconds",
+                "mode",
+                "target_driver",
                 "timeout_seconds",
             },
+            TOOL_NAMES[2]: {"schema_version", "timeout_seconds"},
             TOOL_NAMES[4]: {"schema_version", "session_handle"},
             TOOL_NAMES[5]: {"schema_version", "session_handle", "timeout_seconds"},
         }
         session_fields = {
             "ownership",
+            "platform",
             "session_handle",
             "session_state",
             "device_id",
@@ -365,7 +364,7 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
                 "protocol_target",
                 "host_compatibility",
                 "adb_configured",
-                "platform",
+                "platforms",
                 "tools",
                 "limitations",
             },
@@ -382,11 +381,15 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
             request_schema = schema_target(
                 input_schema, input_schema["properties"]["request"]
             )
-            assert request_schema["type"] == "object"
-            assert request_schema["additionalProperties"] is False
-            assert_closed_objects(request_schema)
-            assert set(request_schema["properties"]) == request_fields[tool.name]
-            assert request_schema["properties"]["schema_version"]["const"] == 1
+            if tool.name == TOOL_NAMES[3]:
+                assert len(request_schema["oneOf"]) == 2
+                assert request_schema["discriminator"]["propertyName"] == "platform"
+            else:
+                assert request_schema["type"] == "object"
+                assert request_schema["additionalProperties"] is False
+                assert_closed_objects(request_schema)
+                assert set(request_schema["properties"]) == request_fields[tool.name]
+                assert request_schema["properties"]["schema_version"]["const"] == 1
 
             output_schema = tool.output_schema
             assert output_schema is not None
@@ -470,24 +473,32 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                 "protocol_target": "2026-07-28",
                 "host_compatibility": "unqualified",
                 "adb_configured": True,
-                "platform": {
-                    "host": "macos",
-                    "target": "android_native",
-                    "driver": "uiautomator2",
-                },
+                "platforms": [
+                    {
+                        "host": "macos",
+                        "target": "android_native",
+                        "driver": "uiautomator2",
+                    },
+                    {
+                        "host": "macos",
+                        "target": "macos_desktop",
+                        "driver": "mac2",
+                    },
+                ],
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "native_observation_element_actions_device_system_controls_and_app_management",
+                    "android_and_macos_native_automation",
                     "no_automatic_post_action_observation",
                     "clipboard_current_caller_only",
                     "status_bar_output_current_caller_only",
-                    "local_apk_path_only",
+                    "local_apk_and_macos_app_paths_only",
                     "package_remove_no_data_deletion_guarantee",
                     "ime_requires_explicit_element_and_action",
-                    "gesture_coordinates_not_exposed",
+                    "explicit_screen_coordinates_only",
                     "no_automatic_navigation",
                     "no_node_cache",
                     "observation_document_65536_bytes",
+                    "screenshot_png_3000000_bytes",
                     "single_session_capacity",
                     "opaque_handle_process_local",
                     "no_session_attach_recovery",
