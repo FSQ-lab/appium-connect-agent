@@ -32,8 +32,13 @@ from tests.automation.test_observation import (
 from .conftest import CANARY, SECRET_PATH, TOOL_NAMES, McpHarness
 
 _HANDLE_PATTERN_LENGTH = 34
+_DOCUMENT_MAX_CANONICAL_BYTES = {
+    "tree": 524_288,
+    "attributes": 65_536,
+    "structure": 65_536,
+}
 _OBSERVATION_MAX_CANONICAL_BYTES = {
-    "tree": 68_124,
+    "tree": 526_876,
     "attributes": 68_130,
     "structure": 68_129,
 }
@@ -179,7 +184,7 @@ def _assert_observation(value: dict[str, Any], mode: str, kind: str) -> dict[str
     assert document["kind"] == kind
     assert value["operation_id"] == document["operation_id"]
     assert document["upstream_completeness"] == "unknown"
-    assert len(_canonical(value)) <= 69_632
+    assert len(_canonical(value)) <= _OBSERVATION_MAX_CANONICAL_BYTES[mode]
     return document
 
 
@@ -206,10 +211,10 @@ def _assert_maximum_outer_bytes(value: dict[str, Any], mode: str) -> Observation
     model = ObservationResult.model_validate_json(_canonical(maximum))
     validated = model.model_dump(mode="json", by_alias=True, warnings=False)
     validated_document = cast(dict[str, Any], validated["data"]["document"])
-    assert len(_canonical(validated_document)) == 65_536
+    assert len(_canonical(validated_document)) == _DOCUMENT_MAX_CANONICAL_BYTES[mode]
     encoded = canonical_json(model).encode("utf-8")
     assert len(encoded) == _OBSERVATION_MAX_CANONICAL_BYTES[mode]
-    assert len(encoded) <= 69_632
+    assert len(encoded) <= _OBSERVATION_MAX_CANONICAL_BYTES[mode]
     return model
 
 
@@ -542,7 +547,7 @@ def test_controlled_protocol_covers_root_scoped_attributes_and_both_structures(
 
                 hidden_large = node_xml(
                     resource_id="com.example:id/hidden",
-                    text="x" * 66_000,
+                    text="x" * 525_000,
                     displayed="false",
                 )
                 visible = node_xml(resource_id="com.example:id/visible")
@@ -644,12 +649,12 @@ def test_document_size_lower_failure_no_cache_and_outer_defensive_limit(
                 baseline = _assert_observation(
                     _structured(await call_tree(client, handle)), "tree", "tree"
                 )
-                padding = 65_536 - len(_canonical(baseline))
+                padding = 524_288 - len(_canonical(baseline))
                 assert padding > 0
                 service.source = basic_xml(node_xml(text="x" * padding))
                 maximum_result = _structured(await call_tree(client, handle))
                 maximum = _assert_observation(maximum_result, "tree", "tree")
-                assert len(_canonical(maximum)) == 65_536
+                assert len(_canonical(maximum)) == 524_288
                 maximum_models.append(
                     _assert_maximum_outer_bytes(maximum_result, "tree")
                 )

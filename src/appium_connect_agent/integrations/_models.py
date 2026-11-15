@@ -26,6 +26,16 @@ from pydantic import (
 )
 
 _MAX_SUCCESS_BYTES = 4 * 1024 * 1024
+_OBSERVATION_DOCUMENT_MAX_BYTES = {
+    "tree": 524_288,
+    "attributes": 65_536,
+    "structure": 65_536,
+}
+_OBSERVATION_RESULT_MAX_BYTES = {
+    "tree": 526_876,
+    "attributes": 68_130,
+    "structure": 68_129,
+}
 _CODE_PATTERN = r"^[a-z0-9_]{1,128}$"
 _CALL_ID_PATTERN = r"^c_[A-Za-z0-9_-]{22}$"
 _ERROR_OPERATION_ID_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
@@ -320,7 +330,7 @@ CapabilityLimitations: TypeAlias = tuple[
     Literal["explicit_screen_coordinates_only"],
     Literal["no_automatic_navigation"],
     Literal["no_node_cache"],
-    Literal["observation_document_65536_bytes"],
+    Literal["tree_document_524288_bytes_attributes_structure_65536_bytes"],
     Literal["screenshot_png_3000000_bytes"],
     Literal["single_session_capacity"],
     Literal["opaque_handle_process_local"],
@@ -2206,8 +2216,10 @@ def canonical_value_and_json(model: BaseModel) -> tuple[dict[str, Any], str]:
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8", errors="strict")
-    if isinstance(model, ObservationResult) and len(encoded) > 69_632:
-        raise ValueError("observation result exceeds the defensive ceiling")
+    if isinstance(model, ObservationResult):
+        maximum = _OBSERVATION_RESULT_MAX_BYTES[model.data.mode]
+        if len(encoded) > maximum:
+            raise ValueError("observation result exceeds the defensive ceiling")
     if (
         not isinstance(model, (ToolErrorData, ObservationResult))
         and len(encoded) > _MAX_SUCCESS_BYTES
