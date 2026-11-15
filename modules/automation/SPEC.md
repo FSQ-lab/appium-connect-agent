@@ -71,7 +71,7 @@
 
 ### Public Interface And Local Snapshots
 
-- 同步入口为 `create_session(connection: RuntimeConnection, device_id: str, *, app_id: str | None = None, app_path: Path | None = None, auto_launch: bool = False, force_app_launch: bool = False, no_reset: bool = True, full_reset: bool = False, should_terminate_app: bool = False, new_command_timeout_seconds: float = 500, capabilities: Mapping[str, JsonValue] | None = None, control: OperationControl | None = None) -> Session`。
+- 同步入口为 `create_session(connection: RuntimeConnection, device_id: str, *, app_id: str | None = None, app_path: Path | None = None, auto_launch: bool = False, force_app_launch: bool = False, no_reset: bool = True, full_reset: bool = False, should_terminate_app: bool = False, new_command_timeout_seconds: float = 500, uiautomator2_wait_for_idle_timeout_ms: int | None = None, capabilities: Mapping[str, JsonValue] | None = None, control: OperationControl | None = None) -> Session`。
 - `Session` 生命周期入口包括 `session_info() -> SessionInfo`、`quit(*, control: OperationControl | None = None) -> None` 与限定的 `dispose(*, control: OperationControl | None = None) -> None`；后续 AIF 条款另增加 Element、Device 与观测能力，但不公开底层 WebDriver、任意命令执行、上下文管理器或按 ID 找回 Session。
 - `SessionInfo` 是不可变本地快照，字段为本库 `id`、`appium_session_id: str | None`、`device_id`、`target_app_id: str | None`、`state` 和 `busy`。`state` 只取 `creating`、`active`、`uncertain`、`disposing`、`disposed`、`closing`、`closed`；读取不发网络或设备命令，不重置 Session 空闲计时。
 - 创建请求进入未知状态时，抛出的 `ResourceStateError` 携带仍可达的 `session: Session`；uncertain Session 不允许普通命令或再次发送 quit，只可读取 `session_info()`，或在精确 managed ownership 条件下由调用方显式请求 terminal `dispose()`。核心不维护可按 ID 查询的公共 Registry。
@@ -81,7 +81,8 @@
 - `device_id` 必须为 1–1,024 个字符且不含空白或控制字符。`app_id` 如提供必须为 1–255 个字符且不含空白或控制字符。`app_path` 如提供必须是本机绝对、现存、可读的普通 `.apk` 文件；不接受 URL、目录、`.apks` 或路径回退。
 - `app_id`/`app_path` 四种组合均允许：均无为 device-only；仅 app_id 为已安装应用；仅 app_path 由 Appium 检测 package/activity；两者都有时 app_id 为显式目标。本库不解析 APK。显式 app_id 优先成为 target_app_id；否则只接受创建响应中可靠的 `appium:appPackage` 或 `appPackage` 字符串，没有则为 `None`。
 - 布尔参数必须是实际 `bool`；`new_command_timeout_seconds` 必须是有限非负数，0 沿 Appium 语义禁用空闲回收。`no_reset=true` 与 `full_reset=true` 作为冲突在请求前拒绝；其余应用参数按官方交互发送，不自行改写为 restart/keep 模式。
-- 固定能力为 `platformName=Android`、`appium:automationName=UiAutomator2`、`appium:udid=device_id`、应用输入、一等布尔/空闲参数、内部 `appium:systemPort`，以及 `appium:settings[enableMultiWindows]=true`。systemPort 从 8200–8299 中按升序保留；100 个均被本进程占用时明确失败，不交给上游随机选择。
+- `uiautomator2_wait_for_idle_timeout_ms` 默认 `None`；`None` 完全省略对应 initial Setting。显式值必须满足 `type(value) is int`，严格排除 `bool` 与 `int` 子类，并满足 `0 <= value <= 9_007_199_254_740_991`；非法值在 active connection URL 读取、Runtime usage、device/systemPort reservation 与任何 HTTP 前以 `invalid_argument/not_sent` 拒绝。`0` 保留上游显式语义；Automation 不自动选择、clamp、round、转换或按 app/profile 覆盖该值。
+- 固定能力为 `platformName=Android`、`appium:automationName=UiAutomator2`、`appium:udid=device_id`、应用输入、一等布尔/空闲参数、内部 `appium:systemPort`，以及 `appium:settings[enableMultiWindows]=true`。仅当 `uiautomator2_wait_for_idle_timeout_ms` 非 `None` 时，额外包含 JSON integer `appium:settings[waitForIdleTimeout]=value`；不额外发送 `update_settings` 或读回请求。systemPort 从 8200–8299 中按升序保留；100 个均被本进程占用时明确失败，不交给上游随机选择。
 - 首版 `capabilities` 白名单仅允许规范键 `appium:deviceName` 与 `appium:platformVersion`；各值必须是 1–256 个无控制字符的字符串，最多两项。任何其他键、重复表达固定/一等字段、`appium:options`、浏览器/WebView、AVD、ADB、端口、代理、认证、Settings 或 direct-connect 相关能力均在请求前拒绝，不静默覆盖。
 
 ### Ownership, State And Concurrency
@@ -106,6 +107,8 @@
 - 必须使用锁定的真实 Appium/Selenium 客户端和临时 HTTP 协议服务验证 W3C capabilities、初始 Settings、幂等键、无传输重试、direct connection 不切换、base path、create/quit 单次请求、有效错误/响应未知、显式预算、取消检查点和连接池关闭；不得只 mock 客户端成功。
 - 受控测试须覆盖四种应用输入、参数/能力冲突、systemPort 100 个边界、同设备拒绝、不同设备独立资源、creating/active/uncertain/disposing/disposed/closing/closed、同 Session 立即忙、closed quit 与 disposed dispose 幂等、connection 失效、主错误与清理错误并存，以及资源只在确认安全时复用。
 - 获准真实验收使用固定Appium3.7.0 / UiAutomator2 8.7.0和一个明确Android目标，覆盖实际Session创建、500秒协商、正常quit及确认释放后的replacement Session。四种应用输入、不同device ID独立资源、同设备拒绝、systemPort、状态机、known/unknown和分别quit继续由锁定真实Client/Selenium到临时HTTP服务的受控永久测试守护。当前资格不声明两个真实设备同时active或真实多设备隔离；未来增加该资格须独立设计、SPEC和资源授权。
+- 本增量的受控验证须使用锁定真实 Appium/Selenium client 对接临时 HTTP 协议服务，证明默认 `None` 的 new-session payload 不含 `waitForIdleTimeout` 且与现有 wire 等价；显式 `0`、`1`、`1000`、`10000` 与 `9_007_199_254_740_991` 精确作为 JSON integer initial Setting；`bool`、`int` 子类、`float`、`str`、负数及上限加一在 connection/usage/reservation/request 前拒绝。还须证明零额外 Settings request、通用 `capabilities` 不能覆盖、无 retry/fallback/update，并守护 create/quit、AIF-02/03 error、unknown state 与 Issue #30 回归。
+- 获准真实无评分验收须在同一锁定 Appium/UiAutomator2 组合中证明显式 `1000` 的完整 `GET /appium/settings` response 为精确 integer `1000`，并在动态页面目标前置成立时让同一 `Element.inspect(displayed)` 在不变 10 秒 `OperationControl` 内取得完整成功 response；不得以延长外层预算、重试或 snapshot 替代通过。调用方 profile、设备租约和全新候选由各自 owner 另行控制。
 - AIF-02 通过不表示界面动作、观测、异常跨进程恢复、Automation 模块整体或当前平台完整调用链已验收。
 
 ### RT-LOCAL-04 Managed Runtime Usage Delta

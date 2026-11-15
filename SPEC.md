@@ -110,7 +110,7 @@
 - 产品直接运行依赖新增无 extras 的 `Appium-Python-Client==6.0.8` 与 `selenium==4.51.0`，仅供 Automation Session/WebDriver/Appium 命令及其传输使用；不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。发行元数据固定这两个直接版本，传递依赖由 `uv.lock` 固定。
 - 正常顺序为进入一次 Runtime connection、为明确设备创建一个或多个独立 Session、逐个 `quit()`、再退出 connection。Runtime 不替 Automation 关闭 Session；Automation 不缓存已退出 connection 的 URL 继续发送命令。
 - 同设备占用和 UiAutomator2 `systemPort` 只在当前 Python 进程内协调；不同 Session 不共享 WebDriver、sessionId 或命令连接。创建、存活、关闭及结果未知期间保留占用，只有可证明未创建或确认关闭且本地收尾完成后释放。
-- 默认能力包括 `appium:newCommandTimeout=500`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方初始 Settings 能力。契约确认不表示真实 Session 或 Automation 模块整体已验收。
+- 默认能力包括 `appium:newCommandTimeout=500`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方 initial Settings capability。`create_session` 另提供 keyword-only `uiautomator2_wait_for_idle_timeout_ms: int | None = None`；默认 `None` 完全省略 `appium:settings[waitForIdleTimeout]` 并保持上游现状，只有调用方显式提供 `0..9_007_199_254_740_991` 范围内的 strict integer 时才发送该 initial Setting。SDK 不按应用/profile 自动选择值、不全局设 0、不增加 update/retry 或外层预算。契约确认不表示真实 Session 或 Automation 模块整体已验收。
 
 
 ## Local Managed Installation Preparation

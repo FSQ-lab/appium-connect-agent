@@ -75,6 +75,30 @@ appium-connect-agent daemon stop
 
 INT-TOOLS-01（#25）与 INT-TOOLS-02（#26）已完成 19 工具同源 clean cutover、FSQ 双转换器 19+19 SHA-256 实测、受控 HTTP 协议全矩阵及正式 wheel 三壳代表性安全真机验收（覆盖 Calculator 上的 `double`/`long` click、`ime_action("done")`、`swipe` 手势并恢复空基线，以及 `app.lifecycle` `1→4→3→1` 状态闭环、`device.key` Home、`keyboard_hide`、`status_bar` `expandSettings`/`collapse` 与不存在包的无副作用 `app.package(remove) -> false`）；其余高副作用分支（剪贴板读写、真实弹窗点击、真实 APK 安装与已安装包卸载、`scroll`/`scroll_to`/`drag_and_drop`）由受控协议测试与下层既有 AIF feature 限定证据守护，不在本次代表性 smoke 重复执行，且不提升 Integrations、Automation 或平台整体 Done，亦不关闭 AIF-06 既有真机 drag-and-drop 验证缺口。
 
+## Automation Session 创建
+
+`create_session` 为每个明确的 UiAutomator2 Session 提供可选 keyword-only 参数：
+
+```python
+session = create_session(
+    connection,
+    "emulator-5554",
+    uiautomator2_wait_for_idle_timeout_ms=1_000,
+)
+```
+
+`uiautomator2_wait_for_idle_timeout_ms` 默认为 `None`；此时 new-session payload 完全
+省略 `appium:settings[waitForIdleTimeout]`，保持上游默认。显式值必须是
+`0..9_007_199_254_740_991` 范围内的原生 `int`；`bool`、`int` 子类、浮点数、字符串
+和越界值在 connection 读取、usage/reservation 与 HTTP 请求前以
+`InvalidRequestError / invalid_argument / not_sent` 拒绝。
+
+合法值只作为 initial Setting `appium:settings[waitForIdleTimeout]` 随唯一
+new-session 请求发送；不追加 Settings 更新、读回、重试或外层预算。通用
+`capabilities` 不能提供或覆盖该 Setting。`1_000` 只是调用方可显式选择的 profile
+值，不是 SDK 全局默认；SDK 不按应用自动选择。成功创建只表示服务接受 Session，
+不证明目标页面、等待效果或 Automation 模块整体验收通过。
+
 ## Automation Element 接口
 
 Automation 的单控件观测、点击、文本及手势方法绑定在由明确 Session 创建的
