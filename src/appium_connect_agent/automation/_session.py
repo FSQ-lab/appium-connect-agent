@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
+from appium.options.ios import XCUITestOptions
 from appium.options.mac import Mac2Options
 from selenium.common.exceptions import (
     SessionNotCreatedException,
@@ -109,9 +110,11 @@ from ._session_client import (
 )
 from ._session_coordination import (
     _DeviceBusy,
+    _prepare_xcuitest_derived_data,
     _Reservation,
     _reserve,
     _reserve_mac2,
+    _reserve_xcuitest,
     _SystemPortUnavailable,
 )
 from ._text_actions import _perform_text_action, _validate_text
@@ -409,6 +412,203 @@ def _mac_target_from_capabilities(capabilities: Mapping[str, Any]) -> str | None
         ):
             return value
     return None
+
+
+def _validate_ios_app_path(value: object, operation_id: str) -> Path | None:
+    if value is None:
+        return None
+    if not isinstance(value, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        text = str(value)
+        encoded = text.encode("utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if (
+        not value.is_absolute()
+        or "." in value.parts
+        or ".." in value.parts
+        or value.suffix.casefold() not in {".app", ".ipa"}
+        or not 1 <= len(encoded) <= 4_096
+        or _contains_control(text)
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    prefixes = [Path(value.anchor)]
+    current = prefixes[0]
+    for part in value.parts[1:]:
+        current /= part
+        prefixes.append(current)
+    try:
+        metadata = []
+        for path in prefixes:
+            item = os.lstat(path)
+            if stat.S_ISLNK(item.st_mode):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            metadata.append((path, item))
+        if value.suffix.casefold() == ".app":
+            plist = value / "Info.plist"
+            plist_metadata = os.lstat(plist)
+            if stat.S_ISLNK(plist_metadata.st_mode):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            valid = (
+                stat.S_ISDIR(metadata[-1][1].st_mode)
+                and stat.S_ISREG(plist_metadata.st_mode)
+                and os.access(plist, os.R_OK)
+            )
+        else:
+            valid = stat.S_ISREG(metadata[-1][1].st_mode) and os.access(value, os.R_OK)
+    except InvalidRequestError:
+        raise
+    except (OSError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if not valid:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return value
+
+
+def _validate_xcuitest_request(
+    operation_id: str,
+    udid: object,
+    bundle_id: object,
+    app_path: object,
+    arguments: object,
+    auto_launch: object,
+    force_app_launch: object,
+    should_terminate_app: object,
+    no_reset: object,
+    xcode_org_id: object,
+    xcode_signing_id: object,
+    updated_wda_bundle_id: object,
+    show_xcode_log: object,
+    wda_launch_timeout_ms: object,
+    new_command_timeout_seconds: object,
+) -> tuple[
+    str,
+    str | None,
+    Path | None,
+    list[str] | None,
+    str | None,
+    str | None,
+    str | None,
+    float,
+]:
+    if (
+        not isinstance(udid, str)
+        or not udid.isascii()
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", udid) is None
+        or udid.casefold() == "auto"
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    valid_bundle = (
+        None if bundle_id is None else _validate_bundle_id(bundle_id, operation_id)
+    )
+    valid_updated_bundle = (
+        None
+        if updated_wda_bundle_id is None
+        else _validate_bundle_id(updated_wda_bundle_id, operation_id)
+    )
+    valid_path = _validate_ios_app_path(app_path, operation_id)
+    valid_arguments = _validate_launch_arguments(arguments, operation_id)
+    if valid_arguments is not None and valid_bundle is None and valid_path is None:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    for value in (
+        auto_launch,
+        force_app_launch,
+        should_terminate_app,
+        no_reset,
+        show_xcode_log,
+    ):
+        if type(value) is not bool:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if xcode_org_id is not None and (
+        not isinstance(xcode_org_id, str)
+        or not xcode_org_id.isascii()
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", xcode_org_id) is None
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if xcode_signing_id is not None and (
+        not isinstance(xcode_signing_id, str)
+        or not 1 <= len(xcode_signing_id) <= 128
+        or not xcode_signing_id.isascii()
+        or not xcode_signing_id.isprintable()
+        or _contains_control(xcode_signing_id)
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if wda_launch_timeout_ms is not None and (
+        type(wda_launch_timeout_ms) is not int
+        or not 1_000 <= wda_launch_timeout_ms <= 600_000
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    timeout = new_command_timeout_seconds
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or not 0 <= timeout <= 86_400
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return (
+        udid,
+        valid_bundle,
+        valid_path,
+        valid_arguments,
+        xcode_org_id,
+        xcode_signing_id,
+        valid_updated_bundle,
+        float(timeout),
+    )
+
+
+def _build_xcuitest_options(
+    *,
+    udid: str,
+    bundle_id: str | None,
+    app_path: Path | None,
+    arguments: list[str] | None,
+    auto_launch: bool,
+    force_app_launch: bool,
+    should_terminate_app: bool,
+    no_reset: bool,
+    xcode_org_id: str | None,
+    xcode_signing_id: str | None,
+    updated_wda_bundle_id: str | None,
+    show_xcode_log: bool,
+    wda_launch_timeout_ms: int | None,
+    new_command_timeout_seconds: float,
+    wda_local_port: int,
+    derived_data_path: str,
+) -> XCUITestOptions:
+    capabilities: dict[str, Any] = {
+        "platformName": "iOS",
+        "appium:automationName": "XCUITest",
+        "appium:udid": udid,
+        "appium:autoLaunch": auto_launch,
+        "appium:forceAppLaunch": force_app_launch,
+        "appium:shouldTerminateApp": should_terminate_app,
+        "appium:noReset": no_reset,
+        "appium:fullReset": False,
+        "appium:showXcodeLog": show_xcode_log,
+        "appium:newCommandTimeout": new_command_timeout_seconds,
+        "appium:wdaLocalPort": wda_local_port,
+        "appium:derivedDataPath": derived_data_path,
+    }
+    optional: dict[str, object | None] = {
+        "appium:bundleId": bundle_id,
+        "appium:app": None if app_path is None else str(app_path),
+        "appium:processArguments": None if arguments is None else {"args": arguments},
+        "appium:xcodeOrgId": xcode_org_id,
+        "appium:xcodeSigningId": xcode_signing_id,
+        "appium:updatedWDABundleId": updated_wda_bundle_id,
+        "appium:wdaLaunchTimeout": wda_launch_timeout_ms,
+    }
+    capabilities.update(
+        {key: value for key, value in optional.items() if value is not None}
+    )
+    return XCUITestOptions().load_capabilities(capabilities)
 
 
 def _close_client(client: _LifecycleConnection) -> tuple[BaseException, ...]:
@@ -818,6 +1018,10 @@ class Session:
         if self._platform == "macos":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
 
+    def _reject_ios(self, operation_id: str) -> None:
+        if self._platform == "ios":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+
     def observe_tree(
         self,
         *,
@@ -895,6 +1099,7 @@ class Session:
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -923,6 +1128,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android" and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -963,6 +1169,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android" and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1003,6 +1210,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1032,6 +1240,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1063,6 +1272,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android" and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1103,6 +1313,7 @@ class Session:
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1129,6 +1340,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1158,6 +1370,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1190,6 +1403,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1224,6 +1438,7 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1254,6 +1469,7 @@ class Session:
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1285,6 +1501,7 @@ class Session:
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
+        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1316,6 +1533,7 @@ class Session:
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
+        self._reject_ios(operation_id)
         return self._run_operation(
             operation_id,
             control,
@@ -1345,6 +1563,7 @@ class Session:
         valid_target = _validate_owner(target, self, operation_id)
         valid_max_swipes = _validate_max_swipes(max_swipes, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        self._reject_ios(operation_id)
         mapping = _validate_scroll_mapping(valid_container, valid_target, operation_id)
         self._reject_macos(operation_id)
         self._run_operation(
@@ -1386,6 +1605,7 @@ class Session:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_source, valid_destination), operation_id)
+        self._reject_ios(operation_id)
         if self._platform == "android" and (
             valid_duration is not None or modifier_flags is not None
         ):
@@ -1961,6 +2181,165 @@ def create_mac2_session(
                 cause.__dict__["automation_cleanup_errors"] = cleanup_errors
         raise
 
+    try:
+        session._activate(driver)
+    except _InvalidCreateResponse as cause:
+        cleanup_errors = _close_client(client)
+        session._set_state("uncertain")
+        error = ResourceStateError(
+            "session_create_unknown",
+            operation_id,
+            "response_received",
+            session=session,
+            cleanup_errors=cleanup_errors,
+        )
+        raise error from cause
+    return session
+
+
+def create_xcuitest_session(
+    connection: RuntimeConnection,
+    udid: str,
+    *,
+    bundle_id: str | None = None,
+    app_path: Path | None = None,
+    arguments: Sequence[str] | None = None,
+    auto_launch: bool = True,
+    force_app_launch: bool = False,
+    should_terminate_app: bool = False,
+    no_reset: bool = True,
+    xcode_org_id: str | None = None,
+    xcode_signing_id: str | None = None,
+    updated_wda_bundle_id: str | None = None,
+    show_xcode_log: bool = False,
+    wda_launch_timeout_ms: int | None = None,
+    new_command_timeout_seconds: float = 300.0,
+    control: OperationControl | None = None,
+) -> Session:
+    """Create one independently owned XCUITest Session."""
+    operation_id, control, _, deadline = _new_operation(control)
+    (
+        valid_udid,
+        valid_bundle_id,
+        valid_app_path,
+        valid_arguments,
+        valid_xcode_org_id,
+        valid_xcode_signing_id,
+        valid_updated_wda_bundle_id,
+        valid_timeout,
+    ) = _validate_xcuitest_request(
+        operation_id,
+        udid,
+        bundle_id,
+        app_path,
+        arguments,
+        auto_launch,
+        force_app_launch,
+        should_terminate_app,
+        no_reset,
+        xcode_org_id,
+        xcode_signing_id,
+        updated_wda_bundle_id,
+        show_xcode_log,
+        wda_launch_timeout_ms,
+        new_command_timeout_seconds,
+    )
+    server_url = _active_server_url(connection, operation_id)
+    _checkpoint(control, deadline, operation_id)
+    usage = _acquire_runtime_usage(connection, operation_id)
+    try:
+        session = Session._creating(
+            valid_udid, valid_bundle_id, connection, usage, "ios"
+        )
+    except BaseException:
+        usage.release()
+        raise
+    try:
+        reservation = _reserve_xcuitest(valid_udid)
+    except _DeviceBusy:
+        usage.release()
+        raise ResourceStateError("device_busy", operation_id, "not_sent") from None
+    except _SystemPortUnavailable:
+        usage.release()
+        raise ResourceStateError(
+            "system_port_unavailable", operation_id, "not_sent"
+        ) from None
+    except BaseException:
+        usage.release()
+        raise
+    session._reservation = reservation
+    try:
+        derived_data_path = _prepare_xcuitest_derived_data(
+            reservation.system_port, operation_id
+        )
+    except BaseException:
+        reservation.release()
+        usage.release()
+        raise
+    try:
+        client = _new_connection(server_url)
+        session._client = client
+    except BaseException:
+        reservation.release()
+        usage.release()
+        raise
+    try:
+        session._device = _create_device(session)
+        options = _build_xcuitest_options(
+            udid=valid_udid,
+            bundle_id=valid_bundle_id,
+            app_path=valid_app_path,
+            arguments=valid_arguments,
+            auto_launch=auto_launch,
+            force_app_launch=force_app_launch,
+            should_terminate_app=should_terminate_app,
+            no_reset=no_reset,
+            xcode_org_id=valid_xcode_org_id,
+            xcode_signing_id=valid_xcode_signing_id,
+            updated_wda_bundle_id=valid_updated_wda_bundle_id,
+            show_xcode_log=show_xcode_log,
+            wda_launch_timeout_ms=wda_launch_timeout_ms,
+            new_command_timeout_seconds=valid_timeout,
+            wda_local_port=reservation.system_port,
+            derived_data_path=derived_data_path,
+        )
+        client.prepare_request(
+            control.cancellation if control is not None else None, deadline
+        )
+        driver = _SessionWebDriver(command_executor=client, options=options)
+    except (_RequestCancelled, _RequestTimedOut) as cause:
+        _raise_create_preflight(cause, operation_id, session, reservation, client)
+    except Exception as cause:
+        if not client.request_started:
+            cleanup_errors = _close_client(client)
+            _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
+            session._set_state("closed" if not cleanup_errors else "uncertain")
+            if cleanup_errors:
+                cause.__dict__["automation_cleanup_errors"] = cleanup_errors
+            if not cleanup_errors:
+                raise
+            raise ResourceStateError(
+                "cleanup_failed",
+                operation_id,
+                "not_sent",
+                session=session,
+                cleanup_errors=cleanup_errors,
+            ) from cause
+        _raise_create_failure(cause, operation_id, session, reservation, client)
+    except BaseException as cause:
+        if client.request_started:
+            session._set_state("uncertain")
+        else:
+            cleanup_errors = _close_client(client)
+            _release_if_clean(reservation, cleanup_errors)
+            if not cleanup_errors:
+                usage.release()
+            session._set_state("closed" if not cleanup_errors else "uncertain")
+            if cleanup_errors:
+                cause.__dict__["automation_cleanup_errors"] = cleanup_errors
+        raise
     try:
         session._activate(driver)
     except _InvalidCreateResponse as cause:

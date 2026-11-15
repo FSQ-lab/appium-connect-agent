@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import socketserver
 import threading
@@ -16,6 +17,7 @@ from typing import Any, cast
 import pytest
 
 import appium_connect_agent.automation._session as session_module
+import appium_connect_agent.automation._session_coordination as automation_coordination
 from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
@@ -30,6 +32,7 @@ from appium_connect_agent.automation import (
     SessionInfo,
     create_mac2_session,
     create_session,
+    create_xcuitest_session,
 )
 from appium_connect_agent.automation._session_client import (
     _new_connection,
@@ -2026,3 +2029,144 @@ def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
         )
         assert service.lifecycle_requests() == before
         session.quit()
+
+
+def configure_private_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    private_tmp = tmp_path / "private-tmp"
+    private_tmp.mkdir(mode=0o700)
+    private_tmp.chmod(0o1700)
+    monkeypatch.setattr(automation_coordination, "_PRIVATE_TMP_OPEN_PATH", private_tmp)
+    monkeypatch.setattr(automation_coordination, "_ROOT_UID", os.getuid())
+    return private_tmp
+
+
+def test_xcuitest_capabilities_coordination_and_release(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    app = tmp_path / "Sample.app"
+    app.mkdir()
+    (app / "Info.plist").write_bytes(b"plist")
+    service.create_plans.extend(
+        [
+            ResponsePlan(payload=create_response()),
+            ResponsePlan(payload=create_response()),
+        ]
+    )
+
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            "00008030-TEST",
+            bundle_id="com.example.ios",
+            app_path=app,
+            arguments=("--safe",),
+            xcode_org_id="ORG_1",
+            xcode_signing_id="Apple Development",
+            updated_wda_bundle_id="com.example.wda",
+            show_xcode_log=True,
+            wda_launch_timeout_ms=60_000,
+        )
+        create = service.lifecycle_requests()[0]
+        caps = appium_caps(create)
+        assert caps == {
+            "platformName": "iOS",
+            "appium:automationName": "XCUITest",
+            "appium:udid": "00008030-TEST",
+            "appium:bundleId": "com.example.ios",
+            "appium:app": str(app),
+            "appium:processArguments": {"args": ["--safe"]},
+            "appium:autoLaunch": True,
+            "appium:forceAppLaunch": False,
+            "appium:shouldTerminateApp": False,
+            "appium:noReset": True,
+            "appium:fullReset": False,
+            "appium:showXcodeLog": True,
+            "appium:newCommandTimeout": 300.0,
+            "appium:wdaLocalPort": 8100,
+            "appium:derivedDataPath": (
+                f"/private/tmp/appium-connect-agent-{os.getuid()}"
+                "/wda-derived-data/port-8100"
+            ),
+            "appium:xcodeOrgId": "ORG_1",
+            "appium:xcodeSigningId": "Apple Development",
+            "appium:updatedWDABundleId": "com.example.wda",
+            "appium:wdaLaunchTimeout": 60_000,
+        }
+        assert session.session_info().platform == "ios"
+        assert (
+            private_tmp
+            / f"appium-connect-agent-{os.getuid()}"
+            / "wda-derived-data"
+            / "port-8100"
+        ).stat().st_mode & 0o777 == 0o700
+        with pytest.raises(ResourceStateError) as busy:
+            create_xcuitest_session(connection, "00008030-TEST")
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        session.quit()
+        replacement = create_xcuitest_session(connection, "00008030-TEST")
+        replacement.quit()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"udid": "auto"},
+        {"udid": "bad value"},
+        {"udid": "valid", "bundle_id": "bad bundle"},
+        {"udid": "valid", "wda_launch_timeout_ms": 999},
+        {"udid": "valid", "show_xcode_log": 1},
+        {"udid": "valid", "arguments": ("arg",)},
+    ],
+)
+def test_xcuitest_invalid_values_are_private_and_zero_request(
+    service: ProtocolService, kwargs: dict[str, Any]
+) -> None:
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_xcuitest_session(connection, **kwargs)
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert str(caught.value) == "invalid_argument"
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_coordination_rejects_untrusted_private_tmp_and_releases(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    private_tmp.chmod(0o700)
+    with connected(service) as connection, pytest.raises(ResourceStateError) as caught:
+        create_xcuitest_session(connection, "DEVICE-A")
+    assert_error(
+        caught.value, ResourceStateError, "coordination_unavailable", "not_sent"
+    )
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_app_paths_reject_symlink_ancestors_without_echo(
+    service: ProtocolService, tmp_path: Path
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    app = real / "Secret.app"
+    app.mkdir()
+    (app / "Info.plist").write_bytes(b"plist")
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    secret = linked / "Secret.app"
+
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_xcuitest_session(connection, "DEVICE", app_path=secret)
+
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert str(secret) not in str(caught.value)
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_coordinator_has_exact_independent_hundred_port_pool() -> None:
+    coordinator = automation_coordination._Coordinator(8100, 8199)
+    reservations = [coordinator.reserve(f"device-{index}") for index in range(100)]
+    assert [item.system_port for item in reservations] == list(range(8100, 8200))
+    with pytest.raises(automation_coordination._SystemPortUnavailable):
+        coordinator.reserve("overflow")
+    for reservation in reservations:
+        reservation.release()

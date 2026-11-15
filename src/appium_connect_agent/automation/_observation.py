@@ -89,6 +89,19 @@ _MAC2_TREE_FIELDS = (
     "selected",
     "bounds",
 )
+_IOS_TREE_FIELDS = (
+    "type",
+    "id",
+    "text",
+    "label",
+    "title",
+    "value",
+    "placeholder_value",
+    "element_type",
+    "enabled",
+    "selected",
+    "bounds",
+)
 
 
 @dataclass(slots=True, eq=False)
@@ -143,6 +156,23 @@ _MAC2_ATTRIBUTES: tuple[ElementAttribute, ...] = (
     "displayed",
     "bounds",
 )
+_IOS_ATTRIBUTES: tuple[ElementAttribute, ...] = (
+    "id",
+    "text",
+    "type",
+    "label",
+    "value",
+    "placeholder_value",
+    "enabled",
+    "focused",
+    "selected",
+    "hittable",
+    "accessible",
+    "displayed",
+    "bounds",
+    "index",
+    "traits",
+)
 _BOOLEAN_ATTRIBUTES = frozenset(
     {
         "enabled",
@@ -156,6 +186,7 @@ _BOOLEAN_ATTRIBUTES = frozenset(
         "password",
         "scrollable",
         "displayed",
+        "accessible",
     }
 )
 _UPSTREAM = {
@@ -182,13 +213,19 @@ def _error(
 
 
 def _validate_attributes(
-    attributes: object, operation_id: str, platform: Literal["android", "macos"]
+    attributes: object, operation_id: str, platform: Literal["android", "macos", "ios"]
 ) -> tuple[ElementAttribute, ...]:
-    maximum = 18 if platform == "android" else 14
-    allowed = _ATTRIBUTES if platform == "android" else _MAC2_ATTRIBUTES
+    maximum = 18 if platform == "android" else 14 if platform == "macos" else 15
+    allowed = (
+        _ATTRIBUTES
+        if platform == "android"
+        else _MAC2_ATTRIBUTES
+        if platform == "macos"
+        else _IOS_ATTRIBUTES
+    )
     if not isinstance(attributes, tuple) or not 1 <= len(attributes) <= maximum:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    known = frozenset((*_ATTRIBUTES, *_MAC2_ATTRIBUTES))
+    known = frozenset((*_ATTRIBUTES, *_MAC2_ATTRIBUTES, *_IOS_ATTRIBUTES))
     if any(not isinstance(name, str) or name not in known for name in attributes):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if any(name not in allowed for name in attributes):
@@ -411,6 +448,52 @@ def _read_mac2_attribute(
     raise _error(CommandError, "source_invalid", gateway)
 
 
+def _read_ios_attribute(
+    element: WebElement,
+    name: ElementAttribute,
+    gateway: _SessionOperationGateway,
+) -> AttributeObservation:
+    if name == "bounds":
+        return AttributeObservation(
+            name, "value", _parse_bounds(gateway.request(lambda: element.rect), gateway)
+        )
+    upstream = {
+        "id": "name",
+        "placeholder_value": "placeholderValue",
+    }.get(name, name)
+    raw = gateway.request(
+        lambda: (
+            element.text
+            if name == "text"
+            else element.is_displayed()
+            if name == "displayed"
+            else element.get_attribute(upstream)
+        )
+    )
+    if name in {
+        "enabled",
+        "focused",
+        "selected",
+        "hittable",
+        "accessible",
+        "displayed",
+    }:
+        return (
+            AttributeObservation(name, "unknown")
+            if raw is None
+            else AttributeObservation(name, "value", _parse_boolean(raw, gateway))
+        )
+    if raw is None:
+        return AttributeObservation(name, "missing")
+    if name == "index":
+        if isinstance(raw, str) and raw.isascii() and raw.isdecimal():
+            return AttributeObservation(name, "value", int(raw))
+        raise _error(CommandError, "source_invalid", gateway)
+    if isinstance(raw, str):
+        return AttributeObservation(name, "value", raw)
+    raise _error(CommandError, "source_invalid", gateway)
+
+
 def _inspect_values(
     driver: WebDriver,
     element: Element,
@@ -421,6 +504,10 @@ def _inspect_values(
     if gateway.platform == "macos":
         result = tuple(
             _read_mac2_attribute(target, name, gateway) for name in attributes
+        )
+    elif gateway.platform == "ios":
+        result = tuple(
+            _read_ios_attribute(target, name, gateway) for name in attributes
         )
     else:
         cache: dict[ElementAttribute, AttributeObservation] = {}
@@ -438,14 +525,14 @@ def _inspect_element(
     gateway: _SessionOperationGateway,
 ) -> ElementInspection:
     values = (
-        _inspect_values(driver, element, attributes, gateway)
-        if gateway.platform == "macos"
-        else _with_raw_id_guard(
+        _with_raw_id_guard(
             driver,
             (element,),
             gateway,
             lambda: _inspect_values(driver, element, attributes, gateway),
         )
+        if gateway.platform == "android"
+        else _inspect_values(driver, element, attributes, gateway)
     )
     gateway.checkpoint(response_received=True)
 
@@ -464,12 +551,12 @@ def _inspect_element(
         "operation_id": gateway.operation_id,
         "payload": {
             "attributes": [
-                _json_value(value, macos=gateway.platform == "macos")
+                _json_value(value, macos=gateway.platform in ("macos", "ios"))
                 for value in values
             ]
         },
         "schema": 1,
-        "scope": _json_value(scope, macos=gateway.platform == "macos"),
+        "scope": _json_value(scope, macos=gateway.platform in ("macos", "ios")),
         "upstream_completeness": "unknown",
     }
     try:
@@ -497,7 +584,7 @@ def _validate_tree_parent(
     parent: object,
     owner: object,
     operation_id: str,
-    platform: Literal["android", "macos"],
+    platform: Literal["android", "macos", "ios"],
 ) -> Element:
     valid = _validate_owner(parent, owner, operation_id)
     for locator in _locator_chain(valid):
@@ -511,7 +598,7 @@ def _validate_tree_parent(
                 and locator.package is None
             )
             or (
-                platform == "macos"
+                platform in ("macos", "ios")
                 and locator.by not in {"id", "accessibility id", "name", "class name"}
             )
         )
@@ -920,9 +1007,13 @@ def _mac2_viewport(displays: object, gateway: _SessionOperationGateway) -> Viewp
     )
 
 
-def _parse_mac2_source(
-    source: object, viewport: Viewport, gateway: _SessionOperationGateway
-) -> _ParsedNode:
+def _parse_xcui_source(
+    source: object,
+    viewport: Viewport,
+    gateway: _SessionOperationGateway,
+    *,
+    ios: bool,
+) -> tuple[_ParsedNode, ...]:
     if not isinstance(source, str):
         raise _error(CommandError, "source_invalid", gateway)
     try:
@@ -940,12 +1031,21 @@ def _parse_mac2_source(
         raise _error(CommandError, "source_forbidden_xml", gateway) from cause
     except (ParseError, ValueError) as cause:
         raise _error(CommandError, "source_invalid", gateway) from cause
-    if not isinstance(xml_root.tag, str) or not xml_root.tag.startswith(
-        "XCUIElementType"
+    if not isinstance(xml_root.tag, str):
+        raise _error(CommandError, "source_invalid", gateway)
+    xml_roots = tuple(xml_root) if ios and xml_root.tag == "AppiumAUT" else (xml_root,)
+    if not xml_roots or any(
+        not isinstance(root.tag, str) or not root.tag.startswith("XCUIElementType")
+        for root in xml_roots
     ):
         raise _error(CommandError, "source_invalid", gateway)
-    root = _ParsedNode(xml_root.tag, tuple(xml_root.attrib.items()))
-    stack: list[tuple[XmlElement[str], _ParsedNode, int]] = [(xml_root, root, 1)]
+    roots = tuple(
+        _ParsedNode(root.tag, tuple(root.attrib.items())) for root in xml_roots
+    )
+    stack: list[tuple[XmlElement[str], _ParsedNode, int]] = [
+        (xml_root_item, parsed, 1)
+        for xml_root_item, parsed in reversed(tuple(zip(xml_roots, roots, strict=True)))
+    ]
     count = 0
     while stack:
         element, parsed, depth = stack.pop()
@@ -966,19 +1066,32 @@ def _parse_mac2_source(
                 raise _error(CommandError, "source_invalid", gateway) from cause
             if size > _MAX_VALUE:
                 raise _error(CommandError, "source_resource_limit", gateway)
-        element_type = parsed.attribute("elementType")
-        if element_type is not None and not (
-            element_type.isascii() and element_type.isdecimal()
-        ):
-            raise _error(CommandError, "source_invalid", gateway)
-        enabled = parsed.attribute("enabled")
-        selected = parsed.attribute("selected")
-        if enabled is not None:
-            _parse_boolean(enabled, gateway)
-        if selected is not None:
-            _parse_boolean(selected, gateway)
+        if ios:
+            index = parsed.attribute("index")
+            if index is not None and not (
+                index.isascii() and index.isdecimal() and int(index) >= 0
+            ):
+                raise _error(CommandError, "source_invalid", gateway)
+            for name in ("enabled", "visible", "accessible", "hittable"):
+                raw = parsed.attribute(name)
+                if raw is not None:
+                    _parse_boolean(raw, gateway)
+        else:
+            element_type = parsed.attribute("elementType")
+            if element_type is not None and not (
+                element_type.isascii() and element_type.isdecimal()
+            ):
+                raise _error(CommandError, "source_invalid", gateway)
+            for name in ("enabled", "selected"):
+                raw = parsed.attribute(name)
+                if raw is not None:
+                    _parse_boolean(raw, gateway)
         children: list[tuple[XmlElement[str], _ParsedNode, int]] = []
         for child in element:
+            if not isinstance(child.tag, str) or not child.tag.startswith(
+                "XCUIElementType"
+            ):
+                raise _error(CommandError, "source_invalid", gateway)
             child_node = _ParsedNode(child.tag, tuple(child.attrib.items()))
             parsed.children.append(child_node)
             children.append((child, child_node, depth + 1))
@@ -991,7 +1104,7 @@ def _parse_mac2_source(
         and type(viewport.width.value) is int
         and type(viewport.height.value) is int
     )
-    for node in _all_nodes((root,)):
+    for node in _all_nodes(roots):
         raw_parts = tuple(
             node.attribute(name) for name in ("x", "y", "width", "height")
         )
@@ -1001,9 +1114,9 @@ def _parse_mac2_source(
             x, y, width, height = (int(cast(str, part)) for part in raw_parts)
         except ValueError as cause:
             raise _error(CommandError, "source_invalid", gateway) from cause
-        if width < 0 or height < 0 or width == 0 or height == 0:
+        if width <= 0 or height <= 0 or not viewport_known:
             continue
-        if node.attribute("enabled") is None or not viewport_known:
+        if not ios and node.attribute("enabled") is None:
             continue
         viewport_width = cast(int, viewport.width.value)
         viewport_height = cast(int, viewport.height.value)
@@ -1032,13 +1145,30 @@ def _parse_mac2_source(
             bottom, viewport_height
         ):
             node.viewport_relation = "intersects"
-        if node.viewport_relation == "inside":
+        if ios and node.attribute("visible") == "false":
+            node.visibility = "not_visible"
+        elif node.viewport_relation == "inside":
             node.visibility = "visible"
         elif node.viewport_relation == "intersects":
             node.visibility = "partially_visible"
         elif node.viewport_relation.startswith("outside_"):
             node.visibility = "not_visible"
-    return root
+    return roots
+
+
+def _parse_mac2_source(
+    source: object, viewport: Viewport, gateway: _SessionOperationGateway
+) -> _ParsedNode:
+    roots = _parse_xcui_source(source, viewport, gateway, ios=False)
+    if len(roots) != 1:
+        raise _error(CommandError, "source_invalid", gateway)
+    return roots[0]
+
+
+def _parse_ios_source(
+    source: object, viewport: Viewport, gateway: _SessionOperationGateway
+) -> tuple[_ParsedNode, ...]:
+    return _parse_xcui_source(source, viewport, gateway, ios=True)
 
 
 def _mac2_xml_value(
@@ -1179,6 +1309,134 @@ def _mac2_tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> obje
     return result
 
 
+def _ios_xml_value(
+    node: _ParsedNode, name: str, gateway: _SessionOperationGateway
+) -> ObservedValue:
+    if name == "type":
+        return ObservedValue("value", node.tag)
+    if name == "bounds":
+        parts = tuple(node.attribute(item) for item in ("x", "y", "width", "height"))
+        if any(part is None for part in parts):
+            return ObservedValue("unknown")
+        try:
+            x, y, width, height = (int(cast(str, part)) for part in parts)
+        except ValueError as cause:
+            raise _error(CommandError, "source_invalid", gateway) from cause
+        if width < 0 or height < 0:
+            return ObservedValue("unknown")
+        return ObservedValue("value", Bounds(x, y, width, height))
+    if name == "text":
+        for item in ("value", "label", "placeholderValue"):
+            candidate = node.attribute(item)
+            if candidate:
+                return ObservedValue("value", candidate)
+        return ObservedValue("value", "")
+    upstream = {
+        "id": "name",
+        "placeholder_value": "placeholderValue",
+    }.get(name, name)
+    raw = node.attribute(upstream)
+    if raw is None:
+        return ObservedValue("missing")
+    if name == "enabled":
+        return ObservedValue("value", _parse_boolean(raw, gateway))
+    return ObservedValue("value", raw)
+
+
+def _ios_tree_node(
+    node: _ParsedNode,
+    children: tuple[TreeNode, ...],
+    gateway: _SessionOperationGateway,
+) -> TreeNode:
+    na = ObservedValue("not_applicable")
+    return TreeNode(
+        _ios_xml_value(node, "type", gateway),
+        _ios_xml_value(node, "id", gateway),
+        _ios_xml_value(node, "text", gateway),
+        na,
+        na,
+        _ios_xml_value(node, "enabled", gateway),
+        na,
+        na,
+        ObservedValue("unknown"),
+        _ios_xml_value(node, "bounds", gateway),
+        node.visibility,
+        node.viewport_relation,
+        na,
+        children,
+        _ios_xml_value(node, "label", gateway),
+        na,
+        _ios_xml_value(node, "value", gateway),
+        _ios_xml_value(node, "placeholder_value", gateway),
+        na,
+    )
+
+
+def _project_ios_tree(
+    roots: tuple[_ParsedNode, ...],
+    keep: set[_ParsedNode] | None,
+    gateway: _SessionOperationGateway,
+) -> tuple[TreeNode, ...]:
+    projected: dict[_ParsedNode, TreeNode] = {}
+    for index, node in enumerate(reversed(_all_nodes(roots))):
+        if keep is None or node in keep:
+            children = tuple(
+                projected[child] for child in node.children if child in projected
+            )
+            projected[node] = _ios_tree_node(node, children, gateway)
+        if index % 256 == 0:
+            gateway.checkpoint(response_received=True)
+    return tuple(projected[root] for root in roots if root in projected)
+
+
+def _ios_tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> object:
+    result: dict[str, object] = {
+        "children": [],
+        "viewport_relation": node.viewport_relation,
+        "visible": node.visibility,
+    }
+    missing: list[str] = []
+    unknown: list[str] = []
+    na: list[str] = []
+    values = {
+        name: cast(ObservedValue, getattr(node, name)) for name in _IOS_TREE_FIELDS
+    }
+    for name in _IOS_TREE_FIELDS:
+        observed = values[name]
+        if observed.state == "value":
+            value = observed.value
+            if name == "type" and isinstance(value, str):
+                local = value.removeprefix("XCUIElementType")
+                if value.startswith("XCUIElementType") and local and "." not in local:
+                    result["type"], result["type_ns"] = local, "XCUIElementType"
+                else:
+                    result[name] = value
+            elif (
+                name == "bounds"
+                and isinstance(value, Bounds)
+                and value == parent_bounds
+            ):
+                result[name] = "parent"
+            elif (name, value) != ("enabled", True):
+                result[name] = _json_value(value)
+        elif observed.state == "missing":
+            missing.append(name)
+        elif observed.state == "unknown":
+            unknown.append(name)
+        else:
+            na.append(name)
+    bounds = values["bounds"].value
+    inherited = bounds if isinstance(bounds, Bounds) else None
+    result["children"] = [_ios_tree_json(child, inherited) for child in node.children]
+    if missing:
+        result["missing"] = missing
+    if unknown:
+        result["unknown"] = unknown
+    if na:
+        result["na"] = na
+    return result
+
+
 def _mac2_tree_result(
     source_text: str,
     metadata: SourceMetadata,
@@ -1206,6 +1464,94 @@ def _mac2_tree_result(
             "operation_id": gateway.operation_id,
             "payload": {
                 "roots": [_mac2_tree_json(node) for node in projected],
+                "viewport": _json_value(viewport),
+            },
+            "schema": 1,
+            "scope": _json_value(scope, macos=True),
+            "source": _json_value(metadata),
+            "upstream_completeness": "unknown",
+        }
+        return projected, _canonical(document, gateway)
+
+    projected, encoded = build(None, "requested_scope", True)
+    coverage: Coverage = "requested_scope"
+    complete = True
+    if encoded is None:
+        keep = _visible_keep(roots)
+        coverage = (
+            "visible_with_ancestors_and_offscreen"
+            if any(node.viewport_relation.startswith("outside_") for node in keep)
+            else "visible_with_ancestors"
+        )
+        complete = False
+        projected, encoded = build(keep, coverage, complete)
+    if encoded is None:
+        raise _error(CommandError, "observation_too_large", gateway)
+    gateway.checkpoint(response_received=True)
+    gateway.complete("observation_built")
+    return TreeObservation(
+        gateway.operation_id,
+        observed_at,
+        scope,
+        coverage,
+        complete,
+        "unknown",
+        metadata,
+        viewport,
+        projected,
+        encoded,
+    )
+
+
+def _ios_viewport(value: object, gateway: _SessionOperationGateway) -> Viewport:
+    if not isinstance(value, Mapping):
+        raise _error(CommandError, "source_invalid", gateway)
+    screen = value.get("screenSize")
+    if not isinstance(screen, Mapping):
+        raise _error(CommandError, "source_invalid", gateway)
+    width = screen.get("width")
+    height = screen.get("height")
+    if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+        raise _error(CommandError, "source_invalid", gateway)
+    return Viewport(
+        ObservedValue("value", width),
+        ObservedValue("value", height),
+        ObservedValue("not_applicable"),
+    )
+
+
+def _ios_tree_result(
+    source_text: str,
+    metadata: SourceMetadata,
+    viewport: Viewport,
+    parent: Element | None,
+    gateway: _SessionOperationGateway,
+) -> TreeObservation:
+    all_roots = _parse_ios_source(source_text, viewport, gateway)
+    synthetic = _ParsedNode("AppiumAUT", (), list(all_roots))
+    roots = (
+        all_roots
+        if parent is None
+        else (_resolve_local_chain(synthetic, parent, gateway)[1],)
+    )
+    locator = _locator_value(parent)
+    scope = ObservationScope("root" if parent is None else "element", locator, locator)
+    observed_at = gateway.observed_at
+    if observed_at is None:
+        raise RuntimeError("tree observation has no successful Appium response")
+
+    def build(
+        keep: set[_ParsedNode] | None, coverage: Coverage, complete: bool
+    ) -> tuple[tuple[TreeNode, ...], bytes | None]:
+        projected = _project_ios_tree(roots, keep, gateway)
+        document = {
+            "complete_for_requested_scope": complete,
+            "coverage": coverage,
+            "kind": "tree",
+            "observed_at": observed_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "operation_id": gateway.operation_id,
+            "payload": {
+                "roots": [_ios_tree_json(node) for node in projected],
                 "viewport": _json_value(viewport),
             },
             "schema": 1,
@@ -1366,6 +1712,20 @@ def _observe_tree(
             parent,
             gateway,
         )
+    if gateway.platform == "ios":
+        screen = gateway.request(
+            lambda: driver.execute_script("mobile: deviceScreenInfo"),
+            "screen_info_read",
+        )
+        viewport = _ios_viewport(screen, gateway)
+        source = gateway.request(lambda: driver.page_source, "source_captured")
+        return _ios_tree_result(
+            source,
+            SourceMetadata(False, True, None),
+            viewport,
+            parent,
+            gateway,
+        )
     return _source_operation(
         driver,
         gateway,
@@ -1379,19 +1739,20 @@ def _resolve_local_chain(
     current = root
     matched: list[_ParsedNode] = []
     for locator in _locator_chain(element):
-        if gateway.platform == "macos":
+        if gateway.platform in ("macos", "ios"):
             candidates = (
                 (current, *_descendants(current))
-                if not matched
+                if gateway.platform == "macos" and not matched
                 else _descendants(current)
             )
+            identifier = "identifier" if gateway.platform == "macos" else "name"
             matches = [
                 node
                 for node in candidates
                 if (
                     node.tag == locator.value
                     if locator.by == "class name"
-                    else node.attribute("identifier") == locator.value
+                    else node.attribute(identifier) == locator.value
                 )
             ]
         else:
@@ -1477,6 +1838,15 @@ def _structure_result(
             ObservedValue("not_applicable"),
         )
         root = _parse_mac2_source(source_text, viewport, gateway)
+    elif gateway.platform == "ios":
+        viewport = Viewport(
+            ObservedValue("unknown"),
+            ObservedValue("unknown"),
+            ObservedValue("not_applicable"),
+        )
+        root = _ParsedNode(
+            "AppiumAUT", (), list(_parse_ios_source(source_text, viewport, gateway))
+        )
     else:
         root, _ = _parse_source(source_text, gateway)
     matched, target = _resolve_local_chain(root, element, gateway)
@@ -1508,13 +1878,13 @@ def _structure_result(
             "operation_id": gateway.operation_id,
             "payload": {
                 "roots": [
-                    _json_value(node, macos=gateway.platform == "macos")
+                    _json_value(node, macos=gateway.platform in ("macos", "ios"))
                     for node in projected
                 ],
                 "target_path": list(path),
             },
             "schema": 1,
-            "scope": _json_value(scope, macos=gateway.platform == "macos"),
+            "scope": _json_value(scope, macos=gateway.platform in ("macos", "ios")),
             "source": _json_value(metadata),
             "upstream_completeness": "unknown",
         }
@@ -1552,7 +1922,7 @@ def _inspect_structure(
     scope: Literal["target", "declared_parent"],
     gateway: _SessionOperationGateway,
 ) -> RawStructureObservation:
-    if gateway.platform == "macos":
+    if gateway.platform in ("macos", "ios"):
         source = gateway.request(lambda: driver.page_source, "source_captured")
         return _structure_result(
             source,

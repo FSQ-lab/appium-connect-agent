@@ -463,6 +463,12 @@ def _make_element(
             if by in ("xpath", "-ios class chain"):
                 raise ElementValidationError("unsupported_operation")
             if (
+                platform == "ios"
+                and by == "class name"
+                and not value.startswith("XCUIElementType")
+            ):
+                raise ElementValidationError("invalid_argument")
+            if (
                 not isinstance(predicate, str)
                 or not 1 <= len(predicate) <= 4_096
                 or "\0" in predicate
@@ -553,7 +559,7 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
             value.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
             return "invalid_argument"
-        if platform == "macos":
+        if platform in ("macos", "ios"):
             if package is not None or raw_id or (by == "xpath" and parent is not None):
                 return "invalid_argument"
             if predicate is not None:
@@ -566,6 +572,12 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
                 try:
                     predicate.encode("utf-8", errors="strict")
                 except UnicodeEncodeError:
+                    return "invalid_argument"
+                if (
+                    platform == "ios"
+                    and by == "class name"
+                    and not value.startswith("XCUIElementType")
+                ):
                     return "invalid_argument"
         else:
             if predicate is not None:

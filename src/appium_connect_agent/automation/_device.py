@@ -72,9 +72,10 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -97,9 +98,10 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
+        owner._reject_ios(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -122,9 +124,10 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
+        owner._reject_ios(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -156,6 +159,7 @@ class Device:
         )
         if valid_bundle_id is None and valid_path_value is None:
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         valid_path = (
@@ -192,6 +196,10 @@ class Device:
             _validate_apk_path_lexical(app_path, operation_id)
             _check_bool(allow_test_packages, operation_id)
             owner._reject_macos(operation_id)
+        if owner.platform == "ios":
+            _validate_ios_app_path_lexical(app_path, operation_id)
+            _check_bool(allow_test_packages, operation_id)
+            owner._reject_ios(operation_id)
         app_path = _check_app_path(app_path, operation_id)
         allow_test_packages = _check_bool(allow_test_packages, operation_id)
         owner._run_operation(
@@ -211,7 +219,12 @@ class Device:
     ) -> bool:
         """Remove one explicit package and preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        app_id = _checked_app_id(app_id, operation_id)
+        app_id = (
+            _validate_bundle_id(app_id, operation_id)
+            if owner.platform == "ios"
+            else _checked_app_id(app_id, operation_id)
+        )
+        owner._reject_ios(operation_id)
         owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
@@ -230,6 +243,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         command = _status_bar_command(command, operation_id)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -240,6 +254,7 @@ class Device:
     def back(self, *, control: OperationControl | None = None) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(operation_id, control, deadline, _back)
 
     def press_keycode(
@@ -255,6 +270,7 @@ class Device:
             keycode, metastate, flags, operation_id
         )
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -282,6 +298,7 @@ class Device:
             keycode, metastate, flags, operation_id
         )
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -299,10 +316,12 @@ class Device:
     def hide_keyboard(self, *, control: OperationControl | None = None) -> bool:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         return owner._run_operation(operation_id, control, deadline, _hide_keyboard)
 
     def get_clipboard_text(self, *, control: OperationControl | None = None) -> str:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_ios(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -328,6 +347,7 @@ class Device:
         label = _label(label, operation_id)
         if owner.platform == "macos" and label is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -352,6 +372,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         button_label = _label(button_label, operation_id)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -370,6 +391,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         button_label = _label(button_label, operation_id)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -382,6 +404,7 @@ class Device:
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_ios(operation_id)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
 
     def tap_at(
@@ -390,6 +413,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_x = _coordinate(x, operation_id)
         valid_y = _coordinate(y, operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -426,6 +450,7 @@ class Device:
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         script = (
             "macos: rightClick"
             if valid_button == "right"
@@ -463,6 +488,7 @@ class Device:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -497,6 +523,7 @@ class Device:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -535,6 +562,7 @@ class Device:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         if owner.platform == "android" and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -576,12 +604,33 @@ class Device:
         valid_keys = _validate_macos_keys(keys, operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
             deadline,
             lambda driver, gateway: _macos_send_keys(driver, gateway, valid_keys),
         )
+
+
+def _validate_ios_app_path_lexical(app_path: object, operation_id: str) -> Path:
+    if not isinstance(app_path, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        encoded = str(app_path).encode("utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if (
+        not app_path.is_absolute()
+        or app_path.suffix.casefold() not in {".app", ".ipa"}
+        or len(encoded) > 4_096
+        or any(unicodedata.category(character) == "Cc" for character in str(app_path))
+        or ".." in app_path.parts
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return app_path
 
 
 def _validate_apk_path_lexical(app_path: object, operation_id: str) -> Path:

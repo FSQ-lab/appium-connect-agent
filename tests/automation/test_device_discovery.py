@@ -18,10 +18,12 @@ from appium_connect_agent.automation import (
     CommandError,
     DeviceInfo,
     InvalidRequestError,
+    IosDeviceInfo,
     OperationCancelledError,
     OperationTimeoutError,
     _discovery,
     list_devices,
+    list_ios_devices,
 )
 from appium_connect_agent.runtime import OperationControl
 
@@ -461,3 +463,114 @@ def test_unknown_program_defect_propagates_after_reclamation(
         list_devices(fake_adb(tmp_path))
     assert caught.value is failure
     assert_reclaimed(processes[0])
+
+
+def fake_xcode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    simulator: object,
+    physical: object,
+) -> Path:
+    root = tmp_path / "root"
+    applications = root / "Applications"
+    bundle = applications / "Xcode-Test.app"
+    bin_dir = bundle / "Contents" / "Developer" / "usr" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bundle / "Info.plist").write_bytes(b"plist")
+    payloads = {"simctl": simulator, "xcdevice": physical}
+    for name, payload in payloads.items():
+        executable = bin_dir / name
+        executable.write_text(
+            f"#!{sys.executable}\nimport json\nprint(json.dumps({payload!r}))\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+    for directory in (
+        applications,
+        bundle,
+        bundle / "Contents",
+        bundle / "Contents" / "Developer",
+        bundle / "Contents" / "Developer" / "usr",
+        bin_dir,
+    ):
+        directory.chmod(0o755)
+    monkeypatch.setattr(_discovery, "_XCODE_FS_ROOT", root)
+    monkeypatch.setattr(_discovery, "_TRUSTED_OWNER_UID", os.getuid())
+    return Path("/Applications/Xcode-Test.app/Contents/Developer")
+
+
+def test_ios_discovery_merges_filters_and_sorts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    developer = fake_xcode(
+        tmp_path,
+        monkeypatch,
+        simulator={
+            "devices": {
+                "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+                    {
+                        "udid": "SIM-2",
+                        "name": "iPhone",
+                        "state": "Booted",
+                        "isAvailable": True,
+                    }
+                ],
+                "com.apple.CoreSimulator.SimRuntime.tvOS-27-0": [
+                    {"udid": "TV", "name": "TV", "state": "Shutdown"}
+                ],
+            }
+        },
+        physical=[
+            {
+                "identifier": "DEV-1",
+                "name": "Phone",
+                "simulator": False,
+                "platform": "com.apple.platform.iphoneos",
+                "operatingSystemVersion": "27.0",
+                "interface": "usb",
+                "available": True,
+            },
+            {
+                "identifier": "IGNORED",
+                "simulator": True,
+                "platform": "com.apple.platform.iphonesimulator",
+                "available": True,
+            },
+        ],
+    )
+
+    assert list_ios_devices(developer_dir=developer) == (
+        IosDeviceInfo("DEV-1", "Phone", "device", "27.0", "connected", "usb"),
+        IosDeviceInfo("SIM-2", "iPhone", "simulator", "27.0", "booted", "simulator"),
+    )
+
+
+def test_ios_discovery_rejects_untrusted_xcode_before_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    developer = fake_xcode(
+        tmp_path, monkeypatch, simulator={"devices": {}}, physical=[]
+    )
+    bundle = (
+        tmp_path / "root" / "Applications" / "Xcode-Test.app" / "Contents" / "Developer"
+    )
+    (bundle / "usr" / "bin" / "simctl").chmod(0o777)
+    calls: list[object] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: calls.append(args))
+
+    with pytest.raises(CommandError) as caught:
+        list_ios_devices(developer_dir=developer)
+
+    assert_error(caught.value, CommandError, "xcode_unavailable", "not_sent")
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "developer_dir",
+    [Path("relative"), Path("/Library/Developer/CommandLineTools"), cast(Any, "bad")],
+)
+def test_ios_discovery_invalid_developer_dir_is_not_sent(developer_dir: Any) -> None:
+    with pytest.raises(InvalidRequestError) as caught:
+        list_ios_devices(developer_dir=developer_dir)
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
