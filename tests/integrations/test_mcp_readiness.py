@@ -48,9 +48,9 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "43d35ec7fa39418fe68a6e8d5059f2f56396feacd0861cf67850cd8fd91dc922"
+    "3e3fe0fabce1d990050b7db739383974f485050a182c2d70bc530e78870c2f2d"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3858
+CAPABILITY_MAX_CANONICAL_BYTES = 3885
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
 DEVICE_MAX_CANONICAL_BYTES = 2_112_668
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5622
@@ -497,7 +497,7 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                     "explicit_screen_coordinates_only",
                     "no_automatic_navigation",
                     "no_node_cache",
-                    "observation_document_65536_bytes",
+                    "tree_document_524288_bytes_attributes_structure_65536_bytes",
                     "screenshot_png_3000000_bytes",
                     "single_session_capacity",
                     "opaque_handle_process_local",

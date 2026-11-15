@@ -164,8 +164,8 @@
 
 - 结构观测在同一 Session gate 内读取 Settings，要求 `enableMultiWindows` 为实际 true，并读取 `allowInvisibleElements` 与可用的 `snapshotMaxDepth`；必要时临时设置 `allowInvisibleElements=true`，取得一次 page source 后在安全路径恢复原值。raw ID 官方查询同样在 gate 内必要时临时设置 `disableIdLocatorAutocompletion=true` 并恢复；guard 合并设置、错误和清理规则，不永久改变 Session 定位语义。
 - XML 只用 `defusedxml.ElementTree.fromstring` 等价公开入口并显式禁止 DTD、entity 和 external resource；取得完整 Python str 后先严格 UTF-8 计量。上限为原始 XML 4,194,304 bytes、20,000 节点、深度 128、每节点 64 属性、tag/属性名 256 code points、单属性值 1,048,576 UTF-8 bytes；恰好上限允许，超限不返回部分树。解析后使用显式 stack 遍历，解析前后检查取消，不宣称同步 parser 可被即时抢占。
-- schema=1 使用 `json.dumps(..., ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True).encode("utf-8", errors="strict")` 的等价规范编码；计量对象是包含 envelope、scope、状态和 payload 的完整项目文档，最大 65,536 bytes，`to_json()` 必须与计量 bytes 相同。
-- 完整请求范围超限后，tree 只保留 visible、partially_visible、unknown 以及 `viewport_relation` 为 outside_* 的节点和必要祖先；包含视口外节点时 coverage 为 `visible_with_ancestors_and_offscreen`，否则为 `visible_with_ancestors`。structure 还无条件保留目标及其完整路径，过滤后重算 target_path。保留 sibling/父子和全部节点原值，并对所有实际窗口取并集；仍超限或单节点、祖先链、可见/视口外兄弟、多窗口整体超限时 `observation_too_large`。禁止截断字段、前 N、丢窗口、提升孙节点、分页、游标或跨页遍历。Element.inspect 不做可见回退。
+- schema=1 使用 `json.dumps(..., ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True).encode("utf-8", errors="strict")` 的等价规范编码；计量对象是包含 envelope、scope、状态和 payload 的完整项目文档。Android 与 Mac2 的 `TreeObservation` 最大 524,288 bytes；`ElementInspection` 与 `RawStructureObservation` 继续最大 65,536 bytes；各自 `to_json()` 必须与计量 bytes 相同。
+- 完整请求范围超限后，tree 只保留 visible、partially_visible、unknown 以及 `viewport_relation` 为 outside_* 的节点和必要祖先；包含视口外节点时 coverage 为 `visible_with_ancestors_and_offscreen`，否则为 `visible_with_ancestors`。structure 还无条件保留目标及其完整路径，过滤后重算 target_path。保留 sibling/父子和全部节点原值，并对所有实际窗口取并集；tree 投影后仍超过524,288 bytes，或 attributes/structure 超过65,536 bytes，或单节点、祖先链、可见/视口外兄弟、多窗口整体超限时 `observation_too_large`。禁止截断字段、前 N、丢窗口、提升孙节点、分页、游标或跨页遍历。Element.inspect 不做可见回退。
 
 ### Resolution, Errors And Lifecycle
 
@@ -178,8 +178,8 @@
 ### Verification Scope
 
 - 受控验证必须使用锁定真实 Appium/Selenium/defusedxml 客户端与临时 HTTP 协议服务，覆盖 Settings/source、根/子 find_elements、属性/text/rect、有效错误、慢响应、断连、响应未知和连接池关闭；不得只 mock WebDriver 成功。
-- 必须覆盖 Element grammar/owner/depth/raw ID、逐层唯一性、属性状态、三种完整 schema、XML 安全与全部资源 ±1 边界、每种结果 65,536/65,537、full→visible、不可见 structure 目标、多窗口、Settings 恢复、gate 优先级、取消/预算、uncertain 本地收尾、无缓存资源及 AIF-01/AIF-02 回归。空间事实须覆盖 inside/intersects/outside 四方向/unknown、page-source 反向 bounds→unknown、Element.inspect 非法 rect 仍失败、offscreen fallback/coverage 与仍超限；并通过 strict mypy、Ruff、import-linter、pytest、build 和发行物检查。
-- 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 与专用 Android 设备或已启动模拟器，覆盖普通 View、适用 Compose/自定义控件、多窗口/overlay、不可见节点、深层/长文本、局部范围、真实 4 MiB/64 KiB 边界和 Session 隔离；不执行 AIF-04 动作。没有相应资源时必须报告 `device-validation-blocked`，受控测试通过不等于 AIF-03 Done、Automation 模块完成或真实链路验收。
+- 必须覆盖 Element grammar/owner/depth/raw ID、逐层唯一性、属性状态、三种完整 schema、XML 安全与全部资源 ±1 边界、tree 524,288/524,289、attributes与structure各65,536/65,537、full→visible、不可见 structure 目标、多窗口、Settings 恢复、gate 优先级、取消/预算、uncertain 本地收尾、无缓存资源及 AIF-01/AIF-02 回归。空间事实须覆盖 inside/intersects/outside 四方向/unknown、page-source 反向 bounds→unknown、Element.inspect 非法 rect 仍失败、offscreen fallback/coverage 与仍超限；并通过 strict mypy、Ruff、import-linter、pytest、build 和发行物检查。
+- 获准真实验收须使用固定 Appium 3.x / UiAutomator2 8.7.0 与专用 Android 设备或已启动模拟器，覆盖普通 View、适用 Compose/自定义控件、多窗口/overlay、不可见节点、深层/长文本、局部范围、真实4MiB XML、512KiB tree文档、64KiB attributes/structure文档边界和 Session 隔离；不执行 AIF-04 动作。没有相应资源时必须报告 `device-validation-blocked`，受控测试通过不等于 AIF-03 Done、Automation 模块完成或真实链路验收。
 
 ## AIF-04 Element Click Actions
 
@@ -669,9 +669,9 @@
 - Mac2 `Element.inspect` 只接受最多 14 个不重复属性：`id,text,type,label,title,value,placeholder_value,element_type,enabled,focused,selected,hittable,displayed,bounds`。跨平台专属属性在 gate/I/O 前返回 `unsupported_operation/not_sent`。读取使用 Mac2 公开 XCUI 属性与 WebElement state/text/rect；`element_type` 的非负十进制字符串转 int，缺失为 missing，非法值为 unknown。
 - Mac2 `observe_tree` 不读写 Android Settings。它先执行一次 `macos: listDisplays`，严格验证 display map；仅在恰好一个主屏位于 `(0,0)` 且宽高为正整数时生成已知 Viewport，否则生成 unknown Viewport。随后取得一次 page source。`inspect_structure` 直接取得 page source。SourceMetadata 固定 `enable_multi_windows=False, allow_invisible_elements=True, snapshot_max_depth=None`。
 - XCUI XML 继续使用 defusedxml，并沿用 4 MiB、20000 nodes、128 depth、64 attributes/node 等安全上限。根 tag 必须以 `XCUIElementType` 开头，且根自身是顶层真实节点。节点映射保留 type/identifier/label/title/value/placeholderValue/elementType/enabled/selected 与整数 x/y/width/height；text 严格按 `value -> label -> placeholderValue -> title -> ""` 合成。零尺寸或未知 Viewport 节点保持 unknown 可见性；已知正尺寸结合主屏计算 relation/visibility。
-- Mac2 tree JSON 字段为 `type,id,text,label,title,value,placeholder_value,element_type,enabled,selected,bounds`；`XCUIElementType` 拆为 namespace，默认 enabled=true 与 selected=false 省略，父子同 bounds 使用 `"parent"`。完整文档沿用 65536-byte full→visible+ancestors→`observation_too_large` 合同。
+- Mac2 tree JSON 字段为 `type,id,text,label,title,value,placeholder_value,element_type,enabled,selected,bounds`；`XCUIElementType` 拆为 namespace，默认 enabled=true 与 selected=false 省略，父子同 bounds 使用 `"parent"`。完整tree文档使用524,288-byte full→visible+ancestors→`observation_too_large`合同；Mac2 attributes与structure文档继续使用65,536-byte合同。
 - Mac2 局部结构链只接受无 predicate 的 `id`、`accessibility id`、`name`、`class name`；前三者精确匹配 XML `identifier`，后者精确匹配 tag。xpath、predicate 与 iOS predicate/class-chain locator 在任何外部请求前返回 `structure_scope_unavailable/not_sent`。
-- Android `LocatorValue` JSON 继续只含 `by,package,parent,raw_id,value` 五键，既有 TreeObservation、ElementInspection、RawStructureObservation canonical bytes 不变；Mac2 scope locator 额外序列化 `predicate`。
+- Android `LocatorValue` JSON 继续只含 `by,package,parent,raw_id,value` 五键；三类观测schema及此前可成功文档的canonical bytes不变，tree仅扩大可接受上限；Mac2 scope locator 额外序列化 `predicate`。
 
 ## AUTO-MAC-01B Mac2 Desktop Element And Device Actions
 
