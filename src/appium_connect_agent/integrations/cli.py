@@ -256,8 +256,17 @@ async def _exchange(
         with anyio.fail_after(timeout):
             async with await anyio.connect_unix(os.fspath(socket_path)) as stream:
                 payload = canonical_json_bytes(request)
-                await send_frame(stream, payload, maximum=MAX_REQUEST_BYTES)
-                response = await receive_frame(stream, maximum=MAX_RESPONSE_BYTES)
+                await send_frame(
+                    stream,
+                    payload,
+                    maximum=MAX_REQUEST_BYTES,
+                    timeout_seconds=None,
+                )
+                response = await receive_frame(
+                    stream,
+                    maximum=MAX_RESPONSE_BYTES,
+                    timeout_seconds=None,
+                )
                 return parse_response(response)
     except TimeoutError as error:
         raise _CliError("timeout", 3) from error

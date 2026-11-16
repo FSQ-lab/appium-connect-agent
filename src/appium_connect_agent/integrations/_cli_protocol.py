@@ -178,10 +178,17 @@ async def receive_exactly(stream: ByteReceiveStream, size: int) -> bytes:
 
 
 async def receive_frame(
-    stream: ByteReceiveStream, *, maximum: int, timeout_seconds: float = 10.0
+    stream: ByteReceiveStream,
+    *,
+    maximum: int,
+    timeout_seconds: float | None = 10.0,
 ) -> bytes:
     try:
-        with anyio.fail_after(timeout_seconds):
+        with (
+            anyio.CancelScope()
+            if timeout_seconds is None
+            else anyio.fail_after(timeout_seconds)
+        ):
             header = await receive_exactly(stream, _FRAME.size)
             (length,) = _FRAME.unpack(header)
             if length == 0 or length > maximum:
@@ -196,12 +203,16 @@ async def send_frame(
     payload: bytes,
     *,
     maximum: int,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float | None = 10.0,
 ) -> None:
     if not payload or len(payload) > maximum:
         raise ProtocolError("invalid frame size")
     try:
-        with anyio.fail_after(timeout_seconds):
+        with (
+            anyio.CancelScope()
+            if timeout_seconds is None
+            else anyio.fail_after(timeout_seconds)
+        ):
             await stream.send(_FRAME.pack(len(payload)) + payload)
     except TimeoutError as error:
         raise ProtocolError("frame timeout") from error
