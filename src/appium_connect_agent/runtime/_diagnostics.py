@@ -11,7 +11,7 @@ from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 from uuid import uuid4
 
 from appium_connect_agent.contracts import LocalSettings
@@ -53,6 +53,26 @@ if TYPE_CHECKING:
 
 _XCODE_SELECT_LINK = Path("/var/db/xcode_select_link")
 _APPLICATIONS_ROOT = Path("/Applications")
+
+
+class _AppleDriverSpec(NamedTuple):
+    target: str
+    display_name: str
+    package_name: str
+    automation_name: str
+    extra_xcode_bins: tuple[str, ...]
+
+
+_APPLE_DRIVER_SPECS: dict[OfficialDriver, _AppleDriverSpec] = {
+    "mac2": _AppleDriverSpec("macOS", "Mac2", "appium-mac2-driver", "Mac2", ()),
+    "xcuitest": _AppleDriverSpec(
+        "iOS",
+        "XCUITest",
+        "appium-xcuitest-driver",
+        "XCUITest",
+        ("simctl", "xcdevice"),
+    ),
+}
 
 
 def _managed_root_state(operation: _Operation, root: Path) -> str:
@@ -182,6 +202,13 @@ def _valid_xcode_bundle(operation: _Operation, bundle: Path) -> bool:
             info = path.lstat()
             if stat.S_ISLNK(info.st_mode) or not predicate(info.st_mode):
                 return False
+        spec = _APPLE_DRIVER_SPECS.get(operation.target_driver)
+        if spec is not None:
+            for tool in spec.extra_xcode_bins:
+                operation.checkpoint()
+                info = (bundle / "Contents/Developer/usr/bin" / tool).lstat()
+                if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                    return False
         operation.reader.read(bundle / "Contents/Info.plist")
     except FileNotFoundError:
         return False
@@ -255,7 +282,7 @@ class _Operation:
         control: OperationControl,
         observer: Callable[[ProgressEvent], None] | None,
         phase: str = "diagnosing",
-        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
+        target_driver: OfficialDriver = "uiautomator2",
     ) -> None:
         self.control = control
         self.observer = observer
@@ -269,13 +296,14 @@ class _Operation:
         self.reader = Reader(self.checkpoint)
 
     def report(self) -> DiagnosticReport:
-        if self.target_driver == "mac2":
+        spec = _APPLE_DRIVER_SPECS.get(self.target_driver)
+        if spec is not None:
             return DiagnosticReport(
                 self.operation_id,
                 self.observed_at,
                 host="macOS",
-                target="macOS",
-                driver="Mac2",
+                target=spec.target,
+                driver=spec.display_name,
                 checks=tuple(self.checks),
                 observer_errors=tuple(self.observer_errors),
             )
@@ -371,18 +399,20 @@ class _Operation:
     def driver(
         self,
         settings: LocalSettings,
-        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
+        target_driver: OfficialDriver = "uiautomator2",
     ) -> Package | None:
         explicit = settings.appium_home is not None
         home = settings.appium_home or _coordination._account_home() / ".appium"
         source = "explicit" if explicit else "conventional_candidate"
-        package_name = (
-            "appium-mac2-driver"
-            if target_driver == "mac2"
-            else "appium-uiautomator2-driver"
-        )
-        driver_name = "mac2" if target_driver == "mac2" else "uiautomator2"
-        automation_name = "Mac2" if target_driver == "mac2" else "UiAutomator2"
+        if target_driver == "uiautomator2":
+            package_name = "appium-uiautomator2-driver"
+            driver_name = "uiautomator2"
+            automation_name = "UiAutomator2"
+        else:
+            spec = _APPLE_DRIVER_SPECS[target_driver]
+            package_name = spec.package_name
+            driver_name = target_driver
+            automation_name = spec.automation_name
         try:
             package = self.reader.driver(
                 home,
@@ -453,6 +483,7 @@ class _Operation:
             return unavailable("missing", "fail")
 
         packages: list[Package | None] = []
+        spec = _APPLE_DRIVER_SPECS[self.target_driver]
         specs = (
             (
                 "appium_installation",
@@ -465,10 +496,10 @@ class _Operation:
             (
                 "driver_installation",
                 root / "driver-home",
-                root / "driver-home/node_modules/appium-mac2-driver",
-                "appium-mac2-driver",
-                "mac2",
-                "Mac2",
+                root / "driver-home/node_modules" / spec.package_name,
+                spec.package_name,
+                self.target_driver,
+                spec.automation_name,
             ),
         )
         for (
@@ -494,7 +525,9 @@ class _Operation:
                     f"version={package.version}",
                 ]
                 if driver_name is not None:
-                    evidence.append("driverName=mac2; automationName=Mac2")
+                    evidence.append(
+                        f"driverName={driver_name}; automationName={automation_name}"
+                    )
                 self.add(check_id, "pass", "metadata_observed", tuple(evidence))
                 packages.append(package)
             except Finding as finding:
@@ -544,7 +577,7 @@ class _Operation:
         driver: Package | None,
         npm: Package | None,
         *,
-        target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2",
+        target_driver: OfficialDriver = "uiautomator2",
     ) -> None:
         results: list[bool | None] = []
         evidence: list[str] = []
@@ -583,7 +616,11 @@ class _Operation:
         else:
             status, reason = "pass", "declarations_match"
         self.add("declared_compatibility", status, reason, tuple(evidence))
-        target = "macOS" if target_driver == "mac2" else "Android"
+        target = (
+            "Android"
+            if target_driver == "uiautomator2"
+            else _APPLE_DRIVER_SPECS[target_driver].target
+        )
         self.add(
             "qualified_support",
             "unknown",
@@ -831,15 +868,17 @@ class Runtime:
         target_driver: OfficialDriver = "uiautomator2",
         control: OperationControl | None = None,
     ) -> DiagnosticReport:
-        if type(target_driver) is not str:
-            raise ValueError("target_driver must be 'uiautomator2' or 'mac2'")
-        if target_driver == "xcuitest":
-            raise ValueError("target_driver 'xcuitest' diagnostics are not yet enabled")
-        if target_driver not in ("uiautomator2", "mac2"):
-            raise ValueError("target_driver must be 'uiautomator2' or 'mac2'")
+        if type(target_driver) is not str or target_driver not in (
+            "uiautomator2",
+            "mac2",
+            "xcuitest",
+        ):
+            raise ValueError(
+                "target_driver must be 'uiautomator2', 'mac2', or 'xcuitest'"
+            )
         if control is not None and not isinstance(control, OperationControl):
             raise ValueError("control must be OperationControl or None")
-        selected: Literal["uiautomator2", "mac2"] = target_driver
+        selected: OfficialDriver = target_driver
         operation = _Operation(
             control or OperationControl(), self._on_progress, target_driver=selected
         )
@@ -897,7 +936,7 @@ class Runtime:
                         appium = operation.tool(
                             "appium", self._settings.appium_executable, paths
                         )
-                        driver = operation.driver(self._settings, "mac2")
+                        driver = operation.driver(self._settings, selected)
                     node = operation.tool("node", self._settings.node_executable, paths)
                     del node
                     npm = operation.tool("npm", self._settings.npm_executable, paths)
@@ -912,7 +951,7 @@ class Runtime:
                         "not_applicable",
                         "not_applicable_for_driver",
                     )
-                    operation.compatibility(appium, driver, npm, target_driver="mac2")
+                    operation.compatibility(appium, driver, npm, target_driver=selected)
                 operation.add("service", "unknown", "not_checked")
                 operation.add("device", "unknown", "not_checked")
                 return operation.report()

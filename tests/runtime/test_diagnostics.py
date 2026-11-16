@@ -8,13 +8,14 @@ import time
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
 from appium_connect_agent.runtime import (
     DiagnosticCheck,
     LocalSettings,
+    OfficialDriver,
     OperationCancelledError,
     OperationControl,
     OperationTimeoutError,
@@ -1008,21 +1009,38 @@ def test_lib02_f1_actual_account_failures_still_map(
     assert Runtime(LocalSettings()).diagnose().checks
 
 
-def _mac_checks(runtime: Runtime) -> dict[str, DiagnosticCheck]:
+def _driver_checks(
+    runtime: Runtime, driver: OfficialDriver
+) -> dict[str, DiagnosticCheck]:
     return {
-        check.check_id: check for check in runtime.diagnose(target_driver="mac2").checks
+        check.check_id: check for check in runtime.diagnose(target_driver=driver).checks
     }
 
 
-def _write_xcode(applications: Path, name: str = "Xcode.app") -> Path:
+def _mac_checks(runtime: Runtime) -> dict[str, DiagnosticCheck]:
+    return _driver_checks(runtime, "mac2")
+
+
+def _write_xcode(
+    applications: Path, name: str = "Xcode.app", *, ios_tools: bool = False
+) -> Path:
     bundle = applications / name
-    (bundle / "Contents/Developer/usr/bin").mkdir(parents=True)
+    binaries = bundle / "Contents/Developer/usr/bin"
+    binaries.mkdir(parents=True)
     (bundle / "Contents/Info.plist").write_bytes(b"plist")
-    (bundle / "Contents/Developer/usr/bin/xcodebuild").write_text("not executed")
+    (binaries / "xcodebuild").write_text("not executed")
+    if ios_tools:
+        for tool in ("simctl", "xcdevice"):
+            (binaries / tool).write_text("not executed")
     return bundle
 
 
-def _managed_mac_root(home: Path, *, service_state: str = "stopped") -> Path:
+def _managed_mac_root(
+    home: Path,
+    *,
+    service_state: str = "stopped",
+    driver: Literal["mac2", "xcuitest"] = "mac2",
+) -> Path:
     root = home / ".appium-connect-agent"
     root.mkdir(mode=0o700)
     (root / "managed.json").write_text(
@@ -1064,11 +1082,17 @@ def _managed_mac_root(home: Path, *, service_state: str = "stopped") -> Path:
         "3.7.0",
         engines={"npm": ">=10"},
     )
+    package_name = {
+        "mac2": "appium-mac2-driver",
+        "xcuitest": "appium-xcuitest-driver",
+    }[driver]
+    automation_name = {"mac2": "Mac2", "xcuitest": "XCUITest"}[driver]
+    driver_version = {"mac2": "4.6.1", "xcuitest": "12.22.8"}[driver]
     write_package(
-        root / "driver-home/node_modules/appium-mac2-driver",
-        "appium-mac2-driver",
-        "4.6.1",
-        appium={"driverName": "mac2", "automationName": "Mac2"},
+        root / "driver-home/node_modules" / package_name,
+        package_name,
+        driver_version,
+        appium={"driverName": driver, "automationName": automation_name},
         peerDependencies={"appium": "^3.0.0-rc.2"},
     )
     return root
@@ -1114,11 +1138,6 @@ def test_target_driver_validation_precedes_io(monkeypatch: pytest.MonkeyPatch) -
     for value in (True, 1, None, "unknown"):
         with pytest.raises(ValueError):
             runtime.diagnose(target_driver=value)  # type: ignore[arg-type]
-    with pytest.raises(
-        ValueError,
-        match="target_driver 'xcuitest' diagnostics are not yet enabled",
-    ):
-        runtime.diagnose(target_driver="xcuitest")
 
 
 def test_default_diagnostics_are_identical_to_explicit_uiautomator2(
@@ -1169,6 +1188,121 @@ def test_mac2_external_diagnostics_are_static_and_target_aware(
     assert result["xcode_layout"].reason_code == "xcode_developer_dir_observed"
     assert result["java_layout"].status == "not_applicable"
     assert result["android_sdk_layout"].reason_code == "not_applicable_for_driver"
+
+
+def test_xcuitest_external_diagnostics_are_static_and_target_aware(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    appium = write_package(tmp_path / "appium", "appium", "3.7.0")
+    home = tmp_path / "home"
+    write_package(
+        home / "node_modules/appium-xcuitest-driver",
+        "appium-xcuitest-driver",
+        "12.22.8",
+        appium={"driverName": "xcuitest", "automationName": "XCUITest"},
+        peerDependencies={"appium": "^3.0.0-rc.2"},
+    )
+    applications = tmp_path / "Applications"
+    bundle = _write_xcode(applications, ios_tools=True)
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(bundle / "Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("unexpected execution/network")
+
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(socket, "socket", forbidden)
+    report = Runtime(
+        LocalSettings(appium_executable=appium, appium_home=home)
+    ).diagnose(target_driver="xcuitest")
+    result = {check.check_id: check for check in report.checks}
+    assert (report.host, report.target, report.driver) == ("macOS", "iOS", "XCUITest")
+    assert result["appium_installation"].status == "pass"
+    assert result["driver_installation"].status == "pass"
+    assert result["xcode_layout"].reason_code == "xcode_developer_dir_observed"
+    assert result["java_layout"].reason_code == "not_applicable_for_driver"
+    assert result["android_sdk_layout"].reason_code == "not_applicable_for_driver"
+    assert result["qualified_support"].evidence == (
+        "No iOS Session qualification evidence is bundled.",
+    )
+
+
+def test_xcuitest_managed_diagnostics_are_static_and_validate_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    root = _managed_mac_root(_coordination._account_home(), driver="xcuitest")
+    applications = tmp_path / "Applications"
+    bundle = _write_xcode(applications, ios_tools=True)
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(bundle / "Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+    before = _managed_tree_snapshot(root)
+
+    result = _driver_checks(Runtime(LocalSettings()), "xcuitest")
+
+    assert result["managed_root"].reason_code == "managed_root_ready"
+    assert result["driver_installation"].status == "pass"
+    assert result["driver_installation"].evidence[-1] == (
+        "driverName=xcuitest; automationName=XCUITest"
+    )
+    assert _managed_tree_snapshot(root) == before
+
+
+def test_xcuitest_managed_driver_requires_strict_semver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    root = _managed_mac_root(_coordination._account_home(), driver="xcuitest")
+    metadata = root / "driver-home/node_modules/appium-xcuitest-driver/package.json"
+    value = json.loads(metadata.read_text())
+    value["version"] = "12.22"
+    metadata.write_text(json.dumps(value))
+    applications = tmp_path / "Applications"
+    applications.mkdir()
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(
+        _diagnostics, "_XCODE_SELECT_LINK", tmp_path / "missing-select-link"
+    )
+
+    result = _driver_checks(Runtime(LocalSettings()), "xcuitest")
+
+    assert result["driver_installation"].status == "unknown"
+    assert result["driver_installation"].reason_code == "version_unknown"
+
+
+@pytest.mark.parametrize("tool", ["simctl", "xcdevice"])
+@pytest.mark.parametrize("replacement", ["missing", "symlink"])
+def test_xcuitest_xcode_requires_nonsymlink_ios_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    replacement: str,
+) -> None:
+    from appium_connect_agent.runtime import _diagnostics
+
+    applications = tmp_path / "Applications"
+    bundle = _write_xcode(applications, ios_tools=True)
+    selected = bundle / "Contents/Developer/usr/bin" / tool
+    selected.unlink()
+    if replacement == "symlink":
+        selected.symlink_to(bundle / "Contents/Developer/usr/bin/xcodebuild")
+    link = tmp_path / "xcode_select_link"
+    link.symlink_to(bundle / "Contents/Developer")
+    monkeypatch.setattr(_diagnostics, "_APPLICATIONS_ROOT", applications)
+    monkeypatch.setattr(_diagnostics, "_XCODE_SELECT_LINK", link)
+
+    result = _driver_checks(Runtime(LocalSettings()), "xcuitest")
+
+    assert result["xcode_layout"].status == "fail"
+    assert result["xcode_layout"].reason_code == "invalid_developer_directory"
 
 
 @pytest.mark.parametrize(

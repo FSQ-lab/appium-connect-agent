@@ -37,6 +37,11 @@ _PACKAGES = {
     "xcuitest": "appium-xcuitest-driver",
     "mac2": "appium-mac2-driver",
 }
+_DESIGNATED_DRIVER_VERSIONS = {
+    "uiautomator2": "8.7.0",
+    "xcuitest": "12.22.8",
+    "mac2": "4.6.1",
+}
 
 _FAKE_NODE = r"""#!/usr/bin/env python3
 import json
@@ -88,6 +93,11 @@ packages = {
     "xcuitest": "appium-xcuitest-driver",
     "mac2": "appium-mac2-driver",
 }
+versions = {
+    "uiautomator2": "8.7.0",
+    "xcuitest": "12.22.8",
+    "mac2": "4.6.1",
+}
 def listing():
     document = {}
     for driver, package_name in packages.items():
@@ -132,8 +142,13 @@ if command == ["driver", "list", "--installed", "--json"]:
 if command[:2] == ["driver", "install"]:
     if len(command) != 4 or command[3] != "--json":
         raise SystemExit(31)
-    driver = command[2]
-    if driver not in packages or "@" in driver:
+    driver_spec = command[2]
+    driver, separator, requested_version = driver_spec.partition("@")
+    if (
+        driver not in packages
+        or separator != "@"
+        or requested_version != versions[driver]
+    ):
         raise SystemExit(32)
     if mode in {"install-fail", "install-incompatible"}:
         print("PRIVATE peer incompatibility /Users/secret/.npmrc", file=sys.stderr)
@@ -143,7 +158,7 @@ if command[:2] == ["driver", "install"]:
     if mode != "install-no-final":
         package = home / "node_modules" / packages[driver]
         package.mkdir(parents=True, exist_ok=True)
-        version = "8.7.0" if driver == "uiautomator2" else "1.2.3"
+        version = versions[driver]
         (package / "package.json").write_text(json.dumps({
             "name": packages[driver],
             "version": version,
@@ -211,7 +226,7 @@ def _write_driver(root: Path, driver: str, version: str | None = None) -> None:
         package / "package.json",
         {
             "name": package_name,
-            "version": version or ("8.7.0" if driver == "uiautomator2" else "1.2.3"),
+            "version": version or _DESIGNATED_DRIVER_VERSIONS[driver],
             "appium": {"driverName": driver},
         },
     )
@@ -314,7 +329,7 @@ def test_reused_official_driver_never_runs_install(
 
 
 @pytest.mark.parametrize("driver", ["uiautomator2", "xcuitest", "mac2"])
-def test_missing_driver_uses_exact_unversioned_install_and_final_list(
+def test_missing_driver_uses_exact_designated_install_and_final_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, driver: str
 ) -> None:
     initial = () if driver == "uiautomator2" else ("uiautomator2",)
@@ -339,7 +354,7 @@ def test_missing_driver_uses_exact_unversioned_install_and_final_list(
             str(_root() / "appium" / "node_modules" / "appium" / "index.js"),
             "driver",
             "install",
-            driver,
+            f"{driver}@{_DESIGNATED_DRIVER_VERSIONS[driver]}",
             "--json",
         ]
     ]
@@ -549,6 +564,40 @@ def test_damaged_driver_is_never_overwritten(
     assert not any(command[1:3] == ["driver", "install"] for command in _commands(log))
 
 
+@pytest.mark.parametrize("operation", ["ensure", "doctor"])
+def test_designated_version_mismatch_is_damaged_and_never_runs_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    runtime, log = _setup(
+        tmp_path,
+        monkeypatch,
+        drivers=("uiautomator2", "xcuitest"),
+    )
+    _write_driver(_root(), "xcuitest", "12.22.7")
+
+    if operation == "ensure":
+        with pytest.raises(DriverMaintenanceError) as caught_ensure:
+            runtime.ensure_managed_driver("xcuitest")
+        assert caught_ensure.value.driver_result is not None
+        assert (
+            caught_ensure.value.driver_result.before.reason_code
+            == "driver_version_mismatch"
+        )
+        assert caught_ensure.value.code == "driver_damaged"
+    else:
+        with pytest.raises(DriverDoctorError) as caught_doctor:
+            runtime.run_driver_doctor("xcuitest")
+        assert caught_doctor.value.doctor_result is not None
+        assert caught_doctor.value.code == "driver_damaged"
+    assert not any(
+        command[1:3] in (["driver", "install"], ["driver", "doctor"])
+        for command in _commands(log)
+    )
+    assert not (_root() / "records" / "maintenance.json").exists()
+
+
 @pytest.mark.parametrize(
     "mode", ["install-fail", "install-incompatible", "install-no-final"]
 )
@@ -571,7 +620,7 @@ def test_install_failure_has_no_version_fallback_and_records_terminal_failure(
         command for command in _commands(log) if command[1:3] == ["driver", "install"]
     ]
     assert len(installs) == 1
-    assert installs[0][3:] == ["xcuitest", "--json"]
+    assert installs[0][3:] == ["xcuitest@12.22.8", "--json"]
     assert not any(
         "update" in command or "uninstall" in command for command in _commands(log)
     )
