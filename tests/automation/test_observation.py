@@ -12,7 +12,6 @@ from contextlib import contextmanager, suppress
 from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote
 
@@ -3345,53 +3344,27 @@ def test_ios_structure_local_name_and_invalid_viewport(
         session.quit()
 
 
-def test_ios_all_element_and_device_actions_are_zero_request(
+def test_ios_unsupported_element_and_device_actions_are_zero_request(
     service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with connected(service) as connection:
         session = ios_session_for(service, connection, monkeypatch)
         element = session.element("id", "target")
-        child = session.element("id", "child", parent=element)
-        destination = session.element("id", "destination")
         actions: list[Callable[[], object]] = [
-            lambda: element.click(),
-            lambda: element.double_click(),
             lambda: element.right_click(),
             lambda: element.hover(),
-            lambda: element.long_click(),
-            lambda: element.send_keys("text"),
-            lambda: element.clear(),
             lambda: element.replace_element_value("text"),
-            lambda: element.send_macos_keys(("a",)),
             lambda: element.perform_editor_action("done"),
             lambda: element.swipe_gesture(direction="up", percent=0.5),
             lambda: element.scroll_gesture(direction="up", percent=0.5),
-            lambda: element.scroll(child, max_swipes=1),
             lambda: element.scroll_by(delta_x=1, delta_y=1),
-            lambda: element.macos_swipe(direction="up"),
-            lambda: element.drag_and_drop(destination),
-            lambda: session.device.activate_app("com.example.app"),
-            lambda: session.device.terminate_app("com.example.app"),
-            lambda: session.device.query_app_state("com.example.app"),
-            lambda: session.device.launch_app(bundle_id="com.example.app"),
-            lambda: session.device.install_app(Path("/tmp/Test.ipa")),
-            lambda: session.device.remove_app("com.example.app"),
             lambda: session.device.back(),
             lambda: session.device.press_keycode(1),
             lambda: session.device.long_press_keycode(1),
-            lambda: session.device.hide_keyboard(),
-            lambda: session.device.get_clipboard_text(),
-            lambda: session.device.set_clipboard_text("text"),
-            lambda: session.device.accept_alert(),
-            lambda: session.device.dismiss_alert(),
             lambda: session.device.status_bar("collapse"),
-            lambda: session.device.take_screenshot(),
-            lambda: session.device.tap_at(1, 2),
             lambda: session.device.click_at(1, 2),
             lambda: session.device.hover_at(1, 2),
             lambda: session.device.scroll_at(1, 2, delta_x=1, delta_y=1),
-            lambda: session.device.swipe_between(1, 2, 3, 4),
-            lambda: session.device.send_keys(("a",)),
         ]
         before = len(service.snapshot())
         for action in actions:
