@@ -479,7 +479,7 @@ def fake_xcode(
     bundle = applications / "Xcode-Test.app"
     bin_dir = bundle / "Contents" / "Developer" / "usr" / "bin"
     bin_dir.mkdir(parents=True)
-    (bundle / "Info.plist").write_bytes(b"plist")
+    (bundle / "Contents" / "Info.plist").write_bytes(b"plist")
     payloads = {"simctl": simulator, "xcdevice": physical}
     for name, payload in payloads.items():
         executable = bin_dir / name

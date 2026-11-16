@@ -517,15 +517,18 @@ def _trusted_xcode_tools(
         bundle_fd = _open_trusted_directory(
             descriptors[-1], bundle, descriptors, writable_mask=0o022
         )
+        contents_fd = _open_trusted_directory(
+            bundle_fd, "Contents", descriptors, writable_mask=0o022
+        )
         _check_trusted_file(
-            bundle_fd,
+            contents_fd,
             "Info.plist",
             descriptors,
             executable=False,
             writable_mask=0o022,
         )
-        parent_fd = bundle_fd
-        for segment in ("Contents", "Developer", "usr", "bin"):
+        parent_fd = contents_fd
+        for segment in ("Developer", "usr", "bin"):
             parent_fd = _open_trusted_directory(
                 parent_fd, segment, descriptors, writable_mask=0o022
             )
