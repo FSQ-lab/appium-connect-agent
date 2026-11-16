@@ -441,6 +441,9 @@ def test_public_devices_call_invokes_only_selected_fake_adb_devices_list(
                         "id": serial,
                         "name": "Pixel_8",
                         "connection_state": "connected",
+                        "kind": None,
+                        "platform_version": None,
+                        "interface": None,
                     }
                 ],
             }

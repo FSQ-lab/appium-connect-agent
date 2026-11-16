@@ -135,6 +135,7 @@ def test_ime_and_gesture_remain_destructive_with_disjoint_schemas(
         "drag_and_drop",
         "scroll_by",
         "macos_swipe",
+        "ios_scroll",
     ]
     assert branches[0]["properties"]["percent"]["maximum"] == 1.0
     assert branches[1]["properties"]["percent"]["maximum"] == 3.0
@@ -146,6 +147,8 @@ def test_ime_and_gesture_remain_destructive_with_disjoint_schemas(
     }
     assert branches[3]["properties"]["destination_x_ratio"]["minimum"] == 0.0
     assert branches[3]["properties"]["destination_y_ratio"]["maximum"] == 1.0
+    assert branches[6]["properties"]["distance"]["default"] == 1.0
+    assert branches[6]["properties"]["distance"]["maximum"] == 1.0
 
 
 def test_double_and_long_click_use_exact_public_action_payloads(

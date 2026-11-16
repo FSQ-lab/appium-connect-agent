@@ -88,13 +88,13 @@ def test_ten_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
             "appium.device.key",
             "appium_device_key",
             "device_key",
-            "Send one press or long-press Android keycode command to the bound Device.",
+            "Send one Android keycode or iOS hardware button command to the bound Device.",
         ),
         (
             "appium.device.keyboard_hide",
             "appium_device_keyboard_hide",
             "device_keyboard_hide",
-            "Hide the keyboard for the bound Device and return the official boolean.",
+            "Hide the keyboard for the bound Android or iOS Device and return the official boolean.",
         ),
         (
             "appium.device.clipboard",
@@ -118,13 +118,13 @@ def test_ten_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
             "appium.app.lifecycle",
             "appium_app_lifecycle",
             "app_lifecycle",
-            "Activate, terminate, or query one explicit application package.",
+            "Activate, terminate, query, or launch one explicit application.",
         ),
         (
             "appium.app.package",
             "appium_app_package",
             "app_package",
-            "Install one local APK or remove one explicit application package.",
+            "Install one local application package or remove one explicit application identifier.",
         ),
         (
             "appium.device.screenshot",
@@ -142,7 +142,7 @@ def test_ten_tools_have_fixed_metadata_and_strict_branch_schemas() -> None:
             "appium.macos.keys",
             "appium_macos_keys",
             "macos_keys",
-            "Send one sequence of macOS keystrokes or keyboard shortcuts to the application or an Element.",
+            "Send one sequence of Apple XCUI keystrokes or keyboard shortcuts to the application or an Element.",
         ),
     )
     assert (
