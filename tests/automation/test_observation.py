@@ -3494,3 +3494,23 @@ def test_android_and_mac2_observation_bytes_match_fixed_baselines(
         "mac-tree": "8b896856a7116a9632db40a5f73c6129bbb2bc8dff1a8e62359fa63fbf05746b",
         "mac-structure": "d186b201b4efcdda61995d6489314141c9094954dd398a68adf1bfeb64ece6c6",
     }
+
+
+@pytest.mark.parametrize(
+    ("raw_index", "expected"),
+    [("false", 0), ("true", 1), ("2", 2)],
+)
+def test_ios_index_attribute_normalizes_xcuitest_zero_and_one_quirk(
+    service: ElementProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_index: str,
+    expected: int,
+) -> None:
+    service.attributes[("target", "index")] = raw_index
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        inspected = session.element("name", "target").inspect(attributes=("index",))
+        assert json.loads(inspected.to_json())["payload"]["attributes"] == [
+            {"name": "index", "state": "value", "value": expected}
+        ]
+        session.quit()

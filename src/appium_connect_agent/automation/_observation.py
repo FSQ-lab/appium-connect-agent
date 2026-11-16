@@ -486,8 +486,15 @@ def _read_ios_attribute(
     if raw is None:
         return AttributeObservation(name, "missing")
     if name == "index":
-        if isinstance(raw, str) and raw.isascii() and raw.isdecimal():
-            return AttributeObservation(name, "value", int(raw))
+        if type(raw) is int and raw >= 0:
+            return AttributeObservation(name, "value", raw)
+        if isinstance(raw, str):
+            if raw == "false":
+                return AttributeObservation(name, "value", 0)
+            if raw == "true":
+                return AttributeObservation(name, "value", 1)
+            if raw.isascii() and raw.isdecimal():
+                return AttributeObservation(name, "value", int(raw))
         raise _error(CommandError, "source_invalid", gateway)
     if isinstance(raw, str):
         return AttributeObservation(name, "value", raw)
