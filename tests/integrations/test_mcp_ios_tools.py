@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,6 +234,48 @@ def _short_root() -> Iterator[Path]:
         yield root
     finally:
         shutil.rmtree(root)
+
+
+def _remove_created_derived_data(
+    derived_data: Path,
+    *,
+    derived_data_preexisted: bool,
+    wda_parent_preexisted: bool,
+    account_parent_preexisted: bool,
+    mcp_clean_closed: bool,
+) -> None:
+    if (
+        derived_data_preexisted
+        or not mcp_clean_closed
+        or not derived_data.is_dir()
+        or derived_data.is_symlink()
+    ):
+        return
+    try:
+        os.rmdir(derived_data)
+    except OSError:
+        return
+    if not wda_parent_preexisted:
+        with suppress(OSError):
+            os.rmdir(derived_data.parent)
+    if not account_parent_preexisted:
+        with suppress(OSError):
+            os.rmdir(derived_data.parent.parent)
+
+
+def test_derived_data_cleanup_preserves_preexisting_sentinel(tmp_path: Path) -> None:
+    derived_data = tmp_path / "wda-derived-data" / "port-8100"
+    derived_data.mkdir(parents=True)
+    sentinel = derived_data / "sentinel"
+    sentinel.write_text("preserve", encoding="utf-8")
+    _remove_created_derived_data(
+        derived_data,
+        derived_data_preexisted=True,
+        wda_parent_preexisted=True,
+        account_parent_preexisted=True,
+        mcp_clean_closed=True,
+    )
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
 
 
 async def _stop_daemon(endpoint: Path) -> None:
@@ -810,8 +852,13 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
             / "wda-derived-data"
             / "port-8100"
         )
+        derived_data_preexisted = os.path.lexists(derived_data)
+        wda_parent_preexisted = os.path.lexists(derived_data.parent)
+        account_parent_preexisted = os.path.lexists(derived_data.parent.parent)
+        mcp_clean_closed = False
 
         async def mcp_flow() -> list[dict[str, Any]]:
+            nonlocal mcp_clean_closed
             payloads: list[dict[str, Any]] = []
             async with Client(stdio_parameters) as client:
                 opened = await client.call_tool(
@@ -846,11 +893,19 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
                             distance=0.5,
                         ),
                     ),
-                    ("appium.session.close", _request(session_handle=handle)),
                 ):
                     result = await client.call_tool(name, {"request": request})
                     assert result.is_error is False
                     payloads.append(cast(dict[str, Any], result.structured_content))
+                closed = await client.call_tool(
+                    "appium.session.close",
+                    {"request": _request(session_handle=handle)},
+                )
+                assert closed.is_error is False
+                closed_payload = cast(dict[str, Any], closed.structured_content)
+                assert closed_payload["data"]["session_state"] == "closed"
+                payloads.append(closed_payload)
+                mcp_clean_closed = True
             return payloads
 
         async def toolcall_flow() -> list[dict[str, Any]]:
@@ -985,7 +1040,13 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
         try:
             mcp_payloads = anyio.run(mcp_flow)
         finally:
-            shutil.rmtree(derived_data, ignore_errors=True)
+            _remove_created_derived_data(
+                derived_data,
+                derived_data_preexisted=derived_data_preexisted,
+                wda_parent_preexisted=wda_parent_preexisted,
+                account_parent_preexisted=account_parent_preexisted,
+                mcp_clean_closed=mcp_clean_closed,
+            )
         toolcall_payloads = anyio.run(toolcall_flow)
         cli_payloads = anyio.run(cli_flow)
         assert (
