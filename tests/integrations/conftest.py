@@ -459,7 +459,7 @@ elif MODE != "passthrough":
         if MODE == "invalid_device_count":
             return tuple(
                 DeviceInfo(f"device-{index}", None, "connected")
-                for index in range(257)
+                for index in range(513)
             )
         if MODE == "invalid_device_id_whitespace":
             return (DeviceInfo("bad id", None, "connected"),)
@@ -762,6 +762,7 @@ class McpHarness:
             "ACA_TEST_HANDLES": "[]",
             "ACA_TEST_SECRET": SECRET_PATH,
             "ACA_TEST_STDERR": str(self.stderr_file),
+            "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
             "HOME": str(self.root / "home"),
             "PATH": os.environ.get("PATH", ""),
         }

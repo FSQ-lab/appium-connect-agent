@@ -62,6 +62,9 @@ _ATTRIBUTES = (
     "placeholder_value",
     "element_type",
     "hittable",
+    "accessible",
+    "index",
+    "traits",
 )
 
 
@@ -1074,11 +1077,12 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
             )
             initialized = receive(1)
             assert initialized["result"]["instructions"] == (
-                "Local Android and macOS (Mac2) readiness, explicit Session lifecycle, Native "
-                "observation, caller-requested Element actions, Device controls, screenshot, "
-                "screen-coordinate pointer actions, macOS keys, and application management; no "
-                "automatic observation, verification, navigation, action chain, retry, replay, "
-                "rollback, attach, recovery, clear-app, or HTTP tools."
+                "Local Android, macOS (Mac2), and iOS (XCUITest) readiness, explicit Session "
+                "lifecycle, Native observation, caller-requested Element actions, Device "
+                "controls, screenshot, screen-coordinate pointer actions, Apple XCUI keys, "
+                "and application management; no automatic observation, verification, "
+                "navigation, action chain, retry, replay, rollback, attach, recovery, "
+                "clear-app, or HTTP tools."
             )
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send(

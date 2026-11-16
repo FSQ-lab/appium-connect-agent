@@ -117,6 +117,7 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
                     "driver": "uiautomator2",
                 },
                 {"host": "macos", "target": "macos_desktop", "driver": "mac2"},
+                {"host": "macos", "target": "ios_native", "driver": "xcuitest"},
             ],
             "tools": list(TOOL_CATALOG.tool_names),
             "limitations": list(application.capabilities().data.limitations),

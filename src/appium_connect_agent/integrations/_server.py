@@ -109,11 +109,12 @@ def create_server(application: Application) -> MCPServer[Application]:
         "appium-connect-agent",
         version="0.1.0",
         instructions=(
-            "Local Android and macOS (Mac2) readiness, explicit Session lifecycle, Native "
-            "observation, caller-requested Element actions, Device controls, screenshot, "
-            "screen-coordinate pointer actions, macOS keys, and application management; no "
-            "automatic observation, verification, navigation, action chain, retry, replay, "
-            "rollback, attach, recovery, clear-app, or HTTP tools."
+            "Local Android, macOS (Mac2), and iOS (XCUITest) readiness, explicit Session "
+            "lifecycle, Native observation, caller-requested Element actions, Device "
+            "controls, screenshot, screen-coordinate pointer actions, Apple XCUI keys, "
+            "and application management; no automatic observation, verification, "
+            "navigation, action chain, retry, replay, rollback, attach, recovery, "
+            "clear-app, or HTTP tools."
         ),
         log_level="WARNING",
         lifespan=lifespan,

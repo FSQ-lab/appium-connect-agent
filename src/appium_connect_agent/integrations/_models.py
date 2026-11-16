@@ -105,6 +105,41 @@ def _safe_identifier(value: str, label: str) -> str:
     return value
 
 
+def _ios_udid(value: str) -> str:
+    if value.casefold() == "auto":
+        raise ValueError("invalid iOS UDID")
+    return value
+
+
+def _ios_app_path(value: str) -> str:
+    segments = value.split("/")
+    path = Path(value)
+    if (
+        not path.is_absolute()
+        or any(segment in {".", ".."} for segment in segments[1:])
+        or path.suffix.casefold() not in {".app", ".ipa"}
+        or any(unicodedata.category(character) == "Cc" for character in value)
+        or len(value.encode("utf-8", errors="strict")) > 4096
+    ):
+        raise ValueError("invalid iOS application path")
+    return value
+
+
+def _package_install_path(value: str) -> str:
+    suffix = Path(value).suffix
+    if suffix != ".apk" and suffix.casefold() not in {".app", ".ipa"}:
+        raise ValueError("invalid application package path")
+    segments = value.split("/")
+    if (
+        not Path(value).is_absolute()
+        or any(segment in {".", ".."} for segment in segments[1:])
+        or any(unicodedata.category(character) == "Cc" for character in value)
+        or len(value.encode("utf-8", errors="strict")) > 4096
+    ):
+        raise ValueError("invalid application package path")
+    return value
+
+
 def _mac_app_path(value: str) -> str:
     segments = value.split("/")
     path = Path(value)
@@ -209,7 +244,7 @@ class CapabilitiesRequest(_StrictModel):
 class RuntimeCheckRequest(_StrictModel):
     schema_version: Literal[1]
     mode: Literal["static", "external_connection"]
-    target_driver: Literal["uiautomator2", "mac2"] = "uiautomator2"
+    target_driver: Literal["uiautomator2", "mac2", "xcuitest"] = "uiautomator2"
     timeout_seconds: float = Field(default=10.0, gt=0.0, le=60.0)
 
     @field_validator("timeout_seconds", mode="before")
@@ -220,6 +255,7 @@ class RuntimeCheckRequest(_StrictModel):
 
 class DeviceListRequest(_StrictModel):
     schema_version: Literal[1]
+    platform: Literal["android", "ios"] = "android"
     timeout_seconds: float = Field(default=30.0, gt=0.0, le=60.0)
 
     @field_validator("timeout_seconds", mode="before")
@@ -255,8 +291,14 @@ class MacosPlatformData(_StrictModel):
     driver: Literal["mac2"]
 
 
+class IosPlatformData(_StrictModel):
+    host: Literal["macos"]
+    target: Literal["ios_native"]
+    driver: Literal["xcuitest"]
+
+
 PlatformEntryData: TypeAlias = Annotated[
-    AndroidPlatformData | MacosPlatformData,
+    AndroidPlatformData | MacosPlatformData | IosPlatformData,
     Field(discriminator="target"),
 ]
 
@@ -310,11 +352,11 @@ ToolCallToolNames: TypeAlias = tuple[
     Literal["appium_macos_keys"],
 ]
 CapabilityLimitations: TypeAlias = tuple[
-    Literal["android_and_macos_native_automation"],
+    Literal["android_macos_and_ios_native_automation"],
     Literal["no_automatic_post_action_observation"],
     Literal["clipboard_current_caller_only"],
     Literal["status_bar_output_current_caller_only"],
-    Literal["local_apk_and_macos_app_paths_only"],
+    Literal["local_apk_app_and_ipa_paths_only"],
     Literal["package_remove_no_data_deletion_guarantee"],
     Literal["ime_requires_explicit_element_and_action"],
     Literal["explicit_screen_coordinates_only"],
@@ -336,7 +378,7 @@ class _CapabilityData(_StrictModel):
     host_compatibility: Literal["unqualified"]
     adb_configured: bool
     platforms: Annotated[
-        tuple[PlatformEntryData, ...], Field(min_length=2, max_length=2)
+        tuple[PlatformEntryData, ...], Field(min_length=3, max_length=3)
     ]
     limitations: CapabilityLimitations
 
@@ -347,8 +389,9 @@ class _CapabilityData(_StrictModel):
                 host="macos", target="android_native", driver="uiautomator2"
             ),
             MacosPlatformData(host="macos", target="macos_desktop", driver="mac2"),
+            IosPlatformData(host="macos", target="ios_native", driver="xcuitest"),
         ):
-            raise ValueError("platforms must contain the fixed ordered pair")
+            raise ValueError("platforms must contain the fixed ordered triple")
         return self
 
 
@@ -425,8 +468,8 @@ class RuntimeReport(_StrictModel):
     operation_id: Annotated[StrictUtf8, Field(min_length=1, max_length=128)]
     observed_at: Annotated[StrictUtf8, Field(min_length=1)]
     host: Literal["macOS"]
-    target: Literal["Android", "macOS"]
-    driver: Literal["UiAutomator2", "Mac2"]
+    target: Literal["Android", "macOS", "iOS"]
+    driver: Literal["UiAutomator2", "Mac2", "XCUITest"]
     checks: tuple[RuntimeCheck, ...] = Field(max_length=32)
     observer_errors: tuple[Annotated[StrictUtf8, Field(max_length=512)], ...] = Field(
         max_length=8
@@ -437,6 +480,7 @@ class RuntimeReport(_StrictModel):
         if (self.target, self.driver) not in {
             ("Android", "UiAutomator2"),
             ("macOS", "Mac2"),
+            ("iOS", "XCUITest"),
         }:
             raise ValueError("target must match driver")
         return self
@@ -504,14 +548,23 @@ class DeviceData(_StrictModel):
             pattern=r"^[^\s\x00-\x1f\x7f-\x9f]+$",
         ),
     ]
-    name: (
-        Annotated[
-            StrictUtf8,
-            Field(max_length=1024, pattern=r"^[^\x00-\x1f\x7f-\x9f]*$"),
-        ]
-        | None
+    name: Annotated[StrictUtf8, Field(pattern=r"^[^\x00-\x1f\x7f-\x9f]*$")] | None = (
+        None
     )
-    connection_state: Literal["connected", "offline", "unauthorized", "unknown"]
+    connection_state: Literal[
+        "connected",
+        "offline",
+        "unauthorized",
+        "booted",
+        "shutdown",
+        "unavailable",
+        "unknown",
+    ]
+    kind: Literal["simulator", "device"] | None = None
+    platform_version: (
+        Annotated[StrictUtf8, Field(pattern=r"^[^\x00-\x1f\x7f-\x9f]*$")] | None
+    ) = None
+    interface: Literal["simulator", "usb", "network", "unknown"] | None = None
 
     @field_validator("id")
     @classmethod
@@ -523,19 +576,19 @@ class DeviceData(_StrictModel):
             raise ValueError("device id must not contain whitespace or controls")
         return value
 
-    @field_validator("name")
+    @field_validator("name", "platform_version")
     @classmethod
-    def _safe_name(cls, value: str | None) -> str | None:
+    def _safe_optional_text(cls, value: str | None) -> str | None:
         if value is not None and any(
             unicodedata.category(character) == "Cc" for character in value
         ):
-            raise ValueError("device name must not contain controls")
+            raise ValueError("device text must not contain controls")
         return value
 
 
 class DeviceListData(_StrictModel):
-    count: int = Field(ge=0, le=256)
-    devices: tuple[DeviceData, ...] = Field(max_length=256)
+    count: int = Field(ge=0, le=512)
+    devices: tuple[DeviceData, ...] = Field(max_length=512)
 
     @model_validator(mode="after")
     def _count_matches(self) -> DeviceListData:
@@ -602,6 +655,9 @@ _ELEMENT_ATTRIBUTE: TypeAlias = Literal[
     "placeholder_value",
     "element_type",
     "hittable",
+    "accessible",
+    "index",
+    "traits",
 ]
 _TREE_VALUE_NAME: TypeAlias = Literal[
     "type",
@@ -837,21 +893,26 @@ class ElementScrollRequest(_ElementGestureRequest):
 class ElementScrollToRequest(_ElementGestureRequest):
     intent: Literal["scroll_to"]
     container_locator: LocatorV1
-    target_by: Literal["id", "accessibility_id"]
+    target_by: Literal[
+        "id", "accessibility_id", "name", "class_name", "ios_predicate_string"
+    ]
     target_value: Annotated[StrictUtf8, Field(min_length=1, max_length=4096)]
     target_package: Annotated[StrictUtf8, Field(max_length=255)] | None = None
+    target_predicate: (
+        Annotated[StrictUtf8, Field(min_length=1, max_length=4096)] | None
+    ) = None
     max_swipes: int = Field(ge=1, le=30)
 
-    @field_validator("target_value")
+    @field_validator("target_value", "target_predicate")
     @classmethod
-    def _target_without_nul(cls, value: str) -> str:
-        if "\x00" in value:
+    def _target_without_nul(cls, value: str | None) -> str | None:
+        if value is not None and "\x00" in value:
             raise ValueError("target value must not contain NUL")
         return value
 
     @model_validator(mode="after")
     def _package_only_for_id(self) -> ElementScrollToRequest:
-        if self.target_by == "accessibility_id" and self.target_package is not None:
+        if self.target_by != "id" and self.target_package is not None:
             raise ValueError("target package is only valid for id")
         return self
 
@@ -897,13 +958,26 @@ class ElementMacosSwipeRequest(_ElementGestureRequest):
         return None if value is None else _finite_number(value)
 
 
+class ElementIosScrollRequest(_ElementGestureRequest):
+    intent: Literal["ios_scroll"]
+    locator: LocatorV1
+    direction: Literal["up", "down", "left", "right"]
+    distance: float = Field(default=1.0, gt=0.0, le=1.0)
+
+    @field_validator("distance", mode="before")
+    @classmethod
+    def _actual_distance(cls, value: object) -> float:
+        return _finite_number(value)
+
+
 ElementGestureRequest: TypeAlias = Annotated[
     ElementSwipeRequest
     | ElementScrollRequest
     | ElementScrollToRequest
     | ElementDragAndDropRequest
     | ElementScrollByRequest
-    | ElementMacosSwipeRequest,
+    | ElementMacosSwipeRequest
+    | ElementIosScrollRequest,
     Field(discriminator="intent"),
 ]
 
@@ -965,7 +1039,26 @@ _APP_ID = Annotated[
         pattern=r"^[A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*$",
     ),
 ]
-_APK_PATH = Annotated[StrictUtf8, Field(pattern=r"^/[\s\S]*[.]apk$")]
+_IOS_UDID = Annotated[
+    StrictUtf8,
+    Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+    AfterValidator(_ios_udid),
+]
+_XCODE_ORG_ID = Annotated[
+    StrictUtf8,
+    Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"),
+]
+_XCODE_SIGNING_ID = Annotated[
+    StrictUtf8, Field(min_length=1, max_length=128, pattern=r"^[\x20-\x7e]{1,128}$")
+]
+_IOS_APP_PATH = Annotated[
+    StrictUtf8, Field(min_length=5, max_length=4096), AfterValidator(_ios_app_path)
+]
+_PACKAGE_INSTALL_PATH = Annotated[
+    StrictUtf8,
+    Field(min_length=5, max_length=4096),
+    AfterValidator(_package_install_path),
+]
 
 
 class _DeviceActionRequest(_StrictModel):
@@ -979,11 +1072,35 @@ class _DeviceActionRequest(_StrictModel):
         return _finite_number(value)
 
 
-class DeviceKeyRequest(_DeviceActionRequest):
-    kind: Literal["press", "long_press"]
+class AndroidKeycodePressRequest(_DeviceActionRequest):
+    kind: Literal["press"]
     keycode: _KEYCODE
     metastate: _SIGNED_INT32 | None = None
     flags: _SIGNED_INT32 | None = None
+
+
+class AndroidKeycodeLongPressRequest(_DeviceActionRequest):
+    kind: Literal["long_press"]
+    keycode: _KEYCODE
+    metastate: _SIGNED_INT32 | None = None
+    flags: _SIGNED_INT32 | None = None
+
+
+class IosHardwareButtonRequest(_DeviceActionRequest):
+    kind: Literal["ios_button"]
+    button: Literal["home", "volumeUp", "volumeDown", "action", "camera"]
+
+
+DeviceKeyBranch: TypeAlias = Annotated[
+    AndroidKeycodePressRequest
+    | AndroidKeycodeLongPressRequest
+    | IosHardwareButtonRequest,
+    Field(discriminator="kind"),
+]
+
+
+class DeviceKeyRequest(_PrivateRootModel[DeviceKeyBranch]):
+    pass
 
 
 class DeviceKeyboardHideRequest(_DeviceActionRequest):
@@ -1093,7 +1210,7 @@ class _AppPackageRequest(_StrictModel):
 
 class AppPackageInstallRequest(_AppPackageRequest):
     intent: Literal["install"]
-    app_path: _APK_PATH
+    app_path: _PACKAGE_INSTALL_PATH
     allow_test_packages: bool = False
     timeout_seconds: float = Field(default=180.0, gt=0.0, le=360.0)
 
@@ -1105,7 +1222,7 @@ class AppPackageInstallRequest(_AppPackageRequest):
 
 class AppPackageRemoveRequest(_AppPackageRequest):
     intent: Literal["remove"]
-    app_id: _APP_ID
+    app_id: _CROSS_PLATFORM_APP_ID
     timeout_seconds: float = Field(default=90.0, gt=0.0, le=180.0)
 
     @field_validator("timeout_seconds", mode="before")
@@ -1746,13 +1863,21 @@ class ElementMacosSwipeData(_StrictModel):
     busy: Literal[False]
 
 
+class ElementIosScrollData(_StrictModel):
+    intent: Literal["ios_scroll"]
+    can_scroll_more: None
+    session_state: Literal["active"]
+    busy: Literal[False]
+
+
 ElementGestureData: TypeAlias = Annotated[
     ElementSwipeData
     | ElementScrollData
     | ElementScrollToData
     | ElementDragAndDropData
     | ElementScrollByData
-    | ElementMacosSwipeData,
+    | ElementMacosSwipeData
+    | ElementIosScrollData,
     Field(discriminator="intent"),
 ]
 
@@ -1835,7 +1960,7 @@ class _DeviceToolData(_StrictModel):
 
 
 class DeviceKeyData(_DeviceToolData):
-    kind: Literal["press", "long_press"]
+    kind: Literal["press", "long_press", "ios_button"]
 
 
 class DeviceKeyboardHideData(_DeviceToolData):
@@ -2064,8 +2189,46 @@ class MacosSessionOpenRequest(_StrictModel):
         return self
 
 
+class IosSessionOpenRequest(_StrictModel):
+    schema_version: Literal[1]
+    platform: Literal["ios"]
+    udid: _IOS_UDID
+    bundle_id: _MAC_BUNDLE_ID | None = None
+    app_path: _IOS_APP_PATH | None = None
+    arguments: Annotated[tuple[_MAC_ARG_ITEM, ...], Field(max_length=64)] | None = None
+    auto_launch: bool = True
+    force_app_launch: bool = False
+    should_terminate_app: bool = False
+    no_reset: bool = True
+    xcode_org_id: _XCODE_ORG_ID | None = None
+    xcode_signing_id: _XCODE_SIGNING_ID | None = None
+    updated_wda_bundle_id: _MAC_BUNDLE_ID | None = None
+    new_command_timeout_seconds: float = Field(default=300.0, ge=0.0, le=86400.0)
+    timeout_seconds: float = Field(default=180.0, gt=0.0, le=300.0)
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _arguments_array(cls, value: object) -> object:
+        return None if value is None else _json_array(value)
+
+    @field_validator("new_command_timeout_seconds", "timeout_seconds", mode="before")
+    @classmethod
+    def _actual_number(cls, value: object) -> float:
+        return _finite_number(value)
+
+    @model_validator(mode="after")
+    def _arguments_require_application(self) -> Self:
+        if (
+            self.arguments is not None
+            and self.bundle_id is None
+            and self.app_path is None
+        ):
+            raise ValueError("arguments require bundle_id or app_path")
+        return self
+
+
 SessionOpenBranch: TypeAlias = Annotated[
-    AndroidSessionOpenRequest | MacosSessionOpenRequest,
+    AndroidSessionOpenRequest | MacosSessionOpenRequest | IosSessionOpenRequest,
     Field(discriminator="platform"),
 ]
 
@@ -2092,7 +2255,7 @@ class SessionCloseRequest(_StrictModel):
 
 class SessionData(_StrictModel):
     ownership: Literal["mcp", "toolcall", "cli"]
-    platform: Literal["android", "macos"]
+    platform: Literal["android", "macos", "ios"]
     session_handle: SessionHandle
     session_state: Literal["active", "uncertain", "closing", "closed"]
     device_id: Annotated[
