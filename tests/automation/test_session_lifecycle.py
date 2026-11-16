@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import socketserver
 import threading
@@ -11,11 +12,13 @@ from contextlib import contextmanager, suppress
 from dataclasses import FrozenInstanceError, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 import appium_connect_agent.automation._session as session_module
+import appium_connect_agent.automation._session_coordination as automation_coordination
 from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
@@ -30,6 +33,7 @@ from appium_connect_agent.automation import (
     SessionInfo,
     create_mac2_session,
     create_session,
+    create_xcuitest_session,
 )
 from appium_connect_agent.automation._session_client import (
     _new_connection,
@@ -2098,3 +2102,595 @@ def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
         )
         assert service.lifecycle_requests() == before
         session.quit()
+
+
+def configure_private_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    private_tmp = tmp_path / "private-tmp"
+    private_tmp.mkdir(mode=0o700)
+    private_tmp.chmod(0o1700)
+    monkeypatch.setattr(automation_coordination, "_PRIVATE_TMP_OPEN_PATH", private_tmp)
+    monkeypatch.setattr(automation_coordination, "_ROOT_UID", os.getuid())
+    return private_tmp
+
+
+def test_xcuitest_capabilities_coordination_and_release(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    app = tmp_path / "Sample.app"
+    app.mkdir()
+    (app / "Info.plist").write_bytes(b"plist")
+    service.create_plans.extend(
+        [
+            ResponsePlan(payload=create_response()),
+            ResponsePlan(payload=create_response()),
+        ]
+    )
+
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            "00008030-TEST",
+            bundle_id="com.example.ios",
+            app_path=app,
+            arguments=("--safe",),
+            xcode_org_id="ORG_1",
+            xcode_signing_id="Apple Development",
+            updated_wda_bundle_id="com.example.wda",
+            show_xcode_log=True,
+            wda_launch_timeout_ms=60_000,
+        )
+        create = service.lifecycle_requests()[0]
+        caps = appium_caps(create)
+        assert caps == {
+            "platformName": "iOS",
+            "appium:automationName": "XCUITest",
+            "appium:udid": "00008030-TEST",
+            "appium:bundleId": "com.example.ios",
+            "appium:app": str(app),
+            "appium:processArguments": {"args": ["--safe"]},
+            "appium:autoLaunch": True,
+            "appium:forceAppLaunch": False,
+            "appium:shouldTerminateApp": False,
+            "appium:noReset": True,
+            "appium:fullReset": False,
+            "appium:showXcodeLog": True,
+            "appium:newCommandTimeout": 300.0,
+            "appium:wdaLocalPort": 8100,
+            "appium:derivedDataPath": (
+                f"/private/tmp/appium-connect-agent-{os.getuid()}"
+                "/wda-derived-data/port-8100"
+            ),
+            "appium:xcodeOrgId": "ORG_1",
+            "appium:xcodeSigningId": "Apple Development",
+            "appium:updatedWDABundleId": "com.example.wda",
+            "appium:wdaLaunchTimeout": 60_000,
+        }
+        assert session.session_info().platform == "ios"
+        assert (
+            private_tmp
+            / f"appium-connect-agent-{os.getuid()}"
+            / "wda-derived-data"
+            / "port-8100"
+        ).stat().st_mode & 0o777 == 0o700
+        with pytest.raises(ResourceStateError) as busy:
+            create_xcuitest_session(connection, "00008030-TEST")
+        assert_error(busy.value, ResourceStateError, "device_busy", "not_sent")
+        session.quit()
+        replacement = create_xcuitest_session(connection, "00008030-TEST")
+        replacement.quit()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"udid": "auto"},
+        {"udid": "bad value"},
+        {"udid": "valid", "bundle_id": "bad bundle"},
+        {"udid": "valid", "wda_launch_timeout_ms": 999},
+        {"udid": "valid", "show_xcode_log": 1},
+        {"udid": "valid", "arguments": ("arg",)},
+    ],
+)
+def test_xcuitest_invalid_values_are_private_and_zero_request(
+    service: ProtocolService, kwargs: dict[str, Any]
+) -> None:
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_xcuitest_session(connection, **kwargs)
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert str(caught.value) == "invalid_argument"
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_coordination_rejects_untrusted_private_tmp_and_releases(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    private_tmp.chmod(0o700)
+    with connected(service) as connection, pytest.raises(ResourceStateError) as caught:
+        create_xcuitest_session(connection, "DEVICE-A")
+    assert_error(
+        caught.value, ResourceStateError, "coordination_unavailable", "not_sent"
+    )
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_app_paths_reject_symlink_ancestors_without_echo(
+    service: ProtocolService, tmp_path: Path
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    app = real / "Secret.app"
+    app.mkdir()
+    (app / "Info.plist").write_bytes(b"plist")
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    secret = linked / "Secret.app"
+
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_xcuitest_session(connection, "DEVICE", app_path=secret)
+
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert str(secret) not in str(caught.value)
+    assert service.lifecycle_requests() == []
+
+
+def test_xcuitest_coordinator_has_exact_independent_hundred_port_pool() -> None:
+    coordinator = automation_coordination._Coordinator(8100, 8199)
+    reservations = [coordinator.reserve(f"device-{index}") for index in range(100)]
+    assert [item.system_port for item in reservations] == list(range(8100, 8200))
+    with pytest.raises(automation_coordination._SystemPortUnavailable):
+        coordinator.reserve("overflow")
+    for reservation in reservations:
+        reservation.release()
+
+
+def assert_private_exception_chain(
+    error: BaseException, canaries: tuple[str, ...]
+) -> None:
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        text = f"{current!s}\n{current!r}"
+        assert all(canary not in text for canary in canaries)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if isinstance(current, AutomationError):
+            pending.extend(current.cleanup_errors)
+
+
+def test_xcuitest_accepts_regular_ipa_and_rejects_wrong_ipa_kinds(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    ipa = tmp_path / "Sample.ipa"
+    ipa.write_bytes(b"signed")
+    with connected(service) as connection:
+        session = create_xcuitest_session(connection, "DEVICE", app_path=ipa)
+        session.quit()
+
+        directory = tmp_path / "Directory.ipa"
+        directory.mkdir()
+        target = tmp_path / "Target.ipa"
+        target.write_bytes(b"signed")
+        symlink = tmp_path / "Linked.ipa"
+        symlink.symlink_to(target)
+        unreadable = tmp_path / "Unreadable.ipa"
+        unreadable.write_bytes(b"signed")
+        original_access = cast(Any, session_module).os.access
+        for invalid in (directory, symlink, unreadable):
+            if invalid == unreadable:
+                monkeypatch.setattr(
+                    cast(Any, session_module).os,
+                    "access",
+                    lambda path, mode: (
+                        False if path == unreadable else original_access(path, mode)
+                    ),
+                )
+            with pytest.raises(InvalidRequestError) as caught:
+                create_xcuitest_session(connection, "DEVICE", app_path=invalid)
+            assert_error(
+                caught.value, InvalidRequestError, "invalid_argument", "not_sent"
+            )
+            assert str(invalid) not in str(caught.value)
+            monkeypatch.setattr(cast(Any, session_module).os, "access", original_access)
+    assert [request.method for request in service.lifecycle_requests()] == [
+        "POST",
+        "DELETE",
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"udid": cast(Any, None)},
+        {"udid": ""},
+        {"udid": "A" * 129},
+        {"udid": "dévïce"},
+        {"udid": "AuTo"},
+        {"udid": "DEVICE", "bundle_id": cast(Any, 1)},
+        {"udid": "DEVICE", "updated_wda_bundle_id": "bad bundle"},
+        {"udid": "DEVICE", "app_path": cast(Any, "/tmp/Test.ipa")},
+        {"udid": "DEVICE", "app_path": Path("Test.ipa")},
+        {"udid": "DEVICE", "arguments": cast(Any, "arg")},
+        {"udid": "DEVICE", "arguments": ["arg"] * 65, "bundle_id": "com.a"},
+        {"udid": "DEVICE", "arguments": [cast(Any, 1)], "bundle_id": "com.a"},
+        {"udid": "DEVICE", "arguments": ["bad\0arg"], "bundle_id": "com.a"},
+        {"udid": "DEVICE", "arguments": ["\ud800"], "bundle_id": "com.a"},
+        {"udid": "DEVICE", "auto_launch": cast(Any, 1)},
+        {"udid": "DEVICE", "force_app_launch": cast(Any, 0)},
+        {"udid": "DEVICE", "should_terminate_app": cast(Any, "false")},
+        {"udid": "DEVICE", "no_reset": cast(Any, None)},
+        {"udid": "DEVICE", "show_xcode_log": cast(Any, 1)},
+        {"udid": "DEVICE", "xcode_org_id": cast(Any, 1)},
+        {"udid": "DEVICE", "xcode_org_id": ""},
+        {"udid": "DEVICE", "xcode_org_id": "A" * 65},
+        {"udid": "DEVICE", "xcode_org_id": "bad.id"},
+        {"udid": "DEVICE", "xcode_signing_id": cast(Any, 1)},
+        {"udid": "DEVICE", "xcode_signing_id": ""},
+        {"udid": "DEVICE", "xcode_signing_id": "A" * 129},
+        {"udid": "DEVICE", "xcode_signing_id": "bad\nvalue"},
+        {"udid": "DEVICE", "wda_launch_timeout_ms": cast(Any, True)},
+        {"udid": "DEVICE", "wda_launch_timeout_ms": 999},
+        {"udid": "DEVICE", "wda_launch_timeout_ms": 600_001},
+        {"udid": "DEVICE", "new_command_timeout_seconds": cast(Any, True)},
+        {"udid": "DEVICE", "new_command_timeout_seconds": float("nan")},
+        {"udid": "DEVICE", "new_command_timeout_seconds": -1},
+        {"udid": "DEVICE", "new_command_timeout_seconds": 86_401},
+        {"udid": "DEVICE", "control": cast(Any, object())},
+    ],
+)
+def test_xcuitest_all_parameter_boundaries_are_private_and_not_sent(
+    service: ProtocolService, kwargs: dict[str, Any]
+) -> None:
+    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
+        create_xcuitest_session(connection, **kwargs)
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert service.lifecycle_requests() == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {
+            "udid": "A",
+            "bundle_id": "a.b",
+            "arguments": [],
+            "xcode_org_id": "A",
+            "xcode_signing_id": "A",
+            "wda_launch_timeout_ms": 1_000,
+            "new_command_timeout_seconds": 0,
+        },
+        {
+            "udid": "A" * 128,
+            "bundle_id": "a.b",
+            "arguments": ["x" * 4_096] * 64,
+            "auto_launch": False,
+            "force_app_launch": True,
+            "should_terminate_app": True,
+            "no_reset": False,
+            "xcode_org_id": "A" * 64,
+            "xcode_signing_id": "A" * 128,
+            "updated_wda_bundle_id": "a.updated",
+            "show_xcode_log": True,
+            "wda_launch_timeout_ms": 600_000,
+            "new_command_timeout_seconds": 86_400,
+        },
+    ],
+    ids=("minimums", "maximums"),
+)
+def test_xcuitest_accepts_parameter_boundaries(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, Any],
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    with connected(service) as connection:
+        session = create_xcuitest_session(connection, **kwargs)
+        session.quit()
+    create = service.lifecycle_requests()[0]
+    caps = appium_caps(create)
+    assert caps["appium:wdaLaunchTimeout"] == kwargs["wda_launch_timeout_ms"]
+    assert caps["appium:newCommandTimeout"] == float(
+        kwargs["new_command_timeout_seconds"]
+    )
+    assert caps["appium:processArguments"] == {"args": kwargs["arguments"]}
+
+
+def test_xcuitest_acquires_usage_before_reserving_wda_port(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    with managed_connection(service) as (connection, owner):
+        original = cast(Any, session_module)._reserve_xcuitest
+
+        def reserve(udid: str) -> Any:
+            assert owner.count == 1
+            owner.events.append("reserve")
+            return original(udid)
+
+        monkeypatch.setattr(session_module, "_reserve_xcuitest", reserve)
+        session = create_xcuitest_session(connection, "ORDER-DEVICE")
+        session.quit()
+        assert owner.events == ["acquire", "reserve", "release"]
+
+
+@pytest.mark.parametrize("fault", ["symlink", "owner", "mode"])
+@pytest.mark.parametrize("depth", [0, 1, 2])
+def test_xcuitest_derived_data_rejects_untrusted_mutable_segments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+    depth: int,
+) -> None:
+    private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    segments = (
+        f"appium-connect-agent-{os.getuid()}",
+        "wda-derived-data",
+        "port-8100",
+    )
+    parent = private_tmp
+    for segment in segments[:depth]:
+        parent /= segment
+        parent.mkdir(mode=0o700)
+    untrusted = parent / segments[depth]
+    if fault == "symlink":
+        target = tmp_path / f"target-{depth}"
+        target.mkdir()
+        untrusted.symlink_to(target, target_is_directory=True)
+    elif fault == "mode":
+        untrusted.mkdir(mode=0o755)
+        untrusted.chmod(0o755)
+        monkeypatch.setattr(
+            cast(Any, automation_coordination).os,
+            "fchmod",
+            lambda fd, mode: None,
+        )
+    else:
+        real_fstat = os.fstat
+        calls = 0
+
+        def foreign_owner(descriptor: int) -> Any:
+            nonlocal calls
+            calls += 1
+            metadata = real_fstat(descriptor)
+            if calls == 2 + depth:
+                return SimpleNamespace(
+                    st_mode=metadata.st_mode, st_uid=metadata.st_uid + 1
+                )
+            return metadata
+
+        monkeypatch.setattr(
+            cast(Any, automation_coordination).os, "fstat", foreign_owner
+        )
+
+    with pytest.raises(ResourceStateError) as caught:
+        automation_coordination._prepare_xcuitest_derived_data(8100, "operation")
+    assert caught.value.code == "coordination_unavailable"
+
+
+@pytest.mark.parametrize("fault", ["fstat", "close", "fstat_close"])
+def test_xcuitest_derived_data_descriptor_faults_close_every_open_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    real_open, real_fstat, real_close = os.open, os.fstat, os.close
+    opened: list[int] = []
+    close_attempts: list[int] = []
+    leaked: list[int] = []
+    fstat_calls = 0
+
+    def tracked_open(*args: Any, **kwargs: Any) -> int:
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    def controlled_fstat(descriptor: int) -> os.stat_result:
+        nonlocal fstat_calls
+        fstat_calls += 1
+        if fault in {"fstat", "fstat_close"} and fstat_calls == 2:
+            raise OSError("injected fstat failure")
+        return real_fstat(descriptor)
+
+    def controlled_close(descriptor: int) -> None:
+        close_attempts.append(descriptor)
+        if fault in {"close", "fstat_close"} and not leaked:
+            leaked.append(descriptor)
+            raise OSError("injected close fault containing SECRET_CANARY")
+        real_close(descriptor)
+
+    coordination_os = cast(Any, automation_coordination).os
+    monkeypatch.setattr(coordination_os, "open", tracked_open)
+    monkeypatch.setattr(coordination_os, "fstat", controlled_fstat)
+    monkeypatch.setattr(coordination_os, "close", controlled_close)
+    try:
+        with pytest.raises(ResourceStateError) as caught:
+            automation_coordination._prepare_xcuitest_derived_data(8100, "operation")
+        error = caught.value
+        assert error.code == "coordination_unavailable"
+        assert error.request_state == "not_sent"
+        if fault == "fstat":
+            assert error.cleanup_errors == ()
+        else:
+            assert [str(item) for item in error.cleanup_errors] == [
+                "descriptor_close_failed"
+            ]
+            assert error.__cause__ is None
+            assert error.__context__ is None
+            assert "SECRET_CANARY" not in repr(error.cleanup_errors)
+        assert sorted(close_attempts) == sorted(opened)
+    finally:
+        for descriptor in leaked:
+            real_close(descriptor)
+    for descriptor in opened:
+        with pytest.raises(OSError):
+            real_fstat(descriptor)
+
+
+def test_xcuitest_close_failure_releases_usage_and_reservation(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    real_close = os.close
+    leaked: list[int] = []
+    close_attempts: list[int] = []
+
+    def controlled_close(descriptor: int) -> None:
+        close_attempts.append(descriptor)
+        if not leaked:
+            leaked.append(descriptor)
+            raise OSError("injected close fault containing SECRET_CANARY")
+        real_close(descriptor)
+
+    coordination_os = cast(Any, automation_coordination).os
+    monkeypatch.setattr(coordination_os, "close", controlled_close)
+    try:
+        with managed_connection(service) as (connection, owner):
+            with pytest.raises(ResourceStateError) as caught:
+                create_xcuitest_session(connection, "CLOSE-FAIL-DEVICE")
+            error = caught.value
+            assert_error(
+                error,
+                ResourceStateError,
+                "coordination_unavailable",
+                "not_sent",
+            )
+            assert error.cleanup_errors
+            assert "SECRET_CANARY" not in repr(error.cleanup_errors)
+            assert error.__cause__ is None and error.__context__ is None
+            assert owner.count == 0
+            assert owner.events == ["acquire", "release"]
+            assert service.lifecycle_requests() == []
+
+            monkeypatch.setattr(coordination_os, "close", real_close)
+            replacement = create_xcuitest_session(connection, "CLOSE-FAIL-DEVICE")
+            replacement.quit()
+            assert owner.count == 0
+    finally:
+        for descriptor in leaked:
+            real_close(descriptor)
+    assert len(close_attempts) == 4
+
+
+def xcuitest_private_kwargs(tmp_path: Path) -> tuple[dict[str, Any], tuple[str, ...]]:
+    app = tmp_path / "APP_PATH_CANARY.app"
+    app.mkdir()
+    (app / "Info.plist").write_bytes(b"plist")
+    canaries = (
+        "UDID_CANARY",
+        str(app),
+        "ARGUMENT_CANARY",
+        "ORG_CANARY",
+        "SIGNING_CANARY",
+        "com.example.updatedwdacanary",
+    )
+    return (
+        {
+            "udid": canaries[0],
+            "app_path": app,
+            "arguments": (canaries[2],),
+            "xcode_org_id": canaries[3],
+            "xcode_signing_id": canaries[4],
+            "updated_wda_bundle_id": canaries[5],
+        },
+        canaries,
+    )
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_xcuitest_terminal_create_redacts_full_exception_chain_and_cleanup(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_fails: bool,
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    kwargs, canaries = xcuitest_private_kwargs(tmp_path)
+    cleanup_canary = "CLEANUP_CANARY"
+    service.create_plans.append(
+        ResponsePlan(status=500, payload=error_response("|".join(canaries)))
+    )
+
+    with managed_connection(service) as (connection, owner):
+        if cleanup_fails:
+            original_new_connection = cast(Any, session_module)._new_connection
+            injected = False
+
+            def add_cleanup_canary(server_url: str) -> Any:
+                nonlocal injected
+                client = original_new_connection(server_url)
+                if not injected:
+                    injected = True
+                    remaining = 1
+                    original_clear_method = client._conn.clear
+
+                    def clear() -> None:
+                        nonlocal remaining
+                        if remaining:
+                            remaining -= 1
+                            raise OSError(cleanup_canary)
+                        original_clear_method()
+
+                    monkeypatch.setattr(client._conn, "clear", clear)
+                return client
+
+            monkeypatch.setattr(session_module, "_new_connection", add_cleanup_canary)
+        with pytest.raises(CommandError) as caught:
+            create_xcuitest_session(connection, **kwargs)
+        error = caught.value
+        assert_private_exception_chain(error, (*canaries, cleanup_canary))
+        assert error.__cause__ is None and error.__context__ is None
+        if cleanup_fails:
+            assert [str(item) for item in error.cleanup_errors] == [
+                "transport_cleanup_failed"
+            ]
+            retained = error.session
+            assert retained is not None and owner.count == 1
+            retained.dispose()
+            assert retained.session_info().state == "disposed"
+            assert owner.count == 0
+        else:
+            assert error.cleanup_errors == ()
+            assert error.session is None and owner.count == 0
+
+
+@pytest.mark.parametrize("outcome", ["malformed_success", "response_unknown"])
+def test_xcuitest_unknown_create_redacts_chain_and_disposes_retained_session(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    kwargs, canaries = xcuitest_private_kwargs(tmp_path)
+    echoed = "|".join(canaries)
+    if outcome == "malformed_success":
+        service.create_plans.append(
+            ResponsePlan(payload=create_response(session_id=echoed, capabilities=[]))
+        )
+    else:
+        service.create_plans.append(ResponsePlan(status=500, payload=echoed))
+
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as caught:
+            create_xcuitest_session(connection, **kwargs)
+        error = caught.value
+        assert error.code == "session_create_unknown"
+        assert_private_exception_chain(error, canaries)
+        assert error.__cause__ is None and error.__context__ is None
+        retained = error.session
+        assert retained is not None and retained.session_info().state == "uncertain"
+        retained.dispose()
+        assert retained.session_info().state == "disposed"
+        assert owner.count == 0

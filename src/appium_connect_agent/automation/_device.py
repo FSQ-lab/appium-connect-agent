@@ -6,11 +6,20 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from appium_connect_agent.runtime import OperationControl
 
 from ._element import _PreparedOperation, _valid_package
+from ._ios_actions import (
+    _ios_alert,
+    _ios_execute_bool,
+    _ios_execute_none,
+    _ios_hide_keyboard,
+    _ios_install_app,
+    _ios_query_app_state,
+)
+from ._ios_privacy import _redact_ios_public_methods
 from ._macos_actions import (
     _macos_execute_bool,
     _macos_execute_none,
@@ -58,6 +67,7 @@ if TYPE_CHECKING:
 _MARKER = object()
 
 
+@_redact_ios_public_methods
 @dataclass(frozen=True, slots=True, init=False, eq=False)
 class Device:
     _owner: Session = field(repr=False)
@@ -72,7 +82,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
         owner._run_operation(
@@ -87,6 +97,13 @@ class Device:
                     {"bundleId": valid_app_id},
                 )
                 if owner.platform == "macos"
+                else _ios_execute_none(
+                    driver,
+                    gateway,
+                    "mobile: activateApp",
+                    {"bundleId": valid_app_id},
+                )
+                if owner.platform == "ios"
                 else _activate_app(driver, gateway, valid_app_id)
             ),
         )
@@ -97,7 +114,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
         return owner._run_operation(
@@ -112,6 +129,13 @@ class Device:
                     {"bundleId": valid_app_id},
                 )
                 if owner.platform == "macos"
+                else _ios_execute_bool(
+                    driver,
+                    gateway,
+                    "mobile: terminateApp",
+                    {"bundleId": valid_app_id},
+                )
+                if owner.platform == "ios"
                 else _terminate_app(driver, gateway, valid_app_id)
             ),
         )
@@ -122,7 +146,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         valid_app_id = (
             _validate_bundle_id(app_id, operation_id)
-            if owner.platform == "macos"
+            if owner.platform in ("macos", "ios")
             else _checked_app_id(app_id, operation_id)
         )
         return owner._run_operation(
@@ -132,6 +156,8 @@ class Device:
             lambda driver, gateway: (
                 _macos_query_app_state(driver, gateway, valid_app_id)
                 if owner.platform == "macos"
+                else _ios_query_app_state(driver, gateway, valid_app_id)
+                if owner.platform == "ios"
                 else _query_app_state(driver, gateway, valid_app_id)
             ),
         )
@@ -152,15 +178,19 @@ class Device:
         valid_path_value = (
             None
             if app_path is None
+            else _validate_ios_app_path_lexical(app_path, operation_id)
+            if owner.platform == "ios"
             else _validate_mac_app_path_syntax(app_path, operation_id)
         )
         if valid_bundle_id is None and valid_path_value is None:
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        if owner.platform == "ios" and valid_path_value is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         valid_path = (
             None
-            if valid_path_value is None
+            if valid_path_value is None or owner.platform == "ios"
             else _validate_mac_app_bundle(valid_path_value, operation_id)
         )
         payload: dict[str, object] = {}
@@ -174,8 +204,10 @@ class Device:
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _macos_execute_none(
-                driver, gateway, "macos: launchApp", payload
+            lambda driver, gateway: (
+                _ios_execute_none(driver, gateway, "mobile: launchApp", payload)
+                if owner.platform == "ios"
+                else _macos_execute_none(driver, gateway, "macos: launchApp", payload)
             ),
         )
 
@@ -186,23 +218,39 @@ class Device:
         allow_test_packages: bool = False,
         control: OperationControl | None = None,
     ) -> None:
-        """Install one local APK without activating or verifying the app."""
+        """Install one bounded local application package."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        allow_test_packages = _check_bool(allow_test_packages, operation_id)
         if owner.platform == "macos":
             _validate_apk_path_lexical(app_path, operation_id)
-            _check_bool(allow_test_packages, operation_id)
             owner._reject_macos(operation_id)
-        app_path = _check_app_path(app_path, operation_id)
-        allow_test_packages = _check_bool(allow_test_packages, operation_id)
+        if owner.platform == "ios":
+            _validate_ios_app_path_lexical(app_path, operation_id)
+            if allow_test_packages:
+                raise InvalidRequestError(
+                    "unsupported_operation", operation_id, "not_sent"
+                )
+            app_path = _check_ios_app_path(app_path, operation_id)
+        else:
+            app_path = _check_app_path(app_path, operation_id)
         owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _install_app(
-                driver,
-                gateway,
-                app_path=str(app_path),
-                allow_test_packages=allow_test_packages,
+            lambda driver, gateway: (
+                _ios_install_app(
+                    driver,
+                    gateway,
+                    app_path=str(app_path),
+                    timeout_deadline=deadline if control is not None else None,
+                )
+                if owner.platform == "ios"
+                else _install_app(
+                    driver,
+                    gateway,
+                    app_path=str(app_path),
+                    allow_test_packages=allow_test_packages,
+                )
             ),
         )
 
@@ -211,13 +259,26 @@ class Device:
     ) -> bool:
         """Remove one explicit package and preserve the official boolean."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        app_id = _checked_app_id(app_id, operation_id)
+        app_id = (
+            _validate_bundle_id(app_id, operation_id)
+            if owner.platform == "ios"
+            else _checked_app_id(app_id, operation_id)
+        )
         owner._reject_macos(operation_id)
         return owner._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _remove_app(driver, gateway, app_id=app_id),
+            lambda driver, gateway: (
+                _ios_execute_bool(
+                    driver,
+                    gateway,
+                    "mobile: removeApp",
+                    {"bundleId": app_id},
+                )
+                if owner.platform == "ios"
+                else _remove_app(driver, gateway, app_id=app_id)
+            ),
         )
 
     def status_bar(
@@ -230,6 +291,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         command = _status_bar_command(command, operation_id)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         return owner._run_operation(
             operation_id,
             control,
@@ -240,7 +302,30 @@ class Device:
     def back(self, *, control: OperationControl | None = None) -> None:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(operation_id, control, deadline, _back)
+
+    def press_button(
+        self,
+        name: Literal["home", "volumeUp", "volumeDown", "action", "camera"],
+        *,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        valid_name = _check_press_button(name, operation_id)
+        if owner.platform != "ios":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _ios_execute_none(
+                driver,
+                gateway,
+                "mobile: pressButton",
+                {"name": valid_name},
+            ),
+        )
 
     def press_keycode(
         self,
@@ -255,6 +340,7 @@ class Device:
             keycode, metastate, flags, operation_id
         )
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -282,6 +368,7 @@ class Device:
             keycode, metastate, flags, operation_id
         )
         owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -299,7 +386,12 @@ class Device:
     def hide_keyboard(self, *, control: OperationControl | None = None) -> bool:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
-        return owner._run_operation(operation_id, control, deadline, _hide_keyboard)
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            _ios_hide_keyboard if owner.platform == "ios" else _hide_keyboard,
+        )
 
     def get_clipboard_text(self, *, control: OperationControl | None = None) -> str:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
@@ -326,7 +418,7 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         content = _clipboard_content(text, operation_id)
         label = _label(label, operation_id)
-        if owner.platform == "macos" and label is not None:
+        if owner.platform in ("macos", "ios") and label is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         owner._run_operation(
             operation_id,
@@ -356,8 +448,15 @@ class Device:
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _alert(
-                driver, gateway, accept=True, button_label=button_label
+            lambda driver, gateway: (
+                _ios_alert(
+                    driver,
+                    gateway,
+                    accept=True,
+                    button_label=button_label,
+                )
+                if owner.platform == "ios"
+                else _alert(driver, gateway, accept=True, button_label=button_label)
             ),
         )
 
@@ -374,8 +473,15 @@ class Device:
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _alert(
-                driver, gateway, accept=False, button_label=button_label
+            lambda driver, gateway: (
+                _ios_alert(
+                    driver,
+                    gateway,
+                    accept=False,
+                    button_label=button_label,
+                )
+                if owner.platform == "ios"
+                else _alert(driver, gateway, accept=False, button_label=button_label)
             ),
         )
 
@@ -402,6 +508,13 @@ class Device:
                     payload={"x": valid_x, "y": valid_y},
                 )
                 if owner.platform == "macos"
+                else _ios_execute_none(
+                    driver,
+                    gateway,
+                    "mobile: tap",
+                    {"x": valid_x, "y": valid_y},
+                )
+                if owner.platform == "ios"
                 else _tap_at(driver, gateway, x=valid_x, y=valid_y)
             ),
         )
@@ -426,6 +539,7 @@ class Device:
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         script = (
             "macos: rightClick"
             if valid_button == "right"
@@ -463,6 +577,7 @@ class Device:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -497,6 +612,7 @@ class Device:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         if owner.platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -533,7 +649,7 @@ class Device:
         valid_ey = _coordinate(end_y, operation_id)
         valid_duration = _duration_ms(duration_ms, operation_id)
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
-        if owner.platform == "android" and modifier_flags is not None:
+        if owner.platform in ("android", "ios") and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         owner._run_operation(
             operation_id,
@@ -549,7 +665,7 @@ class Device:
                     end_y=valid_ey,
                     duration_ms=valid_duration,
                 )
-                if owner.platform == "android"
+                if owner.platform in ("android", "ios")
                 else _macos_pointer_action(
                     driver,
                     gateway,
@@ -580,8 +696,32 @@ class Device:
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _macos_send_keys(driver, gateway, valid_keys),
+            lambda driver, gateway: (
+                _ios_execute_none(driver, gateway, "mobile: keys", {"keys": valid_keys})
+                if owner.platform == "ios"
+                else _macos_send_keys(driver, gateway, valid_keys)
+            ),
         )
+
+
+def _validate_ios_app_path_lexical(app_path: object, operation_id: str) -> Path:
+    if not isinstance(app_path, Path):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        encoded = str(app_path).encode("utf-8", errors="strict")
+    except (UnicodeEncodeError, ValueError):
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    if (
+        not app_path.is_absolute()
+        or app_path.suffix.casefold() not in {".app", ".ipa"}
+        or len(encoded) > 4_096
+        or any(unicodedata.category(character) == "Cc" for character in str(app_path))
+        or ".." in app_path.parts
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return app_path
 
 
 def _validate_apk_path_lexical(app_path: object, operation_id: str) -> Path:
@@ -601,6 +741,15 @@ def _validate_apk_path_lexical(app_path: object, operation_id: str) -> Path:
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return app_path
+
+
+def _check_ios_app_path(app_path: object, operation_id: str) -> Path:
+    from ._session import _validate_ios_app_path
+
+    valid_path = _validate_ios_app_path(app_path, operation_id)
+    if valid_path is None:
+        raise RuntimeError("required iOS app path validation returned no path")
+    return valid_path
 
 
 def _check_app_path(app_path: object, operation_id: str) -> Path:
@@ -627,6 +776,20 @@ def _checked_app_id(app_id: str, operation_id: str) -> str:
     if not _valid_package(app_id):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return app_id
+
+
+def _check_press_button(
+    value: object, operation_id: str
+) -> Literal["home", "volumeUp", "volumeDown", "action", "camera"]:
+    if not isinstance(value, str) or value not in {
+        "home",
+        "volumeUp",
+        "volumeDown",
+        "action",
+        "camera",
+    }:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return cast(Literal["home", "volumeUp", "volumeDown", "action", "camera"], value)
 
 
 def _check_button(value: object, operation_id: str) -> Literal["left", "right"]:

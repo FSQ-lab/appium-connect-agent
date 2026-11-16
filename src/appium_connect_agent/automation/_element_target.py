@@ -13,6 +13,7 @@ from selenium.webdriver.remote.webelement import WebElement
 from ._element import Element, _locator_chain, _trusted_chain_error
 from ._models import (
     AutomationError,
+    AutomationPlatform,
     CommandError,
     InvalidRequestError,
     ResourceStateError,
@@ -78,17 +79,23 @@ def _predicate_string_literal(value: str) -> str:
 
 
 def _combined_predicate_query(
-    by: str, value: str, predicate: str
+    by: str,
+    value: str,
+    predicate: str,
+    *,
+    platform: AutomationPlatform,
 ) -> tuple[str, str] | None:
     if by in ("id", "accessibility id", "name"):
+        attribute = "name" if platform == "ios" else "identifier"
         return (
             "-ios predicate string",
-            f"identifier == {_predicate_string_literal(value)} AND ({predicate})",
+            f"{attribute} == {_predicate_string_literal(value)} AND ({predicate})",
         )
     if by == "class name":
+        attribute = "type" if platform == "ios" else "amType"
         return (
             "-ios predicate string",
-            f"amType == {_predicate_string_literal(value)} AND ({predicate})",
+            f"{attribute} == {_predicate_string_literal(value)} AND ({predicate})",
         )
     if by == "-ios predicate string":
         return ("-ios predicate string", f"({value}) AND ({predicate})")
@@ -120,7 +127,9 @@ def _resolve_unique_locator_once(
     query_by = by
     query_value = value
     if predicate is not None:
-        combined = _combined_predicate_query(by, value, predicate)
+        combined = _combined_predicate_query(
+            by, value, predicate, platform=gateway.platform
+        )
         assert combined is not None
         query_by, query_value = combined
     matches = request(lambda: _find_elements(context, query_by, query_value))

@@ -48,11 +48,11 @@ from .conftest import (
 
 CALL_ID = re.compile(r"^c_[A-Za-z0-9_-]{22}$")
 SCHEMA_BUNDLE_SHA256 = (
-    "3e3fe0fabce1d990050b7db739383974f485050a182c2d70bc530e78870c2f2d"
+    "9150e953af1d1fdccf60351a63212219374365be4a42f1e249d9fb38b08c7c4d"
 )
-CAPABILITY_MAX_CANONICAL_BYTES = 3885
+CAPABILITY_MAX_CANONICAL_BYTES = 3946
 RUNTIME_MAX_CANONICAL_BYTES = 622_071
-DEVICE_MAX_CANONICAL_BYTES = 2_112_668
+BOUNDED_DEVICE_SAMPLE_CANONICAL_BYTES = 2_126_236
 SESSION_OPEN_MAX_CANONICAL_BYTES = 5622
 SESSION_STATUS_MAX_CANONICAL_BYTES = 5625
 SESSION_CLOSE_MAX_CANONICAL_BYTES = 5622
@@ -344,7 +344,7 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
                 "target_driver",
                 "timeout_seconds",
             },
-            TOOL_NAMES[2]: {"schema_version", "timeout_seconds"},
+            TOOL_NAMES[2]: {"schema_version", "platform", "timeout_seconds"},
             TOOL_NAMES[4]: {"schema_version", "session_handle"},
             TOOL_NAMES[5]: {"schema_version", "session_handle", "timeout_seconds"},
         }
@@ -382,7 +382,7 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
                 input_schema, input_schema["properties"]["request"]
             )
             if tool.name == TOOL_NAMES[3]:
-                assert len(request_schema["oneOf"]) == 2
+                assert len(request_schema["oneOf"]) == 3
                 assert request_schema["discriminator"]["propertyName"] == "platform"
             else:
                 assert request_schema["type"] == "object"
@@ -431,6 +431,11 @@ def test_tools_list_is_fixed_and_schemas_express_the_contract(
         assert set(runtime_request["properties"]["mode"]["enum"]) == {
             "static",
             "external_connection",
+        }
+        assert set(runtime_request["properties"]["target_driver"]["enum"]) == {
+            "uiautomator2",
+            "mac2",
+            "xcuitest",
         }
 
         device_request = schema_target(
@@ -484,14 +489,19 @@ def test_capabilities_object_and_json_object_string_are_equivalent_and_zero_io(
                         "target": "macos_desktop",
                         "driver": "mac2",
                     },
+                    {
+                        "host": "macos",
+                        "target": "ios_native",
+                        "driver": "xcuitest",
+                    },
                 ],
                 "tools": list(TOOL_NAMES),
                 "limitations": [
-                    "android_and_macos_native_automation",
+                    "android_macos_and_ios_native_automation",
                     "no_automatic_post_action_observation",
                     "clipboard_current_caller_only",
                     "status_bar_output_current_caller_only",
-                    "local_apk_and_macos_app_paths_only",
+                    "local_apk_app_and_ipa_paths_only",
                     "package_remove_no_data_deletion_guarantee",
                     "ime_requires_explicit_element_and_action",
                     "explicit_screen_coordinates_only",
@@ -616,8 +626,22 @@ def test_runtime_and_devices_delegate_once_with_one_finite_control(
         assert devices["data"] == {
             "count": 2,
             "devices": [
-                {"id": "alpha", "name": "Pixel_8", "connection_state": "connected"},
-                {"id": "zeta", "name": None, "connection_state": "unauthorized"},
+                {
+                    "id": "alpha",
+                    "name": "Pixel_8",
+                    "connection_state": "connected",
+                    "kind": None,
+                    "platform_version": None,
+                    "interface": None,
+                },
+                {
+                    "id": "zeta",
+                    "name": None,
+                    "connection_state": "unauthorized",
+                    "kind": None,
+                    "platform_version": None,
+                    "interface": None,
+                },
             ],
         }
 
@@ -1375,7 +1399,7 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
     expected_sizes: tuple[int | None, ...] = (
         CAPABILITY_MAX_CANONICAL_BYTES,
         RUNTIME_MAX_CANONICAL_BYTES,
-        DEVICE_MAX_CANONICAL_BYTES,
+        BOUNDED_DEVICE_SAMPLE_CANONICAL_BYTES,
         SESSION_OPEN_MAX_CANONICAL_BYTES,
         SESSION_STATUS_MAX_CANONICAL_BYTES,
         SESSION_CLOSE_MAX_CANONICAL_BYTES,
@@ -1499,27 +1523,37 @@ def test_fixed_schema_digest_and_maximum_canonical_bytes(
         ("id", "bad id"),
         ("id", "d" * 1023 + "\ud800"),
         ("id", True),
-        ("name", "n" * 1025),
         ("name", "bad\x00name"),
         ("name", "n" * 1023 + "\ud800"),
         ("name", True),
         ("connection_state", "broken"),
         ("connection_state", True),
+        ("platform_version", "bad\x00version"),
+        ("platform_version", "v\ud800"),
+        ("platform_version", True),
+        ("kind", "physical"),
+        ("kind", True),
+        ("interface", "bluetooth"),
+        ("interface", True),
     )
     for field, device_value in device_mutations:
         invalid = copy.deepcopy(device_values)
         invalid["data"]["devices"][0][field] = device_value
         assert_product_model_invalid(DeviceListResult, invalid)
-    for count in (True, -1, 257):
+    valid_unbounded_name = copy.deepcopy(device_values)
+    valid_unbounded_name["data"]["devices"][0]["name"] = "n" * 1025
+    DeviceListResult.model_validate(valid_unbounded_name)
+    for count in (True, -1, 513):
         invalid = copy.deepcopy(device_values)
         invalid["data"]["count"] = count
         assert_product_model_invalid(DeviceListResult, invalid)
     invalid = copy.deepcopy(device_values)
     invalid["data"]["devices"] = (
         *invalid["data"]["devices"],
+        *invalid["data"]["devices"],
         invalid["data"]["devices"][0],
     )
-    invalid["data"]["count"] = 257
+    invalid["data"]["count"] = 513
     assert_product_model_invalid(DeviceListResult, invalid)
 
     for session_model in session_models:
@@ -1583,7 +1617,6 @@ def test_output_value_over_public_boundary_fails_instead_of_truncating(
     )
     device_modes = (
         "invalid_device",
-        "invalid_device_name",
         "invalid_device_count",
         "invalid_device_id_whitespace",
         "invalid_device_name_control",
