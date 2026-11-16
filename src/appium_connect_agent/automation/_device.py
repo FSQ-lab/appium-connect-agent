@@ -27,13 +27,14 @@ from ._macos_actions import (
     _validate_number,
 )
 from ._macos_keyboard import MacKeyStroke
-from ._models import InvalidRequestError
+from ._models import DisplaySize, InvalidRequestError
 from ._system_actions import (
     _activate_app,
     _alert,
     _back,
     _clipboard_content,
     _coordinate,
+    _display_size,
     _duration_ms,
     _get_clipboard_text,
     _hide_keyboard,
@@ -378,6 +379,12 @@ class Device:
                 driver, gateway, accept=False, button_label=button_label
             ),
         )
+
+    def display_size(self, *, control: OperationControl | None = None) -> DisplaySize:
+        """Return the default display's real physical pointer extent."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
+        return owner._run_operation(operation_id, control, deadline, _display_size)
 
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""

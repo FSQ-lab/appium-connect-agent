@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载和只读屏幕 PNG 截图与显式屏幕坐标单指触控。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询和只读屏幕 PNG 截图与显式屏幕坐标单指触控。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -405,6 +405,16 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 - `take_screenshot` 固定发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的不可变字节流不超过 32 MiB（`33,554,432` bytes），并完成 PNG 8 字节签名与全 chunk 序列 framing/CRC32 校验（首块 13 字节正整数宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）；非法形状、非法 Base64、损坏/非 PNG chunk 或超限统一 `CommandError/command_failed/response_received`，成功记 `screenshot_captured`。截图字节仅在内存返回给直接调用方，严禁落盘或进入日志、异常与默认证据。
 - `tap_at` 与 `swipe_between` 的全部坐标必须为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 必须为排除 `bool` 的实际整数 `1..60,000`。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于当时剩余总预算，不足时取消优先否则 `OperationTimeoutError/operation_timeout/not_sent` 零请求拒绝。`tap_at` 固定发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）并校验 `None` 返回；`swipe_between` 固定使用锁定 Selenium 公开 `PointerInput(interaction.POINTER_TOUCH, "touch")` 经 `driver.execute(Command.W3C_ACTIONS, {"actions": [touch.encode()]})` 发送一次仅含单个 `touch` 指针的四步序列（起点 0ms move → down → `duration_ms` 终点 move → up）并严格校验响应 `Mapping` 显式包含键 `"value"` 且 `response["value"] is None`；两者成功均记 `action_completed`，开始发送后绝不重放。
 - 详细输入边界、协议载荷、隐私约束与验证义务见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-11 条款。
+
+## Automation Android Physical Display Size（AIF-12）
+
+本节定义 Issue #46 经用户 SPEC Gate 确认的 AIF-12 契约增量；依据为[已确认 AIF-12 设计](docs/superpowers/specs/2026-11-16-automation-aif-12-display-size-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- 新增不可变纯值 `DisplaySize(width: int, height: int)` 与绑定 `Device.display_size(*, control: OperationControl | None = None) -> DisplaySize`。返回 Android 默认 display 经 `Display.getRealSize` 得到的正物理像素宽高；它定义 AIF-11 `tap_at` / `swipe_between` 的全屏 pointer-space 尺寸。`TreeObservation.viewport` 仍只描述层级 content viewport，不得再用于全屏物理坐标缩放或本入口 fallback。
+- Android 固定在现有 Session gate 与 `gateway.final_action` 内发送一次 `driver.execute_script("mobile: deviceInfo")`，只读取 `realDisplaySize`。值必须精确为 canonical ASCII `WxH`：单个小写 `x`，两侧无前导零的正十进制整数且各不超过 `2_147_483_647`；缺失、非字符串、空白、Unicode 数字、额外分隔或越界统一 `CommandError/command_failed/response_received`，零 fallback、零第二请求、零缓存。
+- 成功记唯一完成步骤 `display_size_read`。方法沿用一次 operation id/总预算、取消优先、最终响应成功事实优先、no-replay 与 `response_unknown -> uncertain` 资源保留。Mac2 在网络前 `unsupported_operation/not_sent`；不声称 iOS/XCUITest 支持。
+- 上游 device-info 可能含设备标识、网络等额外字段；SDK 只读取尺寸，不日志化、缓存、返回或持久化任何其他字段。`tap_at` / `swipe_between` 不隐式调用本入口、不 clamp 或缩放，消费方负责显式转换与调用间时效。
+- 复用锁定 Appium/UiAutomator2/Python Client/Selenium 与 CPython 标准库；`Runtime`、`Contracts`、`Configuration`、`Integrations`、产品/开发依赖及 lockfile 均 no-delta。
 
 ## Runtime Mac2 Target Static Diagnostics And Managed Cleanup Query（RT-MAC-01）
 

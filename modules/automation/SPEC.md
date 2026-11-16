@@ -648,6 +648,39 @@
 - 永久受控测试须使用锁定真实 `Appium-Python-Client==6.0.8` / `selenium==4.51.0` 和本地 HTTP 协议服务覆盖精确 HTTP 路由与载荷（含单 `touch` 指针无冗余设备，以及缺失 `"value"` 键与服务端非 `null` 拒绝）、合法 67 字节最小 1×1 PNG、57 字节空 IDAT/无 IDAT/坏 chunk CRC/尾随字节/Base64/32MiB±1 边界、坐标与 `duration_ms` 类型/值域边界、`duration_ms` 剩余预算门禁、共享 gate、取消/超时/unknown 隔离及异常零泄漏；另须通过全仓质量、发行物隔离安装、独立完整差异审查及获准无敏感页面（Calculator）真机内存截图与坐标触控闭环验收。
 
 
+## AIF-12 Android Physical Display Size
+
+本节定义 Issue #46、FeatureID `AIF-12` 的已确认契约增量；对应详细设计为 [AIF-12 详细设计](../../docs/superpowers/specs/2026-11-16-automation-aif-12-display-size-design.md)。未列出的既有契约不变。
+
+### Public Interface And Coordinate Meaning
+
+```python
+@dataclass(frozen=True, slots=True)
+class DisplaySize:
+    width: int
+    height: int
+
+Device.display_size(*, control: OperationControl | None = None) -> DisplaySize
+```
+
+- `DisplaySize` 为 Automation 拥有的不可变纯值；公共方法成功返回时宽高均为实际 `int` 且满足 `1..2_147_483_647`。
+- 返回值表示 Android 默认 display 经 `Display.getRealSize(Point)` 得到的真实物理像素范围，合法全屏整数坐标为 `x=0..width-1`、`y=0..height-1`。它是 AIF-11 `tap_at` / `swipe_between` 的物理 pointer space，不是当前应用 window content、XML hierarchy content viewport 或截图裁剪范围。
+- `TreeObservation.viewport` 只陈述 page-source 层级可证的 content viewport；状态栏/导航栏等系统 inset 可使其小于物理 display。消费方不得再用它缩放全屏参考坐标。SDK 不自动读取尺寸、缩放、clamp、推断 offset/rotation 或保证跨调用原子快照。
+
+### Fixed Protocol And Strict Response
+
+- 延续锁定 Appium 3.7.0 / UiAutomator2 driver 8.7.0 / server 10.6.6 / `Appium-Python-Client==6.0.8` / `selenium==4.51.0` / CPython 3.11，零新增或升级依赖。固定复用 driver `mobile: deviceInfo` → server `GET /appium/device/info` → `realDisplaySize` → Android `Display.getRealSize` 的公开链。
+- Android 在现有唯一非阻塞 Session gate 的 `gateway.final_action` 中执行一次且仅一次 `driver.execute_script("mobile: deviceInfo")`；wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script":"mobile: deviceInfo","args":[]}`。SDK 只读取已解包 mapping 的 `realDisplaySize`，不保留其他字段。
+- `realDisplaySize` 必须为实际 `str` 且精确匹配 canonical ASCII `WxH`：恰有一个小写 `x`；宽高均由首位 `1..9` 加后续 `0..9` 构成，各最多 10 字符，转为整数后 `<= 2_147_483_647`。拒绝缺失、非 mapping、非字符串、零、前导零、符号、空白、换行、Unicode 数字、大写 `X`、额外分隔及越界。
+- 响应结构或解析失败统一 `CommandError/command_failed/response_received`，保留异常链但不回显原始 device info；Session 保持 active，不记完成步骤，不发 fallback/第二请求。成功记唯一 `display_size_read` 并返回 `DisplaySize`。
+
+### Lifecycle, Privacy And Verification
+
+- Mac2 在 gate/网络前 `InvalidRequestError/unsupported_operation/not_sent`；iOS/XCUITest 未实现。`Runtime`、`Contracts`、`Configuration`、`Integrations`、依赖与 lockfile 均 no-delta。
+- 沿用一次 operation id/总预算、调用前取消与 timeout 零请求、final 成功事实优先、no-replay、官方错误净化及 `response_unknown -> uncertain` 资源保留。响应未知时不得回退 page source、PNG `IHDR`、ADB 或再次调用 deviceInfo。
+- 上游完整 device-info mapping 可能含 Android ID、厂商、型号、网络等字段；SDK 除 `realDisplaySize` 外不得日志化、缓存、返回、序列化或持久化任何字段。
+- 永久本地 HTTP 协议测试必须覆盖精确单请求/空 args、`1x1` 与 Java int 上界、冻结值、全组非法形状、额外字段隔离、Mac2 零请求拒绝、取消/超时/官方错误/unknown/no-replay/共享 gate；另须通过全仓无设备测试、静态质量、发行物隔离验证和 fresh independent full audit。当前 Issue 未授权真实设备，不能把无设备验证表述为端到端资格。
+
 ## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
 
 ### Platform And Session Interface

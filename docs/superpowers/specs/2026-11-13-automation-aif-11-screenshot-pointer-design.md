@@ -20,19 +20,19 @@
 
 在跨仓路线 1B（`FSQ` 的 `drivers.android` 消费本仓公开 `Runtime` + `Automation`）中，`FSQ` 的 `AndroidDriverInterface` 除已有应用控制、按键、结构观测与 Element 操作外，明确要求：
 
-1. `screenshot(params=None) -> bytes`：供 `StepRunner` 每步证据采集和 `assert_with_ai` 视觉断言消费不可变 PNG 字节流；
-2. `tap_at(params)` 与 `swipe(params)`：供调用方执行明确屏幕像素坐标点击与起止点滑动，而无需绕过 `Automation` 触碰私有 `WebDriver`。
+1. `screenshot(params=None) -> bytes`：供显式获准的调用方消费不可变 PNG 字节流；
+2. `tap_at(params)` 与 `swipe(params)`：供调用方执行明确屏幕物理像素坐标点击与起止点滑动，而无需绕过 `Automation` 触碰私有 `WebDriver`。
 
 ### 跨仓 1B 输入域与职责对齐契约
 
-`Automation` 作为安全底层 Producer 保持窄、显式、无隐式探测的边界，`FSQ` 消费侧 Adapter（阶段 2）按以下确定性映射衔接 `AndroidDriverInterface`，全程零私有 `_driver` 访问：
+`Automation` 作为安全底层 Producer 保持窄、显式、无隐式探测的边界。AIF-12（Issue #46）已 supersede 本设计原先使用 `TreeObservation.viewport` 缩放全屏物理坐标的消费方建议；`viewport` 仅表示层级 content viewport。消费方 Adapter 必须通过公开 `Device.display_size()` 取得默认 display 物理 pointer-space 尺寸，再按自身已确认的 `reference_screen_size` 显式转换，全程零私有 `_driver` 访问：
 
 | FSQ `AndroidDriverInterface` 调用 | FSQ 侧 Adapter 职责（公开接口组合） | `Automation` Producer 入口与值域拒绝行为 |
 | --- | --- | --- |
 | `screenshot(params=None)` | 忽略可选 `params`，直接调用 `session.device.take_screenshot(...)` | 返回经全 chunk 遍历与 CRC32 校验的不可变 PNG `bytes`（`<= 32 MiB`） |
-| `tap_at(params)` | 若含 `reference_screen_size`（正宽高），先用公开 `session.observe_tree()` 的 `viewport.width/height` 缩放并 clamp 到 `[0, limit-1]`；所有 Producer 输入域不匹配（如无缩放时调用方传入 `< 0` 或 `> 2_147_483_647` 越界坐标）均由 FSQ Adapter 唯一确定性地前置校验（及对 `InvalidRequestError` 兜底映射）为稳定 FSQ `configuration_error` | `session.device.tap_at(x, y)`：严格要求 `int` 且 `0 <= x, y <= 2_147_483_647`，越界零网络请求抛 `InvalidRequestError/invalid_argument/not_sent` |
-| `swipe(params)`（起止坐标分支） | 同上完成可选 `reference_screen_size` 缩放；`duration` 缺省传 `200`；所有 Producer 输入域不匹配（含 `duration > 60_000` 或越界坐标）均由 FSQ Adapter 唯一确定性地映射为稳定 FSQ `configuration_error`（未来 FSQ 参数模型 schema 收紧可作为独立后续 clean-cutover，不构成替代运行时契约） | `session.device.swipe_between(sx, sy, ex, ey, duration_ms=duration)`：严格要求坐标 `0..2_147_483_647`、`duration_ms` `1..60_000` |
-| `swipe(params)`（`direction` 分支） | 通过公开 `session.observe_tree()` 读取当前 `viewport.width/height`，按 FSQ 既有 25%/75% 中线规则计算 `(sx, sy, ex, ey)`；同样将任何 `duration > 60_000` 唯一确定性地映射为稳定 FSQ `configuration_error`，合法时调用 `session.device.swipe_between(...)` | 复用同一 `swipe_between` 入口，Producer 不内置硬编码默认屏幕尺寸（如 `1080x1920`） |
+| `tap_at(params)` | 若含 `reference_screen_size`，调用 `session.device.display_size()` 取得物理宽高后显式缩放并限制到 `0..width-1` / `0..height-1`；Producer 输入域不匹配由 FSQ Adapter 稳定映射为 `configuration_error` | `session.device.tap_at(x, y)`：严格要求 `int` 且 `0 <= x, y <= 2_147_483_647`，越界零网络请求抛 `InvalidRequestError/invalid_argument/not_sent` |
+| `swipe(params)`（起止坐标分支） | 同上使用 `display_size()` 完成可选参考分辨率转换；`duration` 缺省传 `200` | `session.device.swipe_between(...)`：严格要求坐标 `0..2_147_483_647`、`duration_ms` `1..60_000` |
+| `swipe(params)`（`direction` 分支） | 使用 `display_size()` 的物理宽高按消费方已确认比例计算起止点，不硬编码默认屏幕尺寸 | 复用同一 `swipe_between` 入口；SDK 不做隐式缩放、clamp 或 offset 推断 |
 ### 行为粒度与规模复查
 
 `AIF-11` 在同一 `Session.device` 命名空间补齐“屏幕级无 Element 观测与单指坐标触控”这一高内聚 Producer 缺口，包含三个同步方法（`take_screenshot`、`tap_at`、`swipe_between`），共享同一可信 `Device` 绑定、Session 非阻塞 gate、一次 `operation_id`/总预算、取消优先、no-replay 与 `response_unknown` 隔离语义。预计产品代码变更约 120–200 行、永久协议/边界测试约 450–700 行，远低于 1,200 行复查阈值，具有清晰单一的可回退提交边界。
@@ -158,7 +158,7 @@ class Device:
 - `Integrations`（MCP / FSQ ToolCall / CLI）暴露截图或屏幕坐标工具（避免在无明确 Agent 需求前扩大多模态 payload 协议面与隐私暴露面）；
 - 视口裁剪截图（`mobile: viewportScreenshot`，规避受管 npm 树可选 `sharp` 原生模块依赖）、单控件截图、多显示器截图；
 - 多指触控（捏合缩放 `pinchOpen`/`pinchClose`）、任意自定义 W3C 动作序列 DSL、坐标长按/双击；
-- 自动屏幕边界探测或参考分辨率缩放（由消费方如 `FSQ` 结合自身 `reference_screen_size` 与观测 `viewport` 计算）。
+- SDK 内自动参考分辨率缩放、clamp 或系统 inset/offset 推断；物理显示尺寸由后续 AIF-12 `Device.display_size()` 显式返回，消费方负责转换与调用间时效。
 
 ## 6. 聚焦验证与真机验收计划
 
@@ -173,7 +173,7 @@ class Device:
    - `uv build && uv run python .github/scripts/check_distributions.py`（并核验 `Integrations` 19 工具 schema hash 零变化）。
 3. **获准真机代表性验收（Pixel 6）**：
    - 使用隔离安装的正式 wheel，在受管 Runtime（`start_managed`）下连接当前已授权 Pixel 6，启动并前置安全系统应用 `com.google.android.calculator`：
-     1. 调用 `take_screenshot()`：仅在内存中验证返回 `bytes` 非空、PNG 头/IHDR/IEND 合法且宽高与 `observe_tree().viewport` 一致，**不将图片写入磁盘或仓库**；
+     1. 调用 `take_screenshot()`：仅在内存中验证返回 `bytes` 非空及 PNG 头/IHDR/IEND 合法，**不将图片写入磁盘或仓库**；截图尺寸与层级 viewport 或物理 display 可能因裁剪/inset 不同，不要求相等；
      2. 读取 Calculator 数字键（如 `7`）的已知 `bounds` 中心点，调用 `tap_at(cx, cy)` 并通过 `observe_tree` / `inspect` 验证算式区出现 `"7"`，再清除恢复；
      3. 在 Calculator 安全区域调用一次 `swipe_between(...)` 验证真实 UiAutomator2 `/actions` 执行返回成功且无异常；
      4. 终止 Calculator 恢复基线、`session.quit()`、退出 `start_managed` 确认 `service.json="stopped"` 且账号锁释放。

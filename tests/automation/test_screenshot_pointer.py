@@ -16,6 +16,7 @@ from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
     Device,
+    DisplaySize,
     ExecutionUnknownError,
     InvalidRequestError,
     InvalidSessionStateError,
@@ -80,14 +81,19 @@ class DeviceProtocolService(ActionProtocolService):
             request.method == "POST"
             and request.path.endswith("/execute/sync")
             and request.body is not None
-            and request.body.get("script") == "mobile: clickGesture"
         ):
-            return "tap_at"
+            script = request.body.get("script")
+            if script == "mobile: deviceInfo":
+                return "display_size"
+            if script == "mobile: clickGesture":
+                return "tap_at"
         return ActionProtocolService._kind(request)
 
     def _default_payload(self, request: Request, kind: str) -> object:
         if kind == "take_screenshot":
             return {"value": base64.b64encode(_MINIMAL_PNG).decode("ascii")}
+        if kind == "display_size":
+            return {"value": {"realDisplaySize": "1080x2400"}}
         if kind in {"tap_at", "swipe_between"}:
             return {"value": None}
         return super()._default_payload(request, kind)
@@ -115,6 +121,8 @@ def _invoke(
     *,
     control: OperationControl | None = None,
 ) -> object:
+    if action == "display_size":
+        return device.display_size(control=control)
     if action == "take_screenshot":
         return device.take_screenshot(control=control)
     if action == "tap_at":
@@ -130,6 +138,110 @@ def _invoke(
 def _assert_command_failure(error: CommandError) -> None:
     assert_error(error, CommandError, "command_failed", "response_received", steps=())
     assert error.__cause__ is not None
+
+
+def test_display_size_exact_protocol_and_immutable_value(
+    service: DeviceProtocolService,
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(payload={"value": {"realDisplaySize": "1080x2400"}}),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-valid")
+        result = session.device.display_size()
+        assert result == DisplaySize(width=1080, height=2400)
+        assert result.width == 1080 and result.height == 2400
+        with pytest.raises((AttributeError, FrozenInstanceError)):
+            result.width = 1  # type: ignore[misc]
+        requests = service.of_kind("display_size")
+        assert len(requests) == 1
+        assert requests[0].method == "POST"
+        assert requests[0].path.endswith("/execute/sync")
+        assert requests[0].body == {"script": "mobile: deviceInfo", "args": []}
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1x1", DisplaySize(1, 1)),
+        ("2147483647x2147483647", DisplaySize(2_147_483_647, 2_147_483_647)),
+    ],
+)
+def test_display_size_accepts_exact_dimension_boundaries(
+    service: DeviceProtocolService, raw: str, expected: DisplaySize
+) -> None:
+    service.queue(
+        "display_size", ResponsePlan(payload={"value": {"realDisplaySize": raw}})
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, f"display-size-{raw}")
+        assert session.device.display_size() == expected
+        assert service.operation_kinds() == ["display_size"]
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        [],
+        True,
+        10802400,
+        {"realDisplaySize": None},
+        {"realDisplaySize": True},
+        {"realDisplaySize": 10802400},
+        {"realDisplaySize": ""},
+        {"realDisplaySize": "0x2400"},
+        {"realDisplaySize": "1080x0"},
+        {"realDisplaySize": "01080x2400"},
+        {"realDisplaySize": "1080x02400"},
+        {"realDisplaySize": "1080X2400"},
+        {"realDisplaySize": "1080 x 2400"},
+        {"realDisplaySize": " 1080x2400"},
+        {"realDisplaySize": "1080x2400\n"},
+        {"realDisplaySize": "\uff11\uff10\uff18\uff10x\uff12\uff14\uff10\uff10"},
+        {"realDisplaySize": "1080x2400x1"},
+        {"realDisplaySize": "2147483648x2400"},
+        {"realDisplaySize": "1080x2147483648"},
+        {"realDisplaySize": "99999999999x1"},
+    ],
+)
+def test_display_size_rejects_noncanonical_or_out_of_range_response(
+    service: DeviceProtocolService, value: object
+) -> None:
+    service.queue("display_size", ResponsePlan(payload={"value": value}))
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-invalid")
+        with pytest.raises(CommandError) as caught:
+            session.device.display_size()
+        _assert_command_failure(caught.value)
+        assert service.operation_kinds() == ["display_size"]
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_display_size_ignores_unrelated_device_info_fields(
+    service: DeviceProtocolService,
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(
+            payload={
+                "value": {
+                    "realDisplaySize": "1080x2400",
+                    "manufacturer": "private-canary",
+                    "displayDensity": 420,
+                }
+            }
+        ),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-fields")
+        assert session.device.display_size() == DisplaySize(1080, 2400)
+        session.quit()
 
 
 @pytest.mark.parametrize("line_breaks", [False, True])
@@ -569,7 +681,9 @@ def test_swipe_budget_gate_preserves_cancellation_priority(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 @pytest.mark.parametrize("phase", ["disconnect", "header", "body"])
 def test_response_unknown_is_not_replayed_and_quarantines_session(
     service: DeviceProtocolService, action: str, phase: str
@@ -602,7 +716,9 @@ def test_response_unknown_is_not_replayed_and_quarantines_session(
         assert service.of_kind("quit") == []
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 def test_inflight_cancellation_is_unknown_and_not_replayed(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -657,7 +773,9 @@ def test_inflight_cancellation_is_unknown_and_not_replayed(
         assert service.of_kind("quit") == []
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 def test_official_errors_are_known_and_never_replayed(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -673,7 +791,9 @@ def test_official_errors_are_known_and_never_replayed(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 def test_presend_cancel_and_expired_budget_make_no_request(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -714,7 +834,9 @@ def test_presend_cancel_and_expired_budget_make_no_request(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 def test_closed_session_rejects_new_device_actions(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -735,7 +857,9 @@ def test_closed_session_rejects_new_device_actions(
         assert service.snapshot() == before
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action", ["display_size", "take_screenshot", "tap_at", "swipe_between"]
+)
 def test_exited_runtime_connection_rejects_new_device_actions(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -775,6 +899,7 @@ def test_new_device_actions_share_the_session_gate(
             assert started.wait(timeout=2)
             before = service.snapshot()
             attempts = (
+                session.device.display_size,
                 lambda: session.device.tap_at(1, 2),
                 lambda: session.device.swipe_between(1, 2, 3, 4),
                 session.element("id", "target").click,

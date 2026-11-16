@@ -103,6 +103,14 @@ class Bounds:
     height: int
 
 
+@dataclass(frozen=True, slots=True)
+class DisplaySize:
+    """Real physical extent of the default display in pointer pixels."""
+
+    width: int
+    height: int
+
+
 ObservationValue: TypeAlias = str | int | float | bool | Bounds | None
 
 

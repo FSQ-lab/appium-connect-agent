@@ -425,6 +425,11 @@ uncertain、关闭本地client并保留device/systemPort。安装/卸载当前ta
 ```python
 from appium_connect_agent.runtime import OperationControl
 
+size = session.device.display_size(
+    control=OperationControl(timeout_seconds=15),
+)
+# Full-screen physical pointer range: x=0..size.width-1, y=0..size.height-1.
+
 
 png_bytes = session.device.take_screenshot(
     control=OperationControl(timeout_seconds=15),
@@ -444,8 +449,9 @@ session.device.swipe_between(
 )
 ```
 
+- `display_size` 发送一次 `mobile: deviceInfo`，只读取 UiAutomator2 由 Android `Display.getRealSize` 提供的 `realDisplaySize`，并返回不可变 `DisplaySize(width, height)`。它定义全屏 `tap_at` / `swipe_between` 的物理 pointer space；`observe_tree().viewport` 是应用层级 content viewport，可能因系统栏 inset 更小，不能用作全屏坐标缩放。响应只接受 canonical ASCII `WxH` 正整数且每维不超过 `2,147,483,647`，不回退截图、层级或 ADB，不缓存、clamp、缩放或暴露其他 device-info 字段。
 - `take_screenshot` 发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的字节数不超过 32 MiB（`33,554,432` bytes），并顺序遍历校验全流 PNG chunk 二进制帧与每个 chunk 的 CRC32（唯一首块 13 字节正宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）。返回的 `bytes` 仅保留在调用方内存中，绝不落盘或写入日志、异常消息与默认证据。
-- `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。三者均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
+- `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。`display_size`、截图与两个动作均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
 
 ### 当前平台最小模块收口
 

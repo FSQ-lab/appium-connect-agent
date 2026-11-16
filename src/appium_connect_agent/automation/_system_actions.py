@@ -17,7 +17,7 @@ from selenium.webdriver.common.actions.mouse_button import MouseButton
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 from selenium.webdriver.remote.command import Command
 
-from ._models import InvalidRequestError, OperationTimeoutError
+from ._models import DisplaySize, InvalidRequestError, OperationTimeoutError
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
@@ -25,6 +25,46 @@ if TYPE_CHECKING:
 _TERMINATE_TIMEOUT_CAP_MS = 500
 _REMOVE_TIMEOUT_CAP_MS = 100_000
 _INSTALL_TIMEOUT_CAP_MS = 300_000
+
+
+_DISPLAY_SIZE_MAX = 2_147_483_647
+
+
+def _parse_display_size(response: object) -> DisplaySize:
+    if not isinstance(response, Mapping):
+        raise ValueError("deviceInfo response must be a mapping")
+    raw = response.get("realDisplaySize")
+    if type(raw) is not str:
+        raise ValueError("realDisplaySize must be a string")
+    separator = raw.find("x")
+    if separator <= 0 or separator != raw.rfind("x") or separator == len(raw) - 1:
+        raise ValueError("realDisplaySize must have exact WxH form")
+    width_text = raw[:separator]
+    height_text = raw[separator + 1 :]
+    if (
+        len(width_text) > 10
+        or len(height_text) > 10
+        or width_text[0] == "0"
+        or height_text[0] == "0"
+        or any(not "0" <= character <= "9" for character in width_text)
+        or any(not "0" <= character <= "9" for character in height_text)
+    ):
+        raise ValueError(
+            "realDisplaySize dimensions must be canonical positive ASCII integers"
+        )
+    width = int(width_text)
+    height = int(height_text)
+    if width > _DISPLAY_SIZE_MAX or height > _DISPLAY_SIZE_MAX:
+        raise ValueError("realDisplaySize dimension exceeds Java int range")
+    return DisplaySize(width=width, height=height)
+
+
+def _display_size(driver: WebDriver, gateway: _SessionOperationGateway) -> DisplaySize:
+    result = gateway.final_action(
+        lambda: _parse_display_size(driver.execute_script("mobile: deviceInfo"))
+    )
+    gateway.complete("display_size_read")
+    return result
 
 
 def _activate_app(
