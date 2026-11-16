@@ -58,6 +58,15 @@ from ._gestures import (
     _validate_ratio,
     _validate_scroll_mapping,
 )
+from ._ios_actions import (
+    _perform_ios_container_scroll,
+    _perform_ios_drag,
+    _perform_ios_element_click,
+    _perform_ios_element_keys,
+    _perform_ios_element_scroll,
+    _perform_ios_element_swipe,
+    _validate_ios_scroll_mapping,
+)
 from ._macos_actions import (
     _perform_macos_drag,
     _perform_macos_element_action,
@@ -1011,6 +1020,10 @@ class Session:
                 driver,
                 _SessionOperationGateway(self, operation_id, control, deadline),
             )
+        except AutomationError as error:
+            if self._platform == "ios":
+                _redact_xcuitest_error(error)
+            raise
         finally:
             self._operation_gate.release()
 
@@ -1126,9 +1139,8 @@ class Session:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        if self._platform == "android" and modifier_flags is not None:
+        if self._platform in ("android", "ios") and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1143,6 +1155,14 @@ class Session:
                     condition_deadline=started + wait_timeout,
                 )
                 if self._platform == "android"
+                else _perform_ios_element_click(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="click",
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
                 else _perform_macos_element_action(
                     driver,
                     valid_element,
@@ -1167,9 +1187,8 @@ class Session:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        if self._platform == "android" and modifier_flags is not None:
+        if self._platform in ("android", "ios") and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1184,6 +1203,14 @@ class Session:
                     condition_deadline=started + wait_timeout,
                 )
                 if self._platform == "android"
+                else _perform_ios_element_click(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="doubleTap",
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
                 else _perform_macos_element_action(
                     driver,
                     valid_element,
@@ -1270,9 +1297,8 @@ class Session:
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        if self._platform == "android" and modifier_flags is not None:
+        if self._platform in ("android", "ios") and modifier_flags is not None:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1287,6 +1313,15 @@ class Session:
                     condition_deadline=started + wait_timeout,
                 )
                 if self._platform == "android"
+                else _perform_ios_element_click(
+                    driver,
+                    valid_element,
+                    gateway,
+                    script="touchAndHold",
+                    duration_seconds=duration / 1000.0,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
                 else _perform_macos_element_action(
                     driver,
                     valid_element,
@@ -1313,7 +1348,6 @@ class Session:
         valid_text = _validate_text(text, operation_id, allow_empty=False)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1340,7 +1374,6 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
@@ -1370,17 +1403,26 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        self._reject_ios(operation_id)
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_macos_element_keys(
-                driver,
-                valid_element,
-                gateway,
-                keys=valid_keys,
-                condition_deadline=started + wait_timeout,
+            lambda driver, gateway: (
+                _perform_ios_element_keys(
+                    driver,
+                    valid_element,
+                    gateway,
+                    keys=valid_keys,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
+                else _perform_macos_element_keys(
+                    driver,
+                    valid_element,
+                    gateway,
+                    keys=valid_keys,
+                    condition_deadline=started + wait_timeout,
+                )
             ),
         )
 
@@ -1438,18 +1480,63 @@ class Session:
         _validate_raw_chains((valid_element,), operation_id)
         if self._platform == "android":
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        self._reject_ios(operation_id)
+        if self._platform == "ios" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_macos_element_swipe(
+            lambda driver, gateway: (
+                _perform_ios_element_swipe(
+                    driver,
+                    valid_element,
+                    gateway,
+                    direction=valid_direction,
+                    velocity=valid_velocity,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
+                else _perform_macos_element_swipe(
+                    driver,
+                    valid_element,
+                    gateway,
+                    direction=valid_direction,
+                    velocity=valid_velocity,
+                    modifier_flags=modifier_flags,
+                    condition_deadline=started + wait_timeout,
+                )
+            ),
+        )
+
+    def _ios_scroll(
+        self,
+        element: Element,
+        operation: _PreparedOperation,
+        *,
+        direction: Literal["up", "down", "left", "right"],
+        distance: float = 1.0,
+        wait_timeout_seconds: float = 15.0,
+    ) -> None:
+        operation_id, control, started, deadline = operation
+        valid_element = _validate_owner(element, self, operation_id)
+        valid_direction = _validate_direction(direction, operation_id)
+        valid_distance = _validate_number(distance, operation_id)
+        if not 0.0 < valid_distance <= 1.0:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
+        _validate_raw_chains((valid_element,), operation_id)
+        if self._platform != "ios":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        self._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _perform_ios_element_scroll(
                 driver,
                 valid_element,
                 gateway,
                 direction=valid_direction,
-                velocity=valid_velocity,
-                modifier_flags=modifier_flags,
+                distance=valid_distance,
                 condition_deadline=started + wait_timeout,
             ),
         )
@@ -1563,20 +1650,35 @@ class Session:
         valid_target = _validate_owner(target, self, operation_id)
         valid_max_swipes = _validate_max_swipes(max_swipes, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
-        self._reject_ios(operation_id)
-        mapping = _validate_scroll_mapping(valid_container, valid_target, operation_id)
-        self._reject_macos(operation_id)
+        if self._platform == "ios":
+            _validate_ios_scroll_mapping(valid_container, valid_target, operation_id)
+            mapping = None
+        else:
+            mapping = _validate_scroll_mapping(
+                valid_container, valid_target, operation_id
+            )
+            self._reject_macos(operation_id)
         self._run_operation(
             operation_id,
             control,
             deadline,
-            lambda driver, gateway: _perform_official_scroll(
-                driver,
-                valid_target,
-                gateway,
-                mapping=mapping,
-                max_swipes=valid_max_swipes,
-                condition_deadline=started + wait_timeout,
+            lambda driver, gateway: (
+                _perform_ios_container_scroll(
+                    driver,
+                    valid_container,
+                    valid_target,
+                    gateway,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
+                else _perform_official_scroll(
+                    driver,
+                    valid_target,
+                    gateway,
+                    mapping=cast(tuple[str, str, str], mapping),
+                    max_swipes=valid_max_swipes,
+                    condition_deadline=started + wait_timeout,
+                )
             ),
         )
 
@@ -1602,14 +1704,22 @@ class Session:
             if duration_ms is None
             else _validate_duration(duration_ms, operation_id)
         )
+        if (
+            self._platform == "ios"
+            and valid_duration is not None
+            and valid_duration < 500
+        ):
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         modifier_flags = _validate_modifier_flags(key_modifier_flags, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_source, valid_destination), operation_id)
-        self._reject_ios(operation_id)
         if self._platform == "android" and (
             valid_duration is not None or modifier_flags is not None
         ):
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        if self._platform == "ios" and modifier_flags is not None:
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        duration_seconds = (500 if valid_duration is None else valid_duration) / 1000.0
         self._run_operation(
             operation_id,
             control,
@@ -1625,6 +1735,17 @@ class Session:
                     condition_deadline=started + wait_timeout,
                 )
                 if self._platform == "android"
+                else _perform_ios_drag(
+                    driver,
+                    valid_source,
+                    valid_destination,
+                    gateway,
+                    x_ratio=x_ratio,
+                    y_ratio=y_ratio,
+                    duration_seconds=duration_seconds,
+                    condition_deadline=started + wait_timeout,
+                )
+                if self._platform == "ios"
                 else _perform_macos_drag(
                     driver,
                     valid_source,
@@ -1632,8 +1753,7 @@ class Session:
                     gateway,
                     x_ratio=x_ratio,
                     y_ratio=y_ratio,
-                    duration_seconds=(500 if valid_duration is None else valid_duration)
-                    / 1000.0,
+                    duration_seconds=duration_seconds,
                     modifier_flags=modifier_flags,
                     condition_deadline=started + wait_timeout,
                 )

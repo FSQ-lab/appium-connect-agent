@@ -248,6 +248,23 @@ class Element:
             wait_timeout_seconds=wait_timeout_seconds,
         )
 
+    def ios_scroll(
+        self,
+        direction: Literal["up", "down", "left", "right"],
+        *,
+        distance: float = 1.0,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._ios_scroll(
+            self,
+            operation,
+            direction=direction,
+            distance=distance,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
     def swipe_gesture(
         self,
         *,
