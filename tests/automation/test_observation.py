@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import socketserver
@@ -17,6 +18,7 @@ from urllib.parse import unquote
 
 import pytest
 
+import appium_connect_agent.automation._observation as observation_module
 import appium_connect_agent.automation._session as session_module
 from appium_connect_agent.automation import (
     AutomationError,
@@ -3403,3 +3405,119 @@ def test_ios_all_element_and_device_actions_are_zero_request(
             )
             assert len(service.snapshot()) == before
         session.quit()
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    ["", 'x="1" y="2" width="0" height="10"'],
+    ids=("missing-geometry", "zero-width"),
+)
+def test_ios_visible_false_is_independent_of_tree_geometry(
+    service: ElementProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    geometry: str,
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" visible="true" '
+        'x="0" y="0" width="402" height="874" index="0">'
+        f'<XCUIElementTypeButton name="hidden" visible="false" {geometry} index="1"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        node = session.observe_tree().roots[0].children[0]
+        assert node.visibility == "not_visible"
+        assert node.viewport_relation == "unknown"
+        session.quit()
+
+
+def test_ios_structure_visible_false_is_independent_of_unknown_viewport(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" visible="true" index="0">'
+        '<XCUIElementTypeButton name="hidden" visible="false" index="1"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    captured: list[Any] = []
+    original = observation_module._parse_ios_source
+
+    def capture(source: object, viewport: Any, gateway: Any) -> Any:
+        roots = original(source, viewport, gateway)
+        captured.extend(roots)
+        return roots
+
+    monkeypatch.setattr(observation_module, "_parse_ios_source", capture)
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        session.element("name", "hidden").inspect_structure(scope="target")
+        hidden = captured[0].children[0]
+        assert hidden.visibility == "not_visible"
+        assert hidden.viewport_relation == "unknown"
+        session.quit()
+
+
+def stable_observation_digest(
+    value: ElementInspection | TreeObservation | RawStructureObservation,
+) -> str:
+    payload = json.loads(value.to_json())
+    payload["operation_id"] = "0" * 32
+    payload["observed_at"] = "2000-01-01T00:00:00.000000Z"
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def test_android_and_mac2_observation_bytes_match_fixed_baselines(
+    service: ElementProtocolService,
+) -> None:
+    observed: dict[str, str] = {}
+    service.attributes[("target", "text")] = "stable"
+    service.source = basic_xml(
+        node_xml(resource_id="com.example:id/target", text="stable")
+    )
+    with connected(service) as connection:
+        android = session_for(service, connection, "byte-stable-android")
+        target = android.element("id", "target", package="com.example")
+        observed["android-inspect"] = stable_observation_digest(
+            target.inspect(attributes=("text",))
+        )
+        observed["android-tree"] = stable_observation_digest(android.observe_tree())
+        observed["android-structure"] = stable_observation_digest(
+            target.inspect_structure(scope="target")
+        )
+        android.quit()
+
+        service.attributes[("target", "identifier")] = "target"
+        service.source = (
+            '<XCUIElementTypeApplication elementType="1" identifier="app" '
+            'enabled="true" selected="false" x="0" y="0" width="0" height="0">'
+            '<XCUIElementTypeButton elementType="9" identifier="target" '
+            'label="Stable" value="stable" enabled="true" selected="false" '
+            'x="1" y="2" width="3" height="4"/>'
+            "</XCUIElementTypeApplication>"
+        )
+        mac = mac_session_for(service, connection)
+        mac_target = mac.element("id", "target")
+        observed["mac-inspect"] = stable_observation_digest(
+            mac_target.inspect(attributes=("id",))
+        )
+        observed["mac-tree"] = stable_observation_digest(mac.observe_tree())
+        observed["mac-structure"] = stable_observation_digest(
+            mac_target.inspect_structure(scope="target")
+        )
+        mac.quit()
+
+    assert observed == {
+        "android-inspect": "cb472f0541469b24723d9b5a256c03a87784e7811860fbc4d235cf8e98ac9572",
+        "android-tree": "ac86a995ef02a192b0c56805b5c1b5c6696c000f3f8cd64fe00ed2a884a9c469",
+        "android-structure": "23816a09c0037590ebdaf5e2e4ba7b9fbb361eada46c7500509564dc7e092ad1",
+        "mac-inspect": "6766d22c4d467419bd6413eb60ce53e0bda798f62598216f418eb87be0c81466",
+        "mac-tree": "8b896856a7116a9632db40a5f73c6129bbb2bc8dff1a8e62359fa63fbf05746b",
+        "mac-structure": "d186b201b4efcdda61995d6489314141c9094954dd398a68adf1bfeb64ece6c6",
+    }

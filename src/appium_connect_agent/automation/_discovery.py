@@ -12,6 +12,7 @@ import sys
 import time
 import unicodedata
 from collections.abc import Mapping
+from contextlib import suppress
 from pathlib import Path, PurePath
 from typing import Literal, Never, cast
 from uuid import uuid4
@@ -450,6 +451,7 @@ def _developer_parts(value: object, operation_id: str) -> tuple[Path, str]:
 def _open_trusted_directory(
     parent: int | Path,
     name: str | None,
+    descriptors: list[int],
     *,
     writable_mask: int,
 ) -> int:
@@ -457,13 +459,13 @@ def _open_trusted_directory(
         descriptor = os.open(cast(Path, parent), _DIRECTORY_FLAGS)
     else:
         descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=cast(int, parent))
+    descriptors.append(descriptor)
     metadata = os.fstat(descriptor)
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or metadata.st_uid != _TRUSTED_OWNER_UID
         or metadata.st_mode & writable_mask
     ):
-        os.close(descriptor)
         raise OSError("untrusted Xcode directory")
     return descriptor
 
@@ -471,24 +473,23 @@ def _open_trusted_directory(
 def _check_trusted_file(
     parent_fd: int,
     name: str,
+    descriptors: list[int],
     *,
     executable: bool,
     writable_mask: int,
 ) -> None:
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
     descriptor = os.open(name, flags, dir_fd=parent_fd)
-    try:
-        metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != _TRUSTED_OWNER_UID
-            or metadata.st_mode & writable_mask
-            or (executable and not metadata.st_mode & 0o111)
-            or (not executable and not metadata.st_mode & 0o444)
-        ):
-            raise OSError("untrusted Xcode file")
-    finally:
-        os.close(descriptor)
+    descriptors.append(descriptor)
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != _TRUSTED_OWNER_UID
+        or metadata.st_mode & writable_mask
+        or (executable and not metadata.st_mode & 0o111)
+        or (not executable and not metadata.st_mode & 0o444)
+    ):
+        raise OSError("untrusted Xcode file")
 
 
 def _trusted_xcode_tools(
@@ -497,33 +498,39 @@ def _trusted_xcode_tools(
     path, bundle = _developer_parts(developer_dir, operation_id)
     descriptors: list[int] = []
     try:
-        descriptors.append(
-            _open_trusted_directory(_XCODE_FS_ROOT, None, writable_mask=0)
+        _open_trusted_directory(_XCODE_FS_ROOT, None, descriptors, writable_mask=0)
+        _open_trusted_directory(
+            descriptors[-1], "Applications", descriptors, writable_mask=0o002
         )
-        descriptors.append(
-            _open_trusted_directory(
-                descriptors[-1], "Applications", writable_mask=0o002
-            )
-        )
-        descriptors.append(
-            _open_trusted_directory(descriptors[-1], bundle, writable_mask=0o022)
+        bundle_fd = _open_trusted_directory(
+            descriptors[-1], bundle, descriptors, writable_mask=0o022
         )
         _check_trusted_file(
-            descriptors[-1], "Info.plist", executable=False, writable_mask=0o022
+            bundle_fd,
+            "Info.plist",
+            descriptors,
+            executable=False,
+            writable_mask=0o022,
         )
+        parent_fd = bundle_fd
         for segment in ("Contents", "Developer", "usr", "bin"):
-            descriptors.append(
-                _open_trusted_directory(descriptors[-1], segment, writable_mask=0o022)
+            parent_fd = _open_trusted_directory(
+                parent_fd, segment, descriptors, writable_mask=0o022
             )
         for tool in ("simctl", "xcdevice"):
             _check_trusted_file(
-                descriptors[-1], tool, executable=True, writable_mask=0o022
+                parent_fd,
+                tool,
+                descriptors,
+                executable=True,
+                writable_mask=0o022,
             )
     except (OSError, ValueError) as cause:
         _xcode_unavailable(operation_id, cause)
     finally:
         for descriptor in reversed(descriptors):
-            os.close(descriptor)
+            with suppress(OSError):
+                os.close(descriptor)
     rooted = _XCODE_FS_ROOT / path.relative_to("/")
     bin_dir = rooted / "usr" / "bin"
     return rooted, bin_dir / "simctl", bin_dir / "xcdevice"

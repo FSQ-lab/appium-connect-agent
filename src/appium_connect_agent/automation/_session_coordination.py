@@ -113,9 +113,10 @@ def _coordination_error(operation_id: str) -> ResourceStateError:
     return ResourceStateError("coordination_unavailable", operation_id, "not_sent")
 
 
-def _open_private_tmp(operation_id: str) -> int:
+def _open_private_tmp(operation_id: str, descriptors: list[int]) -> int:
     try:
         descriptor = os.open(_PRIVATE_TMP_OPEN_PATH, _DIRECTORY_FLAGS)
+        descriptors.append(descriptor)
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISDIR(metadata.st_mode)
@@ -125,16 +126,17 @@ def _open_private_tmp(operation_id: str) -> int:
             raise OSError("untrusted private tmp")
         return descriptor
     except BaseException as cause:
-        if "descriptor" in locals():
-            os.close(descriptor)
         raise _coordination_error(operation_id) from cause
 
 
-def _open_owned_directory(parent_fd: int, name: str, operation_id: str) -> int:
+def _open_owned_directory(
+    parent_fd: int, name: str, operation_id: str, descriptors: list[int]
+) -> int:
     try:
         with suppress(FileExistsError):
             os.mkdir(name, 0o700, dir_fd=parent_fd)
         descriptor = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent_fd)
+        descriptors.append(descriptor)
         metadata = os.fstat(descriptor)
         if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
             raise OSError("untrusted coordination directory")
@@ -145,8 +147,6 @@ def _open_owned_directory(parent_fd: int, name: str, operation_id: str) -> int:
             raise OSError("invalid coordination directory mode")
         return descriptor
     except BaseException as cause:
-        if "descriptor" in locals():
-            os.close(descriptor)
         raise _coordination_error(operation_id) from cause
 
 
@@ -158,12 +158,11 @@ def _prepare_xcuitest_derived_data(port: int, operation_id: str) -> str:
     )
     descriptors: list[int] = []
     try:
-        descriptors.append(_open_private_tmp(operation_id))
+        _open_private_tmp(operation_id, descriptors)
         for name in names:
-            descriptors.append(
-                _open_owned_directory(descriptors[-1], name, operation_id)
-            )
+            _open_owned_directory(descriptors[-1], name, operation_id, descriptors)
     finally:
         for descriptor in reversed(descriptors):
-            os.close(descriptor)
+            with suppress(OSError):
+                os.close(descriptor)
     return str(_PRIVATE_TMP_RESULT_PATH.joinpath(*names))

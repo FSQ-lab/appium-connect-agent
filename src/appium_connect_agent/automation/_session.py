@@ -1935,6 +1935,19 @@ def _raise_create_failure(
     raise resource_error from cause
 
 
+def _redact_xcuitest_error(error: AutomationError) -> None:
+    safe_cleanup_errors = tuple(
+        RuntimeError("transport_cleanup_failed") for _ in error.cleanup_errors
+    )
+    error.cleanup_errors = safe_cleanup_errors
+    session = error.session
+    if session is not None:
+        session._client._replace_cleanup_errors(safe_cleanup_errors)
+    error.__cause__ = None
+    error.__context__ = None
+    error.__suppress_context__ = True
+
+
 def create_session(
     connection: RuntimeConnection,
     device_id: str,
@@ -2197,7 +2210,7 @@ def create_mac2_session(
     return session
 
 
-def create_xcuitest_session(
+def _create_xcuitest_session(
     connection: RuntimeConnection,
     udid: str,
     *,
@@ -2354,3 +2367,49 @@ def create_xcuitest_session(
         )
         raise error from cause
     return session
+
+
+def create_xcuitest_session(
+    connection: RuntimeConnection,
+    udid: str,
+    *,
+    bundle_id: str | None = None,
+    app_path: Path | None = None,
+    arguments: Sequence[str] | None = None,
+    auto_launch: bool = True,
+    force_app_launch: bool = False,
+    should_terminate_app: bool = False,
+    no_reset: bool = True,
+    xcode_org_id: str | None = None,
+    xcode_signing_id: str | None = None,
+    updated_wda_bundle_id: str | None = None,
+    show_xcode_log: bool = False,
+    wda_launch_timeout_ms: int | None = None,
+    new_command_timeout_seconds: float = 300.0,
+    control: OperationControl | None = None,
+) -> Session:
+    """Create one independently owned XCUITest Session."""
+    error: AutomationError | None = None
+    try:
+        return _create_xcuitest_session(
+            connection,
+            udid,
+            bundle_id=bundle_id,
+            app_path=app_path,
+            arguments=arguments,
+            auto_launch=auto_launch,
+            force_app_launch=force_app_launch,
+            should_terminate_app=should_terminate_app,
+            no_reset=no_reset,
+            xcode_org_id=xcode_org_id,
+            xcode_signing_id=xcode_signing_id,
+            updated_wda_bundle_id=updated_wda_bundle_id,
+            show_xcode_log=show_xcode_log,
+            wda_launch_timeout_ms=wda_launch_timeout_ms,
+            new_command_timeout_seconds=new_command_timeout_seconds,
+            control=control,
+        )
+    except AutomationError as caught:
+        _redact_xcuitest_error(caught)
+        error = caught
+    raise error from None

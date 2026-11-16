@@ -1105,6 +1105,9 @@ def _parse_xcui_source(
         and type(viewport.height.value) is int
     )
     for node in _all_nodes(roots):
+        visible = node.attribute("visible")
+        if ios and visible is not None and not _parse_boolean(visible, gateway):
+            node.visibility = "not_visible"
         raw_parts = tuple(
             node.attribute(name) for name in ("x", "y", "width", "height")
         )
@@ -1145,8 +1148,8 @@ def _parse_xcui_source(
             bottom, viewport_height
         ):
             node.viewport_relation = "intersects"
-        if ios and node.attribute("visible") == "false":
-            node.visibility = "not_visible"
+        if node.visibility == "not_visible":
+            continue
         elif node.viewport_relation == "inside":
             node.visibility = "visible"
         elif node.viewport_relation == "intersects":
