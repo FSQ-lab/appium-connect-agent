@@ -787,7 +787,7 @@ def test_ios_discovery_interrupt_reclaims_process_group(
     assert_reclaimed(processes[0])
 
 
-@pytest.mark.parametrize("fault", ["fstat", "close"])
+@pytest.mark.parametrize("fault", ["fstat", "close", "fstat_close"])
 def test_ios_xcode_descriptor_faults_close_every_open_descriptor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -799,8 +799,9 @@ def test_ios_xcode_descriptor_faults_close_every_open_descriptor(
     real_open, real_fstat, real_close = os.open, os.fstat, os.close
     opened: list[int] = []
     close_attempts: list[int] = []
+    leaked: list[int] = []
     fstat_calls = 0
-    close_faulted = False
+    process_calls: list[object] = []
 
     def tracked_open(*args: Any, **kwargs: Any) -> int:
         descriptor = real_open(*args, **kwargs)
@@ -810,28 +811,46 @@ def test_ios_xcode_descriptor_faults_close_every_open_descriptor(
     def controlled_fstat(descriptor: int) -> os.stat_result:
         nonlocal fstat_calls
         fstat_calls += 1
-        if fault == "fstat" and fstat_calls == 2:
+        if fault in {"fstat", "fstat_close"} and fstat_calls == 2:
             raise OSError("injected fstat failure")
         return real_fstat(descriptor)
 
     def controlled_close(descriptor: int) -> None:
-        nonlocal close_faulted
-        real_close(descriptor)
         close_attempts.append(descriptor)
-        if fault == "close" and not close_faulted:
-            close_faulted = True
-            raise OSError("injected close failure")
+        if fault in {"close", "fstat_close"} and not leaked:
+            leaked.append(descriptor)
+            raise OSError("injected close fault containing SECRET_CANARY")
+        real_close(descriptor)
 
     monkeypatch.setattr(cast(Any, _discovery).os, "open", tracked_open)
     monkeypatch.setattr(cast(Any, _discovery).os, "fstat", controlled_fstat)
     monkeypatch.setattr(cast(Any, _discovery).os, "close", controlled_close)
-    if fault == "fstat":
+    monkeypatch.setattr(
+        cast(Any, _discovery).subprocess,
+        "Popen",
+        lambda *args, **kwargs: process_calls.append(args),
+    )
+    try:
         with pytest.raises(CommandError) as caught:
-            _discovery._trusted_xcode_tools(developer, "operation")
-        assert caught.value.code == "xcode_unavailable"
-    else:
-        _discovery._trusted_xcode_tools(developer, "operation")
-    assert sorted(close_attempts) == sorted(opened)
+            list_ios_devices(developer_dir=developer)
+        error = caught.value
+        assert type(error) is CommandError
+        assert error.code == "xcode_unavailable"
+        assert error.request_state == "not_sent"
+        if fault == "fstat":
+            assert error.cleanup_errors == ()
+        else:
+            assert [str(item) for item in error.cleanup_errors] == [
+                "descriptor_close_failed"
+            ]
+            assert error.__cause__ is None
+            assert error.__context__ is None
+            assert "SECRET_CANARY" not in repr(error.cleanup_errors)
+        assert sorted(close_attempts) == sorted(opened)
+        assert process_calls == []
+    finally:
+        for descriptor in leaked:
+            real_close(descriptor)
     for descriptor in opened:
         with pytest.raises(OSError):
             real_fstat(descriptor)

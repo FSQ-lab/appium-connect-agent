@@ -150,6 +150,16 @@ def _open_owned_directory(
         raise _coordination_error(operation_id) from cause
 
 
+def _close_derived_descriptors(descriptors: list[int]) -> tuple[BaseException, ...]:
+    close_errors: list[BaseException] = []
+    for descriptor in reversed(descriptors):
+        try:
+            os.close(descriptor)
+        except OSError:
+            close_errors.append(OSError("descriptor_close_failed"))
+    return tuple(close_errors)
+
+
 def _prepare_xcuitest_derived_data(port: int, operation_id: str) -> str:
     names = (
         f"appium-connect-agent-{os.getuid()}",
@@ -157,12 +167,28 @@ def _prepare_xcuitest_derived_data(port: int, operation_id: str) -> str:
         f"port-{port}",
     )
     descriptors: list[int] = []
+    failure: ResourceStateError | None = None
+    close_errors: tuple[BaseException, ...]
     try:
         _open_private_tmp(operation_id, descriptors)
         for name in names:
             _open_owned_directory(descriptors[-1], name, operation_id, descriptors)
+    except ResourceStateError as error:
+        failure = error
     finally:
-        for descriptor in reversed(descriptors):
-            with suppress(OSError):
-                os.close(descriptor)
+        close_errors = _close_derived_descriptors(descriptors)
+    if failure is not None:
+        if close_errors:
+            failure.cleanup_errors = (*failure.cleanup_errors, *close_errors)
+            failure.__cause__ = None
+            failure.__context__ = None
+            raise failure from None
+        raise failure
+    if close_errors:
+        raise ResourceStateError(
+            "coordination_unavailable",
+            operation_id,
+            "not_sent",
+            cleanup_errors=close_errors,
+        ) from None
     return str(_PRIVATE_TMP_RESULT_PATH.joinpath(*names))

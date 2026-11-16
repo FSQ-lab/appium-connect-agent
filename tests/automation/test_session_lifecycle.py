@@ -2406,7 +2406,7 @@ def test_xcuitest_derived_data_rejects_untrusted_mutable_segments(
     assert caught.value.code == "coordination_unavailable"
 
 
-@pytest.mark.parametrize("fault", ["fstat", "close"])
+@pytest.mark.parametrize("fault", ["fstat", "close", "fstat_close"])
 def test_xcuitest_derived_data_descriptor_faults_close_every_open_descriptor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2416,8 +2416,8 @@ def test_xcuitest_derived_data_descriptor_faults_close_every_open_descriptor(
     real_open, real_fstat, real_close = os.open, os.fstat, os.close
     opened: list[int] = []
     close_attempts: list[int] = []
+    leaked: list[int] = []
     fstat_calls = 0
-    close_faulted = False
 
     def tracked_open(*args: Any, **kwargs: Any) -> int:
         descriptor = real_open(*args, **kwargs)
@@ -2427,31 +2427,88 @@ def test_xcuitest_derived_data_descriptor_faults_close_every_open_descriptor(
     def controlled_fstat(descriptor: int) -> os.stat_result:
         nonlocal fstat_calls
         fstat_calls += 1
-        if fault == "fstat" and fstat_calls == 2:
+        if fault in {"fstat", "fstat_close"} and fstat_calls == 2:
             raise OSError("injected fstat failure")
         return real_fstat(descriptor)
 
     def controlled_close(descriptor: int) -> None:
-        nonlocal close_faulted
-        real_close(descriptor)
         close_attempts.append(descriptor)
-        if fault == "close" and not close_faulted:
-            close_faulted = True
-            raise OSError("injected close failure")
+        if fault in {"close", "fstat_close"} and not leaked:
+            leaked.append(descriptor)
+            raise OSError("injected close fault containing SECRET_CANARY")
+        real_close(descriptor)
 
     coordination_os = cast(Any, automation_coordination).os
     monkeypatch.setattr(coordination_os, "open", tracked_open)
     monkeypatch.setattr(coordination_os, "fstat", controlled_fstat)
     monkeypatch.setattr(coordination_os, "close", controlled_close)
-    if fault == "fstat":
-        with pytest.raises(ResourceStateError):
+    try:
+        with pytest.raises(ResourceStateError) as caught:
             automation_coordination._prepare_xcuitest_derived_data(8100, "operation")
-    else:
-        automation_coordination._prepare_xcuitest_derived_data(8100, "operation")
-    assert sorted(close_attempts) == sorted(opened)
+        error = caught.value
+        assert error.code == "coordination_unavailable"
+        assert error.request_state == "not_sent"
+        if fault == "fstat":
+            assert error.cleanup_errors == ()
+        else:
+            assert [str(item) for item in error.cleanup_errors] == [
+                "descriptor_close_failed"
+            ]
+            assert error.__cause__ is None
+            assert error.__context__ is None
+            assert "SECRET_CANARY" not in repr(error.cleanup_errors)
+        assert sorted(close_attempts) == sorted(opened)
+    finally:
+        for descriptor in leaked:
+            real_close(descriptor)
     for descriptor in opened:
         with pytest.raises(OSError):
             real_fstat(descriptor)
+
+
+def test_xcuitest_close_failure_releases_usage_and_reservation(
+    service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    real_close = os.close
+    leaked: list[int] = []
+    close_attempts: list[int] = []
+
+    def controlled_close(descriptor: int) -> None:
+        close_attempts.append(descriptor)
+        if not leaked:
+            leaked.append(descriptor)
+            raise OSError("injected close fault containing SECRET_CANARY")
+        real_close(descriptor)
+
+    coordination_os = cast(Any, automation_coordination).os
+    monkeypatch.setattr(coordination_os, "close", controlled_close)
+    try:
+        with managed_connection(service) as (connection, owner):
+            with pytest.raises(ResourceStateError) as caught:
+                create_xcuitest_session(connection, "CLOSE-FAIL-DEVICE")
+            error = caught.value
+            assert_error(
+                error,
+                ResourceStateError,
+                "coordination_unavailable",
+                "not_sent",
+            )
+            assert error.cleanup_errors
+            assert "SECRET_CANARY" not in repr(error.cleanup_errors)
+            assert error.__cause__ is None and error.__context__ is None
+            assert owner.count == 0
+            assert owner.events == ["acquire", "release"]
+            assert service.lifecycle_requests() == []
+
+            monkeypatch.setattr(coordination_os, "close", real_close)
+            replacement = create_xcuitest_session(connection, "CLOSE-FAIL-DEVICE")
+            replacement.quit()
+            assert owner.count == 0
+    finally:
+        for descriptor in leaked:
+            real_close(descriptor)
+    assert len(close_attempts) == 4
 
 
 def xcuitest_private_kwargs(tmp_path: Path) -> tuple[dict[str, Any], tuple[str, ...]]:

@@ -12,7 +12,6 @@ import sys
 import time
 import unicodedata
 from collections.abc import Mapping
-from contextlib import suppress
 from pathlib import Path, PurePath
 from typing import Literal, Never, cast
 from uuid import uuid4
@@ -492,11 +491,24 @@ def _check_trusted_file(
         raise OSError("untrusted Xcode file")
 
 
+def _close_xcode_descriptors(descriptors: list[int]) -> tuple[BaseException, ...]:
+    close_errors: list[BaseException] = []
+    for descriptor in reversed(descriptors):
+        try:
+            os.close(descriptor)
+        except OSError:
+            close_errors.append(OSError("descriptor_close_failed"))
+    return tuple(close_errors)
+
+
 def _trusted_xcode_tools(
     developer_dir: object, operation_id: str
 ) -> tuple[Path, Path, Path]:
     path, bundle = _developer_parts(developer_dir, operation_id)
     descriptors: list[int] = []
+    failure: CommandError | None = None
+    failure_cause: BaseException | None = None
+    close_errors: tuple[BaseException, ...]
     try:
         _open_trusted_directory(_XCODE_FS_ROOT, None, descriptors, writable_mask=0)
         _open_trusted_directory(
@@ -526,11 +538,24 @@ def _trusted_xcode_tools(
                 writable_mask=0o022,
             )
     except (OSError, ValueError) as cause:
-        _xcode_unavailable(operation_id, cause)
+        failure = CommandError("xcode_unavailable", operation_id, "not_sent")
+        failure_cause = cause
     finally:
-        for descriptor in reversed(descriptors):
-            with suppress(OSError):
-                os.close(descriptor)
+        close_errors = _close_xcode_descriptors(descriptors)
+    if failure is not None:
+        if close_errors:
+            failure.cleanup_errors = (*failure.cleanup_errors, *close_errors)
+            failure.__cause__ = None
+            failure.__context__ = None
+            raise failure from None
+        raise failure from failure_cause
+    if close_errors:
+        raise CommandError(
+            "xcode_unavailable",
+            operation_id,
+            "not_sent",
+            cleanup_errors=close_errors,
+        ) from None
     rooted = _XCODE_FS_ROOT / path.relative_to("/")
     bin_dir = rooted / "usr" / "bin"
     return rooted, bin_dir / "simctl", bin_dir / "xcdevice"
