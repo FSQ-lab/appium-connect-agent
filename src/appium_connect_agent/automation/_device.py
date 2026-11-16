@@ -19,6 +19,7 @@ from ._ios_actions import (
     _ios_install_app,
     _ios_query_app_state,
 )
+from ._ios_privacy import _redact_ios_public_methods
 from ._macos_actions import (
     _macos_execute_bool,
     _macos_execute_none,
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
 _MARKER = object()
 
 
+@_redact_ios_public_methods
 @dataclass(frozen=True, slots=True, init=False, eq=False)
 class Device:
     _owner: Session = field(repr=False)

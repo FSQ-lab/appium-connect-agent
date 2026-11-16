@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from appium_connect_agent.runtime import OperationControl
 
+from ._ios_privacy import _redact_ios_public_methods
 from ._macos_keyboard import MacKeyStroke
 from ._models import (
     AutomationPlatform,
@@ -56,6 +57,7 @@ class ElementValidationError(ValueError):
         self.code = code
 
 
+@_redact_ios_public_methods
 @dataclass(frozen=True, slots=True, init=False)
 class Element:
     by: ElementBy
