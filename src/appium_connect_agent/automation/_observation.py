@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 _Result = TypeVar("_Result")
 
 _MAX_JSON = 65_536
+_MAX_TREE_JSON = 524_288
 _MAX_XML = 4_194_304
 _MAX_NODES = 20_000
 _MAX_DEPTH = 128
@@ -299,7 +300,12 @@ def _json_value(value: object, *, macos: bool = False) -> object:
     return value
 
 
-def _canonical(value: object, gateway: _SessionOperationGateway) -> bytes | None:
+def _canonical(
+    value: object,
+    gateway: _SessionOperationGateway,
+    *,
+    maximum: int = _MAX_JSON,
+) -> bytes | None:
     encoder = json.JSONEncoder(
         ensure_ascii=False,
         allow_nan=False,
@@ -311,7 +317,7 @@ def _canonical(value: object, gateway: _SessionOperationGateway) -> bytes | None
         if index % 256 == 0:
             gateway.checkpoint(response_received=True)
         encoded = chunk.encode("utf-8", errors="strict")
-        if len(result) + len(encoded) > _MAX_JSON:
+        if len(result) + len(encoded) > maximum:
             return None
         result.extend(encoded)
     gateway.checkpoint(response_received=True)
@@ -1481,7 +1487,7 @@ def _mac2_tree_result(
             "source": _json_value(metadata),
             "upstream_completeness": "unknown",
         }
-        return projected, _canonical(document, gateway)
+        return projected, _canonical(document, gateway, maximum=_MAX_TREE_JSON)
 
     projected, encoded = build(None, "requested_scope", True)
     coverage: Coverage = "requested_scope"
@@ -1569,7 +1575,7 @@ def _ios_tree_result(
             "source": _json_value(metadata),
             "upstream_completeness": "unknown",
         }
-        return projected, _canonical(document, gateway)
+        return projected, _canonical(document, gateway, maximum=_MAX_TREE_JSON)
 
     projected, encoded = build(None, "requested_scope", True)
     coverage: Coverage = "requested_scope"
@@ -1636,7 +1642,7 @@ def _tree_result(
             "source": _json_value(metadata),
             "upstream_completeness": "unknown",
         }
-        return projected, _canonical(document, gateway)
+        return projected, _canonical(document, gateway, maximum=_MAX_TREE_JSON)
 
     projected, encoded = build(None, "requested_scope", True)
     coverage: Coverage = "requested_scope"

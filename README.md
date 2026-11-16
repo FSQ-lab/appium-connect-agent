@@ -67,13 +67,37 @@ appium-connect-agent daemon stop
 19. `appium.app.package`：从宿主绝对小写 `.apk` 路径安装，或按严格 package id 卸载；安装固定 replace，卸载只原样返回官方 bool，不承诺删除数据。
 
 
-所有工具都使用 schema version 1；I/O 工具有有限总预算并把取消信号桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；下层完整文档最大 65,536 UTF-8 bytes，外层完整结果有 69,632-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用、IME action、每个gesture与Device back都只进入一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element或执行该公开方法合同内的必要步骤，但Integrations不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。click/IME/gesture/back成功只表示对应公开Automation调用取得合法成功响应，不保证页面变化、键盘状态、到达特定页面或其他业务结果。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常关闭会对已知active owned Session最多调用一次公开quit，随后在`server_mode="managed"`时自然有界停止本次拥有的受管Appium（在`server_mode="external"`时保持外部Appium运行）；终态未知时零信号保留在途资源并degraded退出。ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
+所有工具都使用 schema version 1；I/O 工具有有限总预算并把取消信号桥接到同一个下层 cancellation Event，不遗弃同步 worker。观测文档无损保留 Automation schema=1 的 ValueState、coverage、完整性、空间事实和结构语义；`tree` 下层完整文档最大 524,288 UTF-8 bytes，`attributes` 与 `structure` 继续最大 65,536 bytes，外层完整结果按 mode 分别受 526,876 / 68,130 / 68,129-byte 防御边界，不截断、分页或再次请求。Element click、每个文本调用、IME action、每个gesture与Device back都只进入一次对应Automation公开方法；Automation内部可在获准等待预算内重新定位Element或执行该公开方法合同内的必要步骤，但Integrations不重试或重放动作。文本保持strict UTF-8与65,536-byte边界，不进入结果、错误、日志或默认验证证据；普通send的单个上游命令仍可能内部清除并重写旧值，有效错误也可能已产生部分副作用。click/IME/gesture/back成功只表示对应公开Automation调用取得合法成功响应，不保证页面变化、键盘状态、到达特定页面或其他业务结果。Session uncertain时只允许status，不自动quit、attach、恢复或重建。正常关闭会对已知active owned Session最多调用一次公开quit，随后在`server_mode="managed"`时自然有界停止本次拥有的受管Appium（在`server_mode="external"`时保持外部Appium运行）；终态未知时零信号保留在途资源并degraded退出。ADB server始终归外部所有。不提供 raw ADB/WebDriver/HTTP、fallback、自动动作链或 `clear_app`。
 新增 Device/App 工具同样只进入一次对应 Automation 公开方法，共享既有 Session gate、原始 deadline/cancellation、错误映射和 canonical serializer。clipboard 文本和 status-bar output 只返回当前获准调用方；clipboard set 的文本/label 不进入成功结果、验证错误、日志、stderr 或持久证据。Integrations 只把 `app_path` 转为 `Path` 交给 `Device.install_app`，不自行读取越界文件。install 外层预算最大 360 秒、remove 最大 180 秒，分别容纳下层 300,000 ms 与 100,000 ms 的五倍内部上限；这不是自动重试或多次安装/卸载。
 
 
 协议目标为 MCP `2026-07-28`。INT-MCP-03 Native observation、INT-MCP-04 Element click、INT-MCP-05 Element text与INT-MCP-06 Device back均已在固定Android Native组合完成各自限定真实链验收；Issue #8也已通过正式wheel、官方MCP Client与固定Calculator安全链完成`observe → click → observe → replace → observe → back`限定验收。Host 资格方面，Codex CLI `0.167.2` 已在记录的精确固定组合内限定 qualified（Issue #19），OMP `18.18.3` 因不公开原始 `structuredContent` 为 not-qualified（Issue #18），Copilot CLI 与其他具体 Host 尚未资格化。进程内 Python ToolCall 表面提供 `Application(settings, adb_executable, surface="toolcall").tool_bindings()` 与 `SyncApplication`（详见 [Integrations SPEC](modules/integrations/SPEC.md)）。Automation 模块继续保持 `device-validation-blocked-known-clean`、module non-Done、无自动重试，Integrations 结果不改变该状态。UI document、文本、locator、handle、设备和应用标识只用于当前获准调用方，不写入默认日志或证据。
 
 INT-TOOLS-01（#25）与 INT-TOOLS-02（#26）已完成 19 工具同源 clean cutover、FSQ 双转换器 19+19 SHA-256 实测、受控 HTTP 协议全矩阵及正式 wheel 三壳代表性安全真机验收（覆盖 Calculator 上的 `double`/`long` click、`ime_action("done")`、`swipe` 手势并恢复空基线，以及 `app.lifecycle` `1→4→3→1` 状态闭环、`device.key` Home、`keyboard_hide`、`status_bar` `expandSettings`/`collapse` 与不存在包的无副作用 `app.package(remove) -> false`）；其余高副作用分支（剪贴板读写、真实弹窗点击、真实 APK 安装与已安装包卸载、`scroll`/`scroll_to`/`drag_and_drop`）由受控协议测试与下层既有 AIF feature 限定证据守护，不在本次代表性 smoke 重复执行，且不提升 Integrations、Automation 或平台整体 Done，亦不关闭 AIF-06 既有真机 drag-and-drop 验证缺口。
+
+## Automation Session 创建
+
+`create_session` 为每个明确的 UiAutomator2 Session 提供可选 keyword-only 参数：
+
+```python
+session = create_session(
+    connection,
+    "emulator-5554",
+    uiautomator2_wait_for_idle_timeout_ms=1_000,
+)
+```
+
+`uiautomator2_wait_for_idle_timeout_ms` 默认为 `None`；此时 new-session payload 完全
+省略 `appium:settings[waitForIdleTimeout]`，保持上游默认。显式值必须是
+`0..9_007_199_254_740_991` 范围内的原生 `int`；`bool`、`int` 子类、浮点数、字符串
+和越界值在 connection 读取、usage/reservation 与 HTTP 请求前以
+`InvalidRequestError / invalid_argument / not_sent` 拒绝。
+
+合法值只作为 initial Setting `appium:settings[waitForIdleTimeout]` 随唯一
+new-session 请求发送；不追加 Settings 更新、读回、重试或外层预算。通用
+`capabilities` 不能提供或覆盖该 Setting。`1_000` 只是调用方可显式选择的 profile
+值，不是 SDK 全局默认；SDK 不按应用自动选择。成功创建只表示服务接受 Session，
+不证明目标页面、等待效果或 Automation 模块整体验收通过。
 
 ## Automation Element 接口
 

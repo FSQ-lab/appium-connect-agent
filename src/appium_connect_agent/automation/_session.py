@@ -134,6 +134,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 _Result = TypeVar("_Result")
 _ALLOWED_CAPABILITIES = frozenset({"appium:deviceName", "appium:platformVersion"})
 _MAC_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,254}")
+_MAX_JSON_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 class _InvalidCreateResponse(Exception):
@@ -260,8 +261,9 @@ def _validate_create_request(
     full_reset: object,
     should_terminate_app: object,
     new_command_timeout_seconds: object,
+    uiautomator2_wait_for_idle_timeout_ms: object,
     capabilities: object,
-) -> tuple[str, str | None, Path | None, float, dict[str, str]]:
+) -> tuple[str, str | None, Path | None, float, int | None, dict[str, str]]:
     if not _valid_compact_identifier(device_id, 1_024):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if app_id is not None and not _valid_compact_identifier(app_id, 255):
@@ -286,12 +288,18 @@ def _validate_create_request(
         or timeout < 0
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    idle_timeout = uiautomator2_wait_for_idle_timeout_ms
+    if idle_timeout is not None and (
+        type(idle_timeout) is not int or not 0 <= idle_timeout <= _MAX_JSON_SAFE_INTEGER
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     extras = _validate_capabilities(capabilities, operation_id)
     return (
         cast(str, device_id),
         cast(str | None, app_id),
         path,
         float(timeout),
+        idle_timeout,
         extras,
     )
 
@@ -306,6 +314,7 @@ def _build_options(
     full_reset: bool,
     should_terminate_app: bool,
     new_command_timeout_seconds: float,
+    uiautomator2_wait_for_idle_timeout_ms: int | None,
     system_port: int,
     extras: Mapping[str, str],
 ) -> UiAutomator2Options:
@@ -322,6 +331,10 @@ def _build_options(
         "appium:systemPort": system_port,
         "appium:settings[enableMultiWindows]": True,
     }
+    if uiautomator2_wait_for_idle_timeout_ms is not None:
+        capabilities["appium:settings[waitForIdleTimeout]"] = (
+            uiautomator2_wait_for_idle_timeout_ms
+        )
     if app_id is not None:
         capabilities["appium:appPackage"] = app_id
     if app_path is not None:
@@ -2080,6 +2093,7 @@ def create_session(
     full_reset: bool = False,
     should_terminate_app: bool = False,
     new_command_timeout_seconds: float = 500,
+    uiautomator2_wait_for_idle_timeout_ms: int | None = None,
     capabilities: Mapping[str, JsonValue] | None = None,
     control: OperationControl | None = None,
 ) -> Session:
@@ -2090,6 +2104,7 @@ def create_session(
         valid_app_id,
         valid_app_path,
         valid_timeout,
+        valid_idle_timeout,
         valid_capabilities,
     ) = _validate_create_request(
         operation_id,
@@ -2102,6 +2117,7 @@ def create_session(
         full_reset,
         should_terminate_app,
         new_command_timeout_seconds,
+        uiautomator2_wait_for_idle_timeout_ms,
         capabilities,
     )
     server_url = _active_server_url(connection, operation_id)
@@ -2146,6 +2162,7 @@ def create_session(
             full_reset,
             should_terminate_app,
             valid_timeout,
+            valid_idle_timeout,
             reservation.system_port,
             valid_capabilities,
         )

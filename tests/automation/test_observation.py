@@ -412,7 +412,8 @@ def document(
 ) -> Any:
     encoded = value.to_json()
     assert encoded is value.to_json()
-    assert len(encoded) <= 65_536
+    maximum = 524_288 if isinstance(value, TreeObservation) else 65_536
+    assert len(encoded) <= maximum
     decoded = json.loads(encoded)
     assert (
         json.dumps(
@@ -1808,7 +1809,7 @@ def test_xml_attribute_value_exact_and_plus_one_limit(
         session.quit()
 
 
-def test_tree_complete_document_65536_and_65537_boundaries(
+def test_tree_complete_document_524288_and_524289_boundaries(
     service: ElementProtocolService,
 ) -> None:
     with connected(service) as connection:
@@ -1821,10 +1822,10 @@ def test_tree_complete_document_65536_and_65537_boundaries(
             return session.observe_tree()
 
         baseline = observe("")
-        padding = 65_536 - len(baseline.to_json())
+        padding = 524_288 - len(baseline.to_json())
         assert padding > 0
         exact = observe("x" * padding)
-        assert len(exact.to_json()) == 65_536
+        assert len(exact.to_json()) == 524_288
         with pytest.raises(CommandError) as caught:
             observe("x" * (padding + 1))
         assert caught.value.code == "observation_too_large"
@@ -1837,7 +1838,7 @@ def test_tree_full_to_visible_keeps_unknown_empty_container_and_ancestors(
 ) -> None:
     hidden_large = node_xml(
         resource_id="com.example:id/hidden",
-        text="x" * 66_000,
+        text="x" * 525_000,
         displayed="false",
     )
     partial = node_xml(
@@ -1878,7 +1879,7 @@ def test_visible_set_still_over_limit_fails_without_truncation(
 ) -> None:
     visible = node_xml(
         resource_id="com.example:id/visible",
-        text="x" * 66_000,
+        text="x" * 525_000,
         displayed="true",
     )
     service.source = basic_xml(visible)
@@ -2813,7 +2814,7 @@ def test_tree_fallback_retains_offscreen_node_and_reports_offscreen_coverage(
 ) -> None:
     hidden_large = node_xml(
         resource_id="com.example:id/hidden",
-        text="x" * 66_000,
+        text="x" * 525_000,
         displayed="false",
     )
     offscreen = node_xml(
@@ -2848,7 +2849,7 @@ def test_offscreen_fallback_still_over_limit_fails_without_truncation(
 ) -> None:
     offscreen_large = node_xml(
         resource_id="com.example:id/offscreen",
-        text="x" * 66_000,
+        text="x" * 525_000,
         bounds="[1090,10][1190,110]",
         displayed="false",
     )
@@ -3164,6 +3165,32 @@ def test_mac2_tree_preserves_xcui_root_and_uses_main_display(
         structure_doc = document(structure)
         assert structure_doc["scope"]["locator"]["predicate"] is None
         assert structure.roots[0].tag == "XCUIElementTypeButton"
+        session.quit()
+
+
+def test_mac2_tree_complete_document_524288_and_524289_boundaries(
+    service: ElementProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+
+        def observe(text: str) -> TreeObservation:
+            service.source = (
+                '<XCUIElementTypeApplication elementType="1" '
+                f'identifier="{text}" enabled="true" selected="false" '
+                'x="0" y="0" width="100" height="100"/>'
+            )
+            return session.observe_tree()
+
+        baseline = observe("")
+        padding = 524_288 - len(baseline.to_json())
+        assert padding > 0
+        exact = observe("x" * padding)
+        assert len(exact.to_json()) == 524_288
+        with pytest.raises(CommandError) as caught:
+            observe("x" * (padding + 1))
+        assert caught.value.code == "observation_too_large"
+        assert session.session_info().state == "active"
         session.quit()
 
 
@@ -3513,4 +3540,32 @@ def test_ios_index_attribute_normalizes_xcuitest_zero_and_one_quirk(
         assert json.loads(inspected.to_json())["payload"]["attributes"] == [
             {"name": "index", "state": "value", "value": expected}
         ]
+        session.quit()
+
+
+def test_ios_tree_complete_document_524288_and_524289_boundaries(
+    service: ElementProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+
+        def observe(text: str) -> TreeObservation:
+            service.source = (
+                "<AppiumAUT><XCUIElementTypeApplication "
+                f'name="{text}" enabled="true" visible="true" '
+                'x="0" y="0" width="100" height="100" index="0"/>'
+                "</AppiumAUT>"
+            )
+            return session.observe_tree()
+
+        baseline = observe("")
+        padding = 524_288 - len(baseline.to_json())
+        assert padding > 0
+        exact = observe("x" * padding)
+        assert len(exact.to_json()) == 524_288
+        with pytest.raises(CommandError) as caught:
+            observe("x" * (padding + 1))
+        assert caught.value.code == "observation_too_large"
+        assert session.session_info().state == "active"
         session.quit()

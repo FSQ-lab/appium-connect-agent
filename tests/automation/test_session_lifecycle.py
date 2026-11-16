@@ -69,6 +69,10 @@ class ResponsePlan:
     disconnect: bool = False
 
 
+class IntSubclass(int):
+    pass
+
+
 class ProtocolService:
     def __init__(self, base_path: str = "/wd/hub") -> None:
         self.base_path = base_path
@@ -537,6 +541,32 @@ def test_four_app_inputs_exact_capabilities_and_local_snapshot(
 
 
 @pytest.mark.parametrize(
+    "idle_timeout",
+    [0, 1, 1_000, 10_000, 9_007_199_254_740_991],
+)
+def test_wait_for_idle_timeout_is_an_exact_initial_setting(
+    service: ProtocolService, idle_timeout: int
+) -> None:
+    with connected(service) as connection:
+        session = create_session(
+            connection,
+            "device-1",
+            uiautomator2_wait_for_idle_timeout_ms=idle_timeout,
+        )
+        session.quit()
+
+    assert [(request.method, request.path) for request in service.requests] == [
+        ("GET", "/wd/hub/status"),
+        ("POST", "/wd/hub/session"),
+        ("DELETE", "/wd/hub/session/session-1"),
+    ]
+    create_request = service.lifecycle_requests()[0]
+    value = appium_caps(create_request)["appium:settings[waitForIdleTimeout]"]
+    assert type(value) is int
+    assert value == idle_timeout
+
+
+@pytest.mark.parametrize(
     ("kwargs", "code"),
     [
         ({"device_id": ""}, "invalid_argument"),
@@ -548,11 +578,48 @@ def test_four_app_inputs_exact_capabilities_and_local_snapshot(
         ({"device_id": "ok", "no_reset": True, "full_reset": True}, "invalid_argument"),
         ({"device_id": "ok", "new_command_timeout_seconds": -1}, "invalid_argument"),
         (
+            {"device_id": "ok", "uiautomator2_wait_for_idle_timeout_ms": True},
+            "invalid_argument",
+        ),
+        (
+            {
+                "device_id": "ok",
+                "uiautomator2_wait_for_idle_timeout_ms": IntSubclass(1),
+            },
+            "invalid_argument",
+        ),
+        (
+            {"device_id": "ok", "uiautomator2_wait_for_idle_timeout_ms": 1.0},
+            "invalid_argument",
+        ),
+        (
+            {"device_id": "ok", "uiautomator2_wait_for_idle_timeout_ms": "1"},
+            "invalid_argument",
+        ),
+        (
+            {"device_id": "ok", "uiautomator2_wait_for_idle_timeout_ms": -1},
+            "invalid_argument",
+        ),
+        (
+            {
+                "device_id": "ok",
+                "uiautomator2_wait_for_idle_timeout_ms": 9_007_199_254_740_992,
+            },
+            "invalid_argument",
+        ),
+        (
             {"device_id": "ok", "new_command_timeout_seconds": float("nan")},
             "invalid_argument",
         ),
         (
             {"device_id": "ok", "capabilities": {"appium:systemPort": 9000}},
+            "unsupported_operation",
+        ),
+        (
+            {
+                "device_id": "ok",
+                "capabilities": {"appium:settings[waitForIdleTimeout]": "1000"},
+            },
             "unsupported_operation",
         ),
         (
@@ -568,6 +635,11 @@ def test_four_app_inputs_exact_capabilities_and_local_snapshot(
 def test_invalid_values_and_capabilities_never_send_create(
     service: ProtocolService, kwargs: dict[str, Any], code: str
 ) -> None:
+    invalid_connection = cast(RuntimeConnection, object())
+    with pytest.raises(InvalidRequestError) as caught:
+        create_session(invalid_connection, **kwargs)
+    assert_error(caught.value, InvalidRequestError, code, "not_sent")
+
     with connected(service) as connection:
         with pytest.raises(InvalidRequestError) as caught:
             create_session(connection, **kwargs)

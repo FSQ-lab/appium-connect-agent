@@ -55,6 +55,7 @@ from ._bridge import (
 )
 from ._catalog import TOOL_CATALOG, JsonValue, ToolSpec
 from ._models import (
+    _OBSERVATION_DOCUMENT_MAX_BYTES,
     AUTOMATION_MODULE_STATUS,
     MAX_INTEGRATION_SCREENSHOT_BYTES,
     AndroidKeycodePressRequest,
@@ -454,7 +455,7 @@ class Application:
             "explicit_screen_coordinates_only",
             "no_automatic_navigation",
             "no_node_cache",
-            "observation_document_65536_bytes",
+            "tree_document_524288_bytes_attributes_structure_65536_bytes",
             "screenshot_png_3000000_bytes",
             "single_session_capacity",
             "opaque_handle_process_local",
@@ -729,8 +730,11 @@ class Application:
         result: TreeObservation | ElementInspection | RawStructureObservation,
     ) -> ObservationDocument:
         raw_document = result.to_json()
-        if len(raw_document) > 65_536:
-            raise RuntimeError("Automation observation exceeded 65,536 bytes")
+        maximum = _OBSERVATION_DOCUMENT_MAX_BYTES[mode]
+        if len(raw_document) > maximum:
+            raise RuntimeError(
+                f"Automation {mode} observation exceeded {maximum:,} bytes"
+            )
         parsed = json.loads(raw_document)
         if not isinstance(parsed, dict):
             raise RuntimeError("Automation observation was not an object")
