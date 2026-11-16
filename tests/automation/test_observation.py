@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import socket
 import socketserver
@@ -11,11 +12,14 @@ from contextlib import contextmanager, suppress
 from dataclasses import FrozenInstanceError, dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote
 
 import pytest
 
+import appium_connect_agent.automation._observation as observation_module
+import appium_connect_agent.automation._session as session_module
 from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
@@ -36,6 +40,7 @@ from appium_connect_agent.automation import (
     TreeObservation,
     create_mac2_session,
     create_session,
+    create_xcuitest_session,
 )
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import OperationControl, Runtime, RuntimeConnection
@@ -122,6 +127,7 @@ class ElementProtocolService:
                 "rect": {"x": 0, "y": 0, "width": 1440, "height": 900},
             }
         }
+        self.screen_info: object = {"screenSize": {"width": 402, "height": 874}}
         self.source = basic_xml()
         self._lock = threading.Lock()
         self._session_number = 0
@@ -259,8 +265,14 @@ class ElementProtocolService:
         if kind == "source":
             return {"value": self.source}
         if kind == "execute":
-            assert request.body == {"script": "macos: listDisplays", "args": []}
-            return {"value": self.displays}
+            assert request.body is not None
+            if request.body == {"script": "macos: listDisplays", "args": []}:
+                return {"value": self.displays}
+            assert request.body == {
+                "script": "mobile: deviceScreenInfo",
+                "args": [],
+            }
+            return {"value": self.screen_info}
         if kind == "find":
             assert request.body is not None
             using = request.body["using"]
@@ -363,6 +375,20 @@ def mac_session_for(
 ) -> Session:
     del service
     return create_mac2_session(connection)
+
+
+def ios_session_for(
+    service: ElementProtocolService,
+    connection: RuntimeConnection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Session:
+    del service
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    return create_xcuitest_session(connection, "IOS-DEVICE")
 
 
 def w3c_error(message: str = "failed") -> dict[str, object]:
@@ -3199,3 +3225,299 @@ def test_mac2_rejects_malformed_display_map_before_source(
         assert_error(caught.value, CommandError, "command_failed", "response_received")
         assert service.of_kind("source") == []
         session.quit()
+
+
+def test_ios_predicate_attributes_and_appium_aut_tree(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    combined = "name == \"result\" AND (label == 'Result')"
+    service.matches[(None, "-ios predicate string", combined)] = ["target"]
+    class_combined = "type == \"XCUIElementTypeStaticText\" AND (label == 'Result')"
+    service.matches[(None, "-ios predicate string", class_combined)] = ["target"]
+    service.attributes.update(
+        {
+            ("target", "name"): "result",
+            ("target", "text"): "Value",
+            ("target", "type"): "XCUIElementTypeStaticText",
+            ("target", "label"): "Result",
+            ("target", "value"): "Value",
+            ("target", "placeholderValue"): None,
+            ("target", "enabled"): "true",
+            ("target", "focused"): "false",
+            ("target", "selected"): "false",
+            ("target", "hittable"): "true",
+            ("target", "accessible"): "true",
+            ("target", "displayed"): True,
+            ("target", "index"): "3",
+            ("target", "traits"): "StaticText",
+        }
+    )
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" enabled="true" '
+        'visible="true" x="0" y="0" width="402" height="874" index="0">'
+        '<XCUIElementTypeStaticText name="result" label="Result" value="Value" '
+        'enabled="true" visible="false" accessible="true" hittable="true" '
+        'x="10" y="20" width="100" height="40" index="3"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    attributes: tuple[ElementAttribute, ...] = (
+        "id",
+        "text",
+        "type",
+        "label",
+        "value",
+        "placeholder_value",
+        "enabled",
+        "focused",
+        "selected",
+        "hittable",
+        "accessible",
+        "displayed",
+        "bounds",
+        "index",
+        "traits",
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        with pytest.raises(ElementValidationError) as invalid:
+            session.element("class name", "Button", predicate="enabled == true")
+        assert invalid.value.code == "invalid_argument"
+        element = session.element("id", "result", predicate="label == 'Result'")
+        inspection = document(element.inspect(attributes=attributes))
+        assert inspection["payload"]["attributes"][0] == {
+            "name": "id",
+            "state": "value",
+            "value": "result",
+        }
+        assert inspection["payload"]["attributes"][13]["value"] == 3
+        class_element = session.element(
+            "class name", "XCUIElementTypeStaticText", predicate="label == 'Result'"
+        )
+        assert (
+            document(class_element.inspect(attributes=("id",)))["payload"][
+                "attributes"
+            ][0]["value"]
+            == "result"
+        )
+        tree = document(session.observe_tree())
+        root = tree["payload"]["roots"][0]
+        assert tree["payload"]["viewport"]["width"]["value"] == 402
+        assert root["children"][0]["id"] == "result"
+        assert root["children"][0]["text"] == "Value"
+        assert root["children"][0]["visible"] == "not_visible"
+        assert root["children"][0]["viewport_relation"] == "inside"
+        session.quit()
+
+
+def test_ios_structure_local_name_and_invalid_viewport(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" enabled="true" '
+        'visible="true" x="0" y="0" width="402" height="874" index="0">'
+        '<XCUIElementTypeButton name="save" enabled="true" visible="true" '
+        'x="1" y="2" width="3" height="4" index="0"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        element = session.element("name", "save")
+        structure = document(element.inspect_structure(scope="target"))
+        assert structure["payload"]["roots"][0]["tag"] == "XCUIElementTypeButton"
+        before = len(service.snapshot())
+        with pytest.raises(InvalidRequestError) as unsupported:
+            session.element(
+                "-ios predicate string", "name == 'save'"
+            ).inspect_structure()
+        assert_error(
+            unsupported.value,
+            InvalidRequestError,
+            "structure_scope_unavailable",
+            "not_sent",
+        )
+        assert len(service.snapshot()) == before
+        service.screen_info = {"screenSize": {"width": 0, "height": 874}}
+        with pytest.raises(CommandError) as malformed:
+            session.observe_tree()
+        assert_error(
+            malformed.value, CommandError, "source_invalid", "response_received"
+        )
+        session.quit()
+
+
+def test_ios_all_element_and_device_actions_are_zero_request(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        element = session.element("id", "target")
+        child = session.element("id", "child", parent=element)
+        destination = session.element("id", "destination")
+        actions: list[Callable[[], object]] = [
+            lambda: element.click(),
+            lambda: element.double_click(),
+            lambda: element.right_click(),
+            lambda: element.hover(),
+            lambda: element.long_click(),
+            lambda: element.send_keys("text"),
+            lambda: element.clear(),
+            lambda: element.replace_element_value("text"),
+            lambda: element.send_macos_keys(("a",)),
+            lambda: element.perform_editor_action("done"),
+            lambda: element.swipe_gesture(direction="up", percent=0.5),
+            lambda: element.scroll_gesture(direction="up", percent=0.5),
+            lambda: element.scroll(child, max_swipes=1),
+            lambda: element.scroll_by(delta_x=1, delta_y=1),
+            lambda: element.macos_swipe(direction="up"),
+            lambda: element.drag_and_drop(destination),
+            lambda: session.device.activate_app("com.example.app"),
+            lambda: session.device.terminate_app("com.example.app"),
+            lambda: session.device.query_app_state("com.example.app"),
+            lambda: session.device.launch_app(bundle_id="com.example.app"),
+            lambda: session.device.install_app(Path("/tmp/Test.ipa")),
+            lambda: session.device.remove_app("com.example.app"),
+            lambda: session.device.back(),
+            lambda: session.device.press_keycode(1),
+            lambda: session.device.long_press_keycode(1),
+            lambda: session.device.hide_keyboard(),
+            lambda: session.device.get_clipboard_text(),
+            lambda: session.device.set_clipboard_text("text"),
+            lambda: session.device.accept_alert(),
+            lambda: session.device.dismiss_alert(),
+            lambda: session.device.status_bar("collapse"),
+            lambda: session.device.take_screenshot(),
+            lambda: session.device.tap_at(1, 2),
+            lambda: session.device.click_at(1, 2),
+            lambda: session.device.hover_at(1, 2),
+            lambda: session.device.scroll_at(1, 2, delta_x=1, delta_y=1),
+            lambda: session.device.swipe_between(1, 2, 3, 4),
+            lambda: session.device.send_keys(("a",)),
+        ]
+        before = len(service.snapshot())
+        for action in actions:
+            with pytest.raises(InvalidRequestError) as caught:
+                action()
+            assert_error(
+                caught.value,
+                InvalidRequestError,
+                "unsupported_operation",
+                "not_sent",
+            )
+            assert len(service.snapshot()) == before
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    ["", 'x="1" y="2" width="0" height="10"'],
+    ids=("missing-geometry", "zero-width"),
+)
+def test_ios_visible_false_is_independent_of_tree_geometry(
+    service: ElementProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    geometry: str,
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" visible="true" '
+        'x="0" y="0" width="402" height="874" index="0">'
+        f'<XCUIElementTypeButton name="hidden" visible="false" {geometry} index="1"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        node = session.observe_tree().roots[0].children[0]
+        assert node.visibility == "not_visible"
+        assert node.viewport_relation == "unknown"
+        session.quit()
+
+
+def test_ios_structure_visible_false_is_independent_of_unknown_viewport(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" visible="true" index="0">'
+        '<XCUIElementTypeButton name="hidden" visible="false" index="1"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    captured: list[Any] = []
+    original = observation_module._parse_ios_source
+
+    def capture(source: object, viewport: Any, gateway: Any) -> Any:
+        roots = original(source, viewport, gateway)
+        captured.extend(roots)
+        return roots
+
+    monkeypatch.setattr(observation_module, "_parse_ios_source", capture)
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        session.element("name", "hidden").inspect_structure(scope="target")
+        hidden = captured[0].children[0]
+        assert hidden.visibility == "not_visible"
+        assert hidden.viewport_relation == "unknown"
+        session.quit()
+
+
+def stable_observation_digest(
+    value: ElementInspection | TreeObservation | RawStructureObservation,
+) -> str:
+    payload = json.loads(value.to_json())
+    payload["operation_id"] = "0" * 32
+    payload["observed_at"] = "2000-01-01T00:00:00.000000Z"
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def test_android_and_mac2_observation_bytes_match_fixed_baselines(
+    service: ElementProtocolService,
+) -> None:
+    observed: dict[str, str] = {}
+    service.attributes[("target", "text")] = "stable"
+    service.source = basic_xml(
+        node_xml(resource_id="com.example:id/target", text="stable")
+    )
+    with connected(service) as connection:
+        android = session_for(service, connection, "byte-stable-android")
+        target = android.element("id", "target", package="com.example")
+        observed["android-inspect"] = stable_observation_digest(
+            target.inspect(attributes=("text",))
+        )
+        observed["android-tree"] = stable_observation_digest(android.observe_tree())
+        observed["android-structure"] = stable_observation_digest(
+            target.inspect_structure(scope="target")
+        )
+        android.quit()
+
+        service.attributes[("target", "identifier")] = "target"
+        service.source = (
+            '<XCUIElementTypeApplication elementType="1" identifier="app" '
+            'enabled="true" selected="false" x="0" y="0" width="0" height="0">'
+            '<XCUIElementTypeButton elementType="9" identifier="target" '
+            'label="Stable" value="stable" enabled="true" selected="false" '
+            'x="1" y="2" width="3" height="4"/>'
+            "</XCUIElementTypeApplication>"
+        )
+        mac = mac_session_for(service, connection)
+        mac_target = mac.element("id", "target")
+        observed["mac-inspect"] = stable_observation_digest(
+            mac_target.inspect(attributes=("id",))
+        )
+        observed["mac-tree"] = stable_observation_digest(mac.observe_tree())
+        observed["mac-structure"] = stable_observation_digest(
+            mac_target.inspect_structure(scope="target")
+        )
+        mac.quit()
+
+    assert observed == {
+        "android-inspect": "cb472f0541469b24723d9b5a256c03a87784e7811860fbc4d235cf8e98ac9572",
+        "android-tree": "ac86a995ef02a192b0c56805b5c1b5c6696c000f3f8cd64fe00ed2a884a9c469",
+        "android-structure": "23816a09c0037590ebdaf5e2e4ba7b9fbb361eada46c7500509564dc7e092ad1",
+        "mac-inspect": "6766d22c4d467419bd6413eb60ce53e0bda798f62598216f418eb87be0c81466",
+        "mac-tree": "8b896856a7116a9632db40a5f73c6129bbb2bc8dff1a8e62359fa63fbf05746b",
+        "mac-structure": "d186b201b4efcdda61995d6489314141c9094954dd398a68adf1bfeb64ece6c6",
+    }

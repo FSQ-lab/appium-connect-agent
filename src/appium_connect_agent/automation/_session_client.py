@@ -122,6 +122,10 @@ class _LifecycleConnection(AppiumConnection):
         with self._record_lock:
             return tuple(self._cleanup_errors)
 
+    def _replace_cleanup_errors(self, errors: tuple[BaseException, ...]) -> None:
+        with self._record_lock:
+            self._cleanup_errors = list(errors)
+
     @property
     def locally_closed(self) -> bool:
         with self._record_lock:
