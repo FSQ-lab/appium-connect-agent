@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -15,7 +16,7 @@ from typing import Any, ClassVar, cast
 
 import anyio
 import pytest
-from mcp import Client
+from mcp import Client, StdioServerParameters
 from mcp.types import TextContent
 
 import appium_connect_agent.automation._session as session_module
@@ -780,33 +781,12 @@ def test_real_ios_protocol_exercises_complete_integration_matrix(
 
 def test_real_ios_representative_flow_is_equivalent_across_three_shells(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    from appium_connect_agent.integrations import _application
-
     _patch_xcuitest(monkeypatch)
-    ios_devices = (
-        IosDeviceInfo(
-            "IOS-SHELL-DEVICE",
-            "Shell iPhone",
-            "device",
-            "18.1",
-            "connected",
-            "usb",
-        ),
-    )
-    monkeypatch.setattr(
-        _application, "list_ios_devices", lambda *, control: ios_devices
-    )
 
     def normalize(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized = [_payload_without_random(payload) for payload in payloads]
-        capability_data = normalized[0]["data"]
-        capability_data.pop("integration_form")
-        capability_data.pop("transport")
-        capability_data["protocol_target"] = None
-        capability_data["tools"] = [
-            name.replace(".", "_") for name in capability_data["tools"]
-        ]
         for payload in normalized:
             data = payload.get("data")
             if isinstance(data, dict) and "ownership" in data:
@@ -814,18 +794,26 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
         return normalized
 
     with _IntegrationIosProtocolService() as service:
+        config = tmp_path / "config.toml"
+        config.write_text(
+            f'[runtime]\nserver_url = "{service.url}"\n', encoding="utf-8"
+        )
+        stdio_parameters = StdioServerParameters(
+            command=os.fspath(
+                Path(sys.executable).with_name("appium-connect-agent-mcp")
+            ),
+            args=["--config", str(config)],
+        )
+        derived_data = (
+            Path("/private/tmp")
+            / f"appium-connect-agent-{os.getuid()}"
+            / "wda-derived-data"
+            / "port-8100"
+        )
 
         async def mcp_flow() -> list[dict[str, Any]]:
-            application = _real_application(service, "mcp")
             payloads: list[dict[str, Any]] = []
-            async with Client(create_server(application)) as client:
-                for name, request in (
-                    ("appium.capabilities.get", _request()),
-                    ("appium.devices.list", _request(platform="ios")),
-                ):
-                    result = await client.call_tool(name, {"request": request})
-                    assert result.is_error is False
-                    payloads.append(cast(dict[str, Any], result.structured_content))
+            async with Client(stdio_parameters) as client:
                 opened = await client.call_tool(
                     "appium.session.open",
                     {
@@ -878,10 +866,6 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
                 )
                 return cast(dict[str, Any], json.loads(encoded))
 
-            payloads.append(await invoke("appium_capabilities_get", _request()))
-            payloads.append(
-                await invoke("appium_devices_list", _request(platform="ios"))
-            )
             opened = await invoke(
                 "appium_session_open",
                 _request(
@@ -956,10 +940,7 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
                     with anyio.fail_after(2):
                         while not endpoint.exists():
                             await anyio.sleep(0.01)
-                    payloads = [
-                        await invoke("appium_capabilities_get", _request()),
-                        await invoke("appium_devices_list", _request(platform="ios")),
-                    ]
+                    payloads: list[dict[str, Any]] = []
                     opened = await invoke(
                         "appium_session_open",
                         _request(
@@ -1001,7 +982,10 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
                 assert outcomes == [0]
                 return payloads
 
-        mcp_payloads = anyio.run(mcp_flow)
+        try:
+            mcp_payloads = anyio.run(mcp_flow)
+        finally:
+            shutil.rmtree(derived_data, ignore_errors=True)
         toolcall_payloads = anyio.run(toolcall_flow)
         cli_payloads = anyio.run(cli_flow)
         assert (
@@ -1015,6 +999,10 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
             name
             for name, _payload in map(script_and_payload, service.of_kind("action"))
         ].count("mobile: pressButton") == 3
+        assert [
+            name
+            for name, _payload in map(script_and_payload, service.of_kind("scroll"))
+        ].count("mobile: scroll") == 3
 
 
 class _FailureTarget:
@@ -1062,9 +1050,10 @@ def _failure_application(
     failures: list[BaseException],
     *,
     session_open: bool,
+    server_url: str,
 ) -> Application:
     application = Application(
-        LocalSettings(server_url="http://127.0.0.1:4723"),
+        LocalSettings(server_url=server_url),
         None,
         surface=cast(Any, surface),
     )
@@ -1089,7 +1078,7 @@ def _known_private_failure(canary: str) -> CommandError:
         try:
             raise CommandError(
                 "command_failed",
-                "op-private-failure",
+                "op-private",
                 "response_received",
                 cleanup_errors=(RuntimeError(f"cleanup {canary}"),),
             ) from cause
@@ -1188,6 +1177,7 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
+    request: pytest.FixtureRequest,
 ) -> None:
     from appium_connect_agent.integrations import _application
 
@@ -1195,9 +1185,24 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
     spec = TOOL_CATALOG.by_tool_name(tool_name)
     session_open = tool_name == "appium_session_open"
     failures: list[BaseException] = [RuntimeError("unset")]
+    called = [0]
+    protocol_service = IosActionProtocolService() if session_open else None
+    if protocol_service is not None:
+        protocol_service.__enter__()
+
+        def close_protocol_service() -> None:
+            protocol_service.__exit__(None, None, None)
+
+        request.addfinalizer(close_protocol_service)
+    server_url = (
+        protocol_service.url
+        if protocol_service is not None
+        else "http://127.0.0.1:4723"
+    )
 
     def create(*args: object, **kwargs: object) -> object:
         del args, kwargs
+        called[0] += 1
         raise failures[0]
 
     monkeypatch.setattr(_application, "create_xcuitest_session", create)
@@ -1213,7 +1218,11 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
     async def mcp_call(arguments: dict[str, JsonValue], failure: BaseException) -> str:
         failures[0] = failure
         application = _failure_application(
-            "mcp", platform, failures, session_open=session_open
+            "mcp",
+            platform,
+            failures,
+            session_open=session_open,
+            server_url=server_url,
         )
         async with Client(create_server(application)) as client:
             result = await client.call_tool(spec.mcp_name, {"request": arguments})
@@ -1224,7 +1233,11 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
 
     async def toolcall_invalid() -> str:
         application = _failure_application(
-            "toolcall", platform, failures, session_open=session_open
+            "toolcall",
+            platform,
+            failures,
+            session_open=session_open,
+            server_url=server_url,
         )
         binding = {item.name: item for item in build_tool_bindings(application)}[
             tool_name
@@ -1241,7 +1254,11 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
     ) -> str:
         failures[0] = failure
         application = _failure_application(
-            "toolcall", platform, failures, session_open=session_open
+            "toolcall",
+            platform,
+            failures,
+            session_open=session_open,
+            server_url=server_url,
         )
         binding = {item.name: item for item in build_tool_bindings(application)}[
             tool_name
@@ -1264,7 +1281,11 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
             def factory(*args: object, **kwargs: object) -> Application:
                 del args, kwargs
                 return _failure_application(
-                    "cli", platform, failures, session_open=session_open
+                    "cli",
+                    platform,
+                    failures,
+                    session_open=session_open,
+                    server_url=server_url,
                 )
 
             async def daemon() -> None:
@@ -1305,22 +1326,29 @@ def test_private_requests_redact_validation_known_and_unknown_failures_on_all_sh
         ]
         == "invalid_argument"
     )
+    if session_open:
+        assert called[0] == 0
 
-    known_code = "service_unavailable" if session_open else "command_failed"
-    unknown_code = "service_unavailable" if session_open else "internal_error"
     for failure, expected_code in (
-        (_known_private_failure(secrets[0]), known_code),
-        (RuntimeError(f"boom {secrets[0]}"), unknown_code),
+        (_known_private_failure(secrets[0]), "command_failed"),
+        (RuntimeError(f"boom {secrets[0]}"), "internal_error"),
     ):
+        calls_before = called[0]
         mcp_text = anyio.run(mcp_call, valid, failure)
         if expected_code != "internal_error":
             assert (
                 json.loads(mcp_text.split("ACA_ERROR ", 1)[1])["code"] == expected_code
             )
+        if session_open:
+            assert called[0] == calls_before + 1
         toolcall_payload = anyio.run(toolcall_call, valid, failure)
         assert json.loads(toolcall_payload)["code"] == expected_code
+        if session_open:
+            assert called[0] == calls_before + 2
         cli_payload = anyio.run(cli_call, valid, failure)
         assert json.loads(cli_payload)["code"] == expected_code
+        if session_open:
+            assert called[0] == calls_before + 3
     captured = capsys.readouterr()
     assert_private(caplog.text, captured.out, captured.err)
 
