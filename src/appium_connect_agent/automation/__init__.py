@@ -23,6 +23,7 @@ from ._models import ElementAttribute as ElementAttribute
 from ._models import ElementBy as ElementBy
 from ._models import ElementInspection as ElementInspection
 from ._models import ExecutionUnknownError as ExecutionUnknownError
+from ._models import ImageRegion as ImageRegion
 from ._models import InvalidRequestError as InvalidRequestError
 from ._models import InvalidSessionStateError as InvalidSessionStateError
 from ._models import LocatorValue as LocatorValue
@@ -30,6 +31,7 @@ from ._models import ObservationScope as ObservationScope
 from ._models import ObservedValue as ObservedValue
 from ._models import OperationCancelledError as OperationCancelledError
 from ._models import OperationTimeoutError as OperationTimeoutError
+from ._models import Point as Point
 from ._models import RawNode as RawNode
 from ._models import RawStructureObservation as RawStructureObservation
 from ._models import ResourceStateError as ResourceStateError
@@ -43,6 +45,13 @@ from ._models import ValueState as ValueState
 from ._models import Viewport as Viewport
 from ._models import ViewportRelation as ViewportRelation
 from ._models import Visibility as Visibility
+from ._models import VisualImageMatch as VisualImageMatch
+from ._models import VisualInspection as VisualInspection
+from ._models import VisualMode as VisualMode
+from ._models import VisualProvider as VisualProvider
+from ._models import VisualProviderRequest as VisualProviderRequest
+from ._models import VisualProviderResponse as VisualProviderResponse
+from ._models import VisualTargetCandidate as VisualTargetCandidate
 from ._session import Session as Session
 from ._session import create_mac2_session as create_mac2_session
 from ._session import create_session as create_session

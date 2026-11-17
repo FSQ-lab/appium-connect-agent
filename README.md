@@ -453,6 +453,7 @@ session.device.swipe_between(
 - `take_screenshot` 发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的字节数不超过 32 MiB（`33,554,432` bytes），并顺序遍历校验全流 PNG chunk 二进制帧与每个 chunk 的 CRC32（唯一首块 13 字节正宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）。返回的 `bytes` 仅保留在调用方内存中，绝不落盘或写入日志、异常消息与默认证据。
 - `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。`display_size`、截图与两个动作均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
 
+- `inspect_with_ai(prompt, *, provider, mode="extract", region=None, max_candidates=5, control=None) -> VisualInspection` 在同一 Session gate 内顺序执行单帧 PNG 截图（拒绝 APNG `frame_not_single`，提取 `image_size` 与 `png_sha256`）、全图 `image-space` 的 `region` 边界核验、`locate` 模式下的平台权威 `pointer_size` 正整数等比缩放校验（失配时在调用 provider 前返回 `pointer_mapping_unavailable`）、宿主注入 `VisualProvider.inspect` 单次同步调用，以及 `VisualTargetCandidate(label, image_bounds, pointer_bounds, pointer_center, confidence)` 转换与 65,536-byte 规范 JSON 计量；绝不自动执行点击/滑动，亦不提供 `assert_with_ai`。
 ### 当前平台最小模块收口
 
 Automation当前限定收口固定为macOS宿主、单个明确Android Native目标、Appium3.7.0和UiAutomator2 8.7.0。不新增公共Interface、依赖、APK、专用App、永久runner、产品代码、测试或仓库工具。

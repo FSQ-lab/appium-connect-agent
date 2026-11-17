@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款，Device只读屏幕PNG截图与显式屏幕坐标单指触控见AIF-11条款。其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款，Device只读屏幕PNG截图与显式屏幕坐标单指触控见AIF-11条款，Android物理显示尺寸见AIF-12条款，统一视觉感知与定位基座见AIF-13条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、状态栏面板、应用生命周期、应用安装与卸载、Device 只读屏幕 PNG 截图与显式屏幕坐标单指触控契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
+只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、状态栏面板、应用生命周期、应用安装与卸载、Device 只读屏幕 PNG 截图与显式屏幕坐标单指触控、Android 物理显示尺寸及统一视觉感知与定位基座契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -680,6 +680,48 @@ Device.display_size(*, control: OperationControl | None = None) -> DisplaySize
 - 沿用一次 operation id/总预算、调用前取消与 timeout 零请求、final 成功事实优先、no-replay、官方错误净化及 `response_unknown -> uncertain` 资源保留。响应未知时不得回退 page source、PNG `IHDR`、ADB 或再次调用 deviceInfo。
 - 上游完整 device-info mapping 可能含 Android ID、厂商、型号、网络等字段；SDK 除 `realDisplaySize` 外不得日志化、缓存、返回、序列化或持久化任何字段。
 - 永久本地 HTTP 协议测试必须覆盖精确单请求/空 args、`1x1` 与 Java int 上界、冻结值、全组非法形状、额外字段隔离、Mac2 零请求拒绝、取消/超时/官方错误/unknown/no-replay/共享 gate；另须通过全仓无设备测试、静态质量、发行物隔离验证和 fresh independent full audit。当前 Issue 未授权真实设备，不能把无设备验证表述为端到端资格。
+
+## AIF-13 Unified Visual Perception And Grounding (`Device.inspect_with_ai`)
+
+本节定义 Issue #47、FeatureID `AIF-13` 的已确认契约增量；对应详细设计为 [AIF-13 详细设计](../../docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。未列出的既有契约不变。
+
+### Public Interface And Value Models
+
+由 `appium_connect_agent.automation` 公开导出以下不可变纯值类型与协议：
+
+- `VisualMode: TypeAlias = Literal["extract", "locate"]`
+- `Point(x: int, y: int)`
+- `ImageRegion(left: int, top: int, right: int, bottom: int)`：全图 `image-space` 半开整数区间 `[left, right) × [top, bottom)`。
+- `VisualImageMatch(label: str, image_bounds: Bounds, confidence: float | None = None)`：全图 `image-space` 候选框。
+- `VisualProviderRequest(mode: VisualMode, prompt: str, png_bytes: bytes, image_width: int, image_height: int, region: ImageRegion | None, max_candidates: int, remaining_timeout_seconds: float | None)`：`png_bytes` 为 `repr=False` 的完整原图单帧 PNG 字节流。
+- `VisualProviderResponse(summary: str, candidates: tuple[VisualImageMatch, ...] = ())`
+- `@runtime_checkable class VisualProvider(Protocol): def inspect(self, request: VisualProviderRequest) -> VisualProviderResponse: ...`
+- `VisualTargetCandidate(label: str, image_bounds: Bounds, pointer_bounds: Bounds, pointer_center: Point, confidence: float | None = None)`
+- `VisualInspection(operation_id: str, observed_at: datetime, platform: AutomationPlatform, mode: VisualMode, image_size: DisplaySize, pointer_size: DisplaySize | None, png_sha256: str, region: ImageRegion | None, summary: str, candidates: tuple[VisualTargetCandidate, ...], _json: bytes)`，公开 `to_json() -> bytes`。
+- 绑定方法签名：`Device.inspect_with_ai(prompt: str, *, provider: VisualProvider, mode: VisualMode = "extract", region: ImageRegion | None = None, max_candidates: int = 5, control: OperationControl | None = None) -> VisualInspection`。
+
+### Validation, Execution Order And Coordinate Mapping
+
+- 所有纯值校验发生在获取 Session `_operation_gate` 及任何外部 I/O 之前，失败统一抛 `InvalidRequestError("invalid_argument", operation_id, "not_sent")`：
+  1. `prompt`：`type(prompt) is str`、strip 后非空、`1 <= len(prompt) <= 16_384`、不含 NUL 且可 strict UTF-8 编码；
+  2. `provider`：非 `None` 且具备可调用 `inspect` 属性；
+  3. `mode`：`str` 且属于 `("extract", "locate")`；
+  4. `region`：`None` 或 `ImageRegion` 实例，四字段均为排除 `bool` 的实际 `int` 且 `0 <= left < right <= 2_147_483_647`、`0 <= top < bottom <= 2_147_483_647`；
+  5. `max_candidates`：排除 `bool` 的实际 `int` 且 `1 <= max_candidates <= 20`。
+- 若 `mode == "locate"` 且所属 Session 平台不是 `"android"`（如 `"macos"`），在获取 Session gate 与任何网络请求前抛 `InvalidRequestError("pointer_mapping_unavailable", operation_id, "not_sent")`。`mode == "extract"` 在 Android 与 Mac2 上均支持。
+- 进入 Session gate 后共享同一 `OperationControl` 总预算与取消检查点：
+  1. 执行一次 `Command.SCREENSHOT`，在单次 PNG chunk 遍历中完成 AIF-11 容器校验、提取 `IHDR` `image_size = DisplaySize(image_width, image_height)`、计算 64 字符小写 hex `png_sha256`，并拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG（`CommandError("frame_not_single", operation_id, "response_received")`）；记 `screenshot_captured`。
+  2. 若 `region is not None` 且 (`region.right > image_width` 或 `region.bottom > image_height`)，抛 `InvalidRequestError("invalid_argument", operation_id, "response_received")`，不调用 `display_size` 或 `provider`。
+  3. 若 `mode == "locate"`，顺序执行一次 `mobile: deviceInfo` 获取 `pointer_size = DisplaySize(pointer_width, pointer_height)` 并记 `display_size_read`；要求 `image_size` 与 `pointer_size` 满足正整数倍轴对齐等比例缩放（`image_width * k == pointer_width and image_height * k == pointer_height` 或反向正整数整除），否则在调用 `provider` 前 fail-closed 抛 `CommandError("pointer_mapping_unavailable", operation_id, "response_received")`。
+  4. 检查 checkpoint、计算当时 `remaining_timeout_seconds`（无 deadline 为 `None`），以完整未裁剪原图 `png_bytes` 调用一次 `provider.inspect(request)`。若 `provider.inspect` 抛出 `AutomationError` 直接传播；若调用期间/异常时取消或超时已触发，按取消优先抛 `OperationCancelledError` 或 `OperationTimeoutError`（`request_state="response_received"`，Session 保持 `active`）；若抛出其他普通 `Exception`，包装为 `CommandError("visual_provider_failed", operation_id, "response_received")`。
+  5. 校验返回为 `VisualProviderResponse`：`summary` 为实际 `str`、无 NUL、strict UTF-8 `<= 32_768` bytes；`candidates` 为 `tuple` 且 `len(candidates) <= max_candidates`。`mode == "extract"` 时必须 `candidates == ()`；`mode == "locate"` 时每项必须为 `VisualImageMatch`（`label` strip 后非空、`1..1_024` chars、无 NUL、strict UTF-8；`confidence` 为 `None` 或排除 `bool` 的有限数值 `0.0..1.0`；`image_bounds` 为 `Bounds`，四字段为排除 `bool` 的实际 `int`，`width >= 1, height >= 1`，完整落在 `0..image_width` × `0..image_height` 且在指定 `region` 时完整落在 `region` 内）。任何返回校验失败抛 `CommandError("invalid_visual_response", operation_id, "response_received")`。
+  6. `mode == "locate"` 时将每个 `image_bounds` 轴对齐映射到 `pointer_size`（`px0 = (x * pw) // iw`, `py0 = (y * ph) // ih`, `px1 = max(px0 + 1, ((x + w) * pw) // iw)`, `py1 = max(py0 + 1, ((y + h) * ph) // ih)`，`pointer_bounds = Bounds(px0, py0, px1 - px0, py1 - py0)`，`pointer_center = Point(px0 + (px1 - px0) // 2, py0 + (py1 - py0) // 2)`），记 `visual_inspected`。
+  7. 生成 `schema=1, kind="visual"` 规范 JSON 文档（不含 `png_bytes`，上限 65,536 UTF-8 bytes，超限抛 `CommandError("observation_too_large", operation_id, "response_received")`），记 `observation_built` 并返回不可变 `VisualInspection`。
+
+### Boundaries, Privacy And Verification
+
+- 本能力不提供 `assert_with_ai`，不自动执行点击/滑动，不缓存帧或重试。`png_bytes` 仅传给当前调用的 `provider.inspect`，不进入 `VisualInspection`、JSON、日志或异常文本。
+- 受控测试须覆盖 `extract`（Android/Mac2）、`locate`（1:1 与正整数倍缩放、Mac2 零请求拒绝、失配比例 `pointer_mapping_unavailable`）、`region` 边界与包含检查、APNG `frame_not_single`、`provider` 异常与非法响应、65,536/65,537 JSON 边界、取消/超时/unknown 隔离及共享 Session gate。
 
 ## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
 

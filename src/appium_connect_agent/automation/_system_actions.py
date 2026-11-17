@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import math
 import struct
 import time
@@ -370,6 +371,11 @@ _SCREENSHOT_DECODED_MIN_BYTES = 58
 _SCREENSHOT_DECODED_MAX_BYTES = 33_554_432
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_CHUNK_MAX_LEN = 2_147_483_647
+_APNG_CHUNKS = frozenset({b"acTL", b"fcTL", b"fdAT"})
+
+
+class _SingleFrameRequiredError(ValueError):
+    """Raised when a PNG contains APNG animation control or frame data chunks."""
 
 
 def _is_png_chunk_type(chunk_type: bytes) -> bool:
@@ -378,16 +384,24 @@ def _is_png_chunk_type(chunk_type: bytes) -> bool:
     )
 
 
-def _validate_png_container(data: bytes) -> None:
+def _parse_png_container(
+    data: bytes, *, reject_apng: bool = False, compute_sha256: bool = False
+) -> tuple[DisplaySize, str | None]:
     total = len(data)
     if not (
         _SCREENSHOT_DECODED_MIN_BYTES <= total <= _SCREENSHOT_DECODED_MAX_BYTES
     ) or not data.startswith(_PNG_SIGNATURE):
         raise ValueError("invalid PNG container header or size")
+    view = memoryview(data)
+    digest = hashlib.sha256() if compute_sha256 else None
+    if digest is not None:
+        digest.update(view[: len(_PNG_SIGNATURE)])
     offset = len(_PNG_SIGNATURE)
     chunk_index = 0
     idat_bytes = 0
     saw_iend = False
+    width = 0
+    height = 0
     while offset < total:
         if offset + 8 > total:
             raise ValueError("truncated PNG chunk header")
@@ -397,15 +411,19 @@ def _validate_png_container(data: bytes) -> None:
         chunk_type = data[offset + 4 : offset + 8]
         if not _is_png_chunk_type(chunk_type):
             raise ValueError("invalid PNG chunk type")
+        if reject_apng and chunk_type in _APNG_CHUNKS:
+            raise _SingleFrameRequiredError("APNG chunks are not permitted")
         data_start = offset + 8
         data_end = data_start + chunk_len
         crc_end = data_end + 4
         if crc_end > total:
             raise ValueError("truncated PNG chunk body")
         (expected_crc,) = struct.unpack_from(">I", data, data_end)
-        actual_crc = zlib.crc32(memoryview(data)[offset + 4 : data_end]) & 0xFFFFFFFF
+        actual_crc = zlib.crc32(view[offset + 4 : data_end]) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             raise ValueError("PNG chunk CRC mismatch")
+        if digest is not None:
+            digest.update(view[offset:crc_end])
         if chunk_index == 0:
             if chunk_type != b"IHDR" or chunk_len != 13:
                 raise ValueError("PNG must start with 13-byte IHDR")
@@ -427,9 +445,17 @@ def _validate_png_container(data: bytes) -> None:
         chunk_index += 1
     if not saw_iend:
         raise ValueError("missing PNG IEND chunk")
+    return (
+        DisplaySize(width=width, height=height),
+        digest.hexdigest() if digest is not None else None,
+    )
 
 
-def _decode_screenshot_response(response: object) -> bytes:
+def _validate_png_container(data: bytes) -> None:
+    _parse_png_container(data)
+
+
+def _decode_screenshot_base64(response: object) -> bytes:
     if not isinstance(response, Mapping) or "value" not in response:
         raise ValueError("screenshot response missing value")
     raw = response["value"]
@@ -447,9 +473,13 @@ def _decode_screenshot_response(response: object) -> bytes:
     ):
         raise ValueError("invalid screenshot base64 length")
     try:
-        decoded = base64.b64decode(compact, validate=True)
+        return base64.b64decode(compact, validate=True)
     except binascii.Error as cause:
         raise ValueError("invalid screenshot base64 content") from cause
+
+
+def _decode_screenshot_response(response: object) -> bytes:
+    decoded = _decode_screenshot_base64(response)
     _validate_png_container(decoded)
     return decoded
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, runtime_checkable
 
 if TYPE_CHECKING:
     from ._session import Session
@@ -109,6 +109,80 @@ class DisplaySize:
 
     width: int
     height: int
+
+
+VisualMode: TypeAlias = Literal["extract", "locate"]
+
+
+@dataclass(frozen=True, slots=True)
+class Point:
+    x: int
+    y: int
+
+
+@dataclass(frozen=True, slots=True)
+class ImageRegion:
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+
+@dataclass(frozen=True, slots=True)
+class VisualImageMatch:
+    label: str
+    image_bounds: Bounds
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VisualProviderRequest:
+    mode: VisualMode
+    prompt: str
+    png_bytes: bytes = field(repr=False)
+    image_width: int
+    image_height: int
+    region: ImageRegion | None
+    max_candidates: int
+    remaining_timeout_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class VisualProviderResponse:
+    summary: str
+    candidates: tuple[VisualImageMatch, ...] = ()
+
+
+@runtime_checkable
+class VisualProvider(Protocol):
+    def inspect(self, request: VisualProviderRequest) -> VisualProviderResponse: ...
+
+
+@dataclass(frozen=True, slots=True)
+class VisualTargetCandidate:
+    label: str
+    image_bounds: Bounds
+    pointer_bounds: Bounds
+    pointer_center: Point
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VisualInspection:
+    operation_id: str
+    observed_at: datetime
+    platform: AutomationPlatform
+    mode: VisualMode
+    image_size: DisplaySize
+    pointer_size: DisplaySize | None
+    png_sha256: str
+    region: ImageRegion | None
+    summary: str
+    candidates: tuple[VisualTargetCandidate, ...]
+    _json: bytes = field(repr=False, compare=False)
+
+    def to_json(self) -> bytes:
+        return self._json
 
 
 ObservationValue: TypeAlias = str | int | float | bool | Bounds | None

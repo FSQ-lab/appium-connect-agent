@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询和只读屏幕 PNG 截图与显式屏幕坐标单指触控。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读屏幕 PNG 截图与显式屏幕坐标单指触控，以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -415,6 +415,15 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 - 成功记唯一完成步骤 `display_size_read`。方法沿用一次 operation id/总预算、取消优先、最终响应成功事实优先、no-replay 与 `response_unknown -> uncertain` 资源保留。Mac2 在网络前 `unsupported_operation/not_sent`；不声称 iOS/XCUITest 支持。
 - 上游 device-info 可能含设备标识、网络等额外字段；SDK 只读取尺寸，不日志化、缓存、返回或持久化任何其他字段。`tap_at` / `swipe_between` 不隐式调用本入口、不 clamp 或缩放，消费方负责显式转换与调用间时效。
 - 复用锁定 Appium/UiAutomator2/Python Client/Selenium 与 CPython 标准库；`Runtime`、`Contracts`、`Configuration`、`Integrations`、产品/开发依赖及 lockfile 均 no-delta。
+
+## Automation Unified Visual Perception And Grounding（AIF-13）
+
+本节定义 Issue #47 经用户 SPEC Gate 确认的 AIF-13 契约增量；依据为[已确认 AIF-13 设计](docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- 架构遵循“视觉识别是统一的，截图与视觉分析后的执行是分平台的”：Automation 在绑定 `Device` 上公开 `Device.inspect_with_ai(prompt: str, *, provider: VisualProvider, mode: VisualMode = "extract", region: ImageRegion | None = None, max_candidates: int = 5, control: OperationControl | None = None) -> VisualInspection`，并由 `appium_connect_agent.automation` 导出 `VisualMode`、`Point`、`ImageRegion`、`VisualImageMatch`、`VisualProviderRequest`、`VisualProviderResponse`、`VisualProvider`、`VisualTargetCandidate` 与 `VisualInspection`。不提供 `assert_with_ai`、同名别名或业务真假裁决。
+- SDK 不持有任何模型 API key、HTTP 模型客户端或业务 prompt 策略，仅在同一 Session 非阻塞 gate 与单次 `OperationControl` 总预算内顺序执行：单帧 PNG 截图（拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG `frame_not_single`，提取 `IHDR` `image_size` 与 64 字符小写 `png_sha256`）→ 全图 `image-space` 的 `region` 边界核验 → `locate` 模式下获取平台权威 `pointer_size`（Android 走 `mobile: deviceInfo`，要求正整数倍轴对齐等比例缩放，失配则在调用 provider 前 `CommandError/pointer_mapping_unavailable/response_received`；Mac2 对 `locate` 在 gate/网络前 `InvalidRequestError/pointer_mapping_unavailable/not_sent`）→ 调用宿主注入的同步 `provider.inspect(request)` 一次（传入完整未裁剪原图 `png_bytes`）→ 严格校验 `VisualProviderResponse`（`extract` 必须 `candidates == ()`；`locate` 将每个全图 `image-space` 的 `VisualImageMatch.image_bounds` 映射为非 `None` 的 `pointer_bounds: Bounds` 与 `pointer_center: Point`）→ 65,536-byte 规范 JSON 计量并返回不可变 `VisualInspection`。
+- 方法绝不自动执行点击或滑动；调用方显式将 `pointer_center` / `pointer_bounds` 传给 `Device.tap_at` / `Device.swipe_between` 等平台原生动作方法。`png_bytes` 不进入 `VisualInspection`、规范 JSON、日志或异常文本。
+- 复用锁定 Appium/UiAutomator2/Mac2/Python Client/Selenium 与 CPython 3.11 标准库（`hashlib`、`struct`、`zlib`）；`Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 22 工具目录与 schema）、产品/开发依赖及 lockfile 均 no-delta。
 
 ## Runtime Mac2 Target Static Diagnostics And Managed Cleanup Query（RT-MAC-01）
 

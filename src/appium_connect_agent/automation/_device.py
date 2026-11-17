@@ -27,7 +27,14 @@ from ._macos_actions import (
     _validate_number,
 )
 from ._macos_keyboard import MacKeyStroke
-from ._models import DisplaySize, InvalidRequestError
+from ._models import (
+    DisplaySize,
+    ImageRegion,
+    InvalidRequestError,
+    VisualInspection,
+    VisualMode,
+    VisualProvider,
+)
 from ._system_actions import (
     _activate_app,
     _alert,
@@ -52,6 +59,7 @@ from ._system_actions import (
     _tap_at,
     _terminate_app,
 )
+from ._visual import _inspect_with_ai, _validate_visual_inputs
 
 if TYPE_CHECKING:
     from ._session import Session
@@ -390,6 +398,46 @@ class Device:
         """Capture one bounded validated PNG screenshot in memory."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
+
+    def inspect_with_ai(
+        self,
+        prompt: str,
+        *,
+        provider: VisualProvider,
+        mode: VisualMode = "extract",
+        region: ImageRegion | None = None,
+        max_candidates: int = 5,
+        control: OperationControl | None = None,
+    ) -> VisualInspection:
+        """Capture one single-frame PNG and run host-provided visual perception."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        (
+            valid_prompt,
+            valid_provider,
+            valid_mode,
+            valid_region,
+            valid_max_candidates,
+        ) = _validate_visual_inputs(
+            prompt, provider, mode, region, max_candidates, operation_id
+        )
+        if valid_mode == "locate" and owner.platform != "android":
+            raise InvalidRequestError(
+                "pointer_mapping_unavailable", operation_id, "not_sent"
+            )
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _inspect_with_ai(
+                driver,
+                gateway,
+                prompt=valid_prompt,
+                provider=valid_provider,
+                mode=valid_mode,
+                region=valid_region,
+                max_candidates=valid_max_candidates,
+            ),
+        )
 
     def tap_at(
         self, x: int, y: int, *, control: OperationControl | None = None
