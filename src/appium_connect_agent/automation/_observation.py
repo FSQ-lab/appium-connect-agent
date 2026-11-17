@@ -349,7 +349,7 @@ def _read_attribute(
                 else AttributeObservation(name, "value", _parse_boolean(raw, gateway))
             )
         elif name == "window_id":
-            if raw is None:
+            if raw in (None, "null"):
                 result = AttributeObservation(name, "missing")
             elif type(raw) is int:
                 result = AttributeObservation(name, "value", raw)
@@ -363,7 +363,12 @@ def _read_attribute(
         elif raw is None:
             result = AttributeObservation(name, "missing")
         elif isinstance(raw, str):
-            result = AttributeObservation(name, "value", raw)
+            if (name in ("id", "desc") and raw in ("", "null")) or (
+                name in ("package", "type") and raw == "null"
+            ):
+                result = AttributeObservation(name, "missing")
+            else:
+                result = AttributeObservation(name, "value", raw)
         else:
             raise _error(CommandError, "source_invalid", gateway)
     cache[name] = result
@@ -762,6 +767,8 @@ def _xml_value(
         except ValueError as cause:
             raise _error(CommandError, "source_invalid", gateway) from cause
     if name == "id":
+        if raw in ("", "null"):
+            return ObservedValue("missing")
         local = _standard_resource_id(raw, node.attribute("package"))
         if local is not None:
             raw = local
