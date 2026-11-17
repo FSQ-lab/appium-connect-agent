@@ -111,6 +111,28 @@ class DisplaySize:
     height: int
 
 
+DeviceWeekday: TypeAlias = Literal[
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceTime:
+    """Read-only snapshot of the device's local wall clock and timezone offset."""
+
+    iso_local: str
+    date: str
+    time: str
+    weekday: DeviceWeekday
+    utc_offset: str
+
+
 VisualMode: TypeAlias = Literal["extract", "locate"]
 
 

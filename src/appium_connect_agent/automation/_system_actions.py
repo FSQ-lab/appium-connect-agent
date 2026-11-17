@@ -6,10 +6,12 @@ import base64
 import binascii
 import hashlib
 import math
+import re
 import struct
 import time
 import zlib
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from appium.webdriver.webdriver import WebDriver
@@ -18,7 +20,13 @@ from selenium.webdriver.common.actions.mouse_button import MouseButton
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 from selenium.webdriver.remote.command import Command
 
-from ._models import DisplaySize, InvalidRequestError, OperationTimeoutError
+from ._models import (
+    DeviceTime,
+    DeviceWeekday,
+    DisplaySize,
+    InvalidRequestError,
+    OperationTimeoutError,
+)
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
@@ -65,6 +73,63 @@ def _display_size(driver: WebDriver, gateway: _SessionOperationGateway) -> Displ
         lambda: _parse_display_size(driver.execute_script("mobile: deviceInfo"))
     )
     gateway.complete("display_size_read")
+    return result
+
+
+_DEVICE_TIME_PATTERN = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$"
+)
+_WEEKDAYS: tuple[DeviceWeekday, ...] = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _parse_device_time(response: object) -> DeviceTime:
+    if type(response) is not str or len(response) > 64 or not response.isascii():
+        raise ValueError("deviceTime response must be a bounded ASCII string")
+    match = _DEVICE_TIME_PATTERN.fullmatch(response)
+    if match is None:
+        raise ValueError(
+            "deviceTime response must match canonical ISO-8601 local timestamp"
+        )
+    date_part, time_part, raw_offset = match.groups()
+    if raw_offset == "Z":
+        utc_offset = "+00:00"
+    else:
+        offset_hour = int(raw_offset[1:3])
+        offset_minute = int(raw_offset[4:6])
+        if offset_hour > 23 or offset_minute > 59:
+            raise ValueError("deviceTime response contains invalid UTC offset")
+        utc_offset = raw_offset
+    iso_local = f"{date_part}T{time_part}{utc_offset}"
+    try:
+        parsed = datetime.fromisoformat(iso_local)
+    except ValueError as cause:
+        raise ValueError(
+            "deviceTime response contains invalid calendar date"
+        ) from cause
+    if parsed.tzinfo is None:
+        raise ValueError("deviceTime response missing timezone offset")
+    return DeviceTime(
+        iso_local=iso_local,
+        date=date_part,
+        time=time_part,
+        weekday=_WEEKDAYS[parsed.weekday()],
+        utc_offset=utc_offset,
+    )
+
+
+def _device_time(driver: WebDriver, gateway: _SessionOperationGateway) -> DeviceTime:
+    result = gateway.final_action(
+        lambda: _parse_device_time(driver.execute_script("mobile: getDeviceTime"))
+    )
+    gateway.complete("device_time_read")
     return result
 
 

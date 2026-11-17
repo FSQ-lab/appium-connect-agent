@@ -542,7 +542,6 @@ class _SessionOperationGateway:
     def _preflight_failure(
         self,
         cause: BaseException,
-        condition_deadline: float | None,
         *,
         cancelled: bool,
     ) -> Never:
@@ -551,10 +550,6 @@ class _SessionOperationGateway:
             error = self.failure(
                 OperationCancelledError, "operation_cancelled", "not_sent"
             )
-        elif self._deadline is not None and time.monotonic() >= self._deadline:
-            error = self.failure(OperationTimeoutError, "operation_timeout", "not_sent")
-        elif condition_deadline is not None:
-            error = self.failure(TargetError, "condition_timeout", "not_sent")
         else:
             error = self.failure(OperationTimeoutError, "operation_timeout", "not_sent")
         raise error from cause
@@ -598,9 +593,9 @@ class _SessionOperationGateway:
         try:
             result = action()
         except _RequestCancelled as cause:
-            self._preflight_failure(cause, condition_deadline, cancelled=True)
+            self._preflight_failure(cause, cancelled=True)
         except _RequestTimedOut as cause:
-            self._preflight_failure(cause, condition_deadline, cancelled=False)
+            self._preflight_failure(cause, cancelled=False)
         except Exception as cause:
             if client.response_received:
                 if pre_action and isinstance(cause, StaleElementReferenceException):
@@ -654,13 +649,10 @@ class _SessionOperationGateway:
         pre_action: bool = True,
     ) -> _Result:
         self.wait_checkpoint(condition_deadline)
-        request_deadline = condition_deadline
-        if self._deadline is not None:
-            request_deadline = min(request_deadline, self._deadline)
         return self._request(
             action,
             None,
-            request_deadline=request_deadline,
+            request_deadline=self._deadline,
             condition_deadline=condition_deadline,
             cleanup=False,
             pre_action=pre_action,

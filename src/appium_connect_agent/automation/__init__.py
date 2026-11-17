@@ -18,6 +18,8 @@ from ._models import Bounds as Bounds
 from ._models import CommandError as CommandError
 from ._models import Coverage as Coverage
 from ._models import DeviceInfo as DeviceInfo
+from ._models import DeviceTime as DeviceTime
+from ._models import DeviceWeekday as DeviceWeekday
 from ._models import DisplaySize as DisplaySize
 from ._models import ElementAttribute as ElementAttribute
 from ._models import ElementBy as ElementBy

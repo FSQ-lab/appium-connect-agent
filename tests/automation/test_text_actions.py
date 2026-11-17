@@ -575,7 +575,7 @@ def test_condition_deadline_after_complete_response_is_response_received(
 
 
 @pytest.mark.parametrize("phase", ["header", "body"])
-def test_condition_deadline_in_flight_is_unknown_and_closes_local_client(
+def test_condition_deadline_in_flight_uses_operation_budget_and_keeps_session_active(
     service: ActionProtocolService,
     phase: str,
 ) -> None:
@@ -586,16 +586,50 @@ def test_condition_deadline_in_flight_is_unknown_and_closes_local_client(
     )
     service.queue("find", plan)
     with connected(service) as connection:
-        session = session_for(service, connection, f"condition-unknown-{phase}")
+        session = session_for(service, connection, f"condition-active-{phase}")
         with pytest.raises(TargetError) as caught:
             session.element("id", "target").replace_element_value(
                 "value",
                 wait_timeout_seconds=0.05,
+                control=OperationControl(timeout_seconds=1.0),
             )
         assert_error(
             caught.value,
             TargetError,
             "condition_timeout",
+            "response_received",
+            steps=(),
+        )
+        assert session.session_info().state == "active"
+        assert service.of_kind("replace") == []
+        session.element("id", "target").clear()
+        assert len(service.of_kind("clear")) == 1
+        session.quit()
+
+
+@pytest.mark.parametrize("phase", ["header", "body"])
+def test_operation_deadline_in_flight_during_wait_is_unknown_and_closes_local_client(
+    service: ActionProtocolService,
+    phase: str,
+) -> None:
+    plan = (
+        ResponsePlan(header_delay_seconds=0.2)
+        if phase == "header"
+        else ResponsePlan(body_delay_seconds=0.2)
+    )
+    service.queue("find", plan)
+    with connected(service) as connection:
+        session = session_for(service, connection, f"operation-unknown-{phase}")
+        with pytest.raises(OperationTimeoutError) as caught:
+            session.element("id", "target").replace_element_value(
+                "value",
+                wait_timeout_seconds=1.0,
+                control=OperationControl(timeout_seconds=0.05),
+            )
+        assert_error(
+            caught.value,
+            OperationTimeoutError,
+            "operation_timeout",
             "response_unknown",
             steps=(),
         )

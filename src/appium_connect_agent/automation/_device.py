@@ -28,6 +28,7 @@ from ._macos_actions import (
 )
 from ._macos_keyboard import MacKeyStroke
 from ._models import (
+    DeviceTime,
     DisplaySize,
     ImageRegion,
     InvalidRequestError,
@@ -41,6 +42,7 @@ from ._system_actions import (
     _back,
     _clipboard_content,
     _coordinate,
+    _device_time,
     _display_size,
     _duration_ms,
     _get_clipboard_text,
@@ -393,6 +395,12 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
         return owner._run_operation(operation_id, control, deadline, _display_size)
+
+    def device_time(self, *, control: OperationControl | None = None) -> DeviceTime:
+        """Return a read-only snapshot of the device's local wall clock and offset."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
+        return owner._run_operation(operation_id, control, deadline, _device_time)
 
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""

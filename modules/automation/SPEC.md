@@ -4,7 +4,7 @@
 
 本模块维护 Session、设备操作与观测相关职责的边界。操作与观测当前属于同一顶层逻辑模块，避免重复拥有 Session 和平台能力概念。
 
-当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款，Device只读屏幕PNG截图与显式屏幕坐标单指触控见AIF-11条款，Android物理显示尺寸见AIF-12条款，统一视觉感知与定位基座见AIF-13条款。其他平台差异仍未确认。
+当前确认 AIF-01 只读 Android ADB 设备发现、AIF-02 明确 Session 生命周期及 managed Runtime usage lease 接缝、AIF-03 Android Native 结构观测与 Element 接缝、AIF-04 Element 点击动作、AIF-05 Element 文本输入/清空/替换及 AIF-06 Element 手势与受限滚动查找；Element/Device后续公开归属及系统能力见AIF-ED/07/08条款，应用生命周期见AIF-09条款，应用安装与卸载见AIF-10条款，Device只读屏幕PNG截图与显式屏幕坐标单指触控见AIF-11条款，Android物理显示尺寸见AIF-12条款，统一视觉感知与定位基座见AIF-13条款，条件等待传输超时解耦与只读设备本地时钟见AIF-14条款。其他平台差异仍未确认。
 
 ## Responsibilities
 
@@ -23,7 +23,7 @@
 
 ## Current Status
 
-只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、状态栏面板、应用生命周期、应用安装与卸载、Device 只读屏幕 PNG 截图与显式屏幕坐标单指触控、Android 物理显示尺寸及统一视觉感知与定位基座契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
+只读设备发现、明确 Session 生命周期及 managed Runtime usage lease、结构观测、Element 点击/文本/手势、Device 系统动作及 Element IME、状态栏面板、应用生命周期、应用安装与卸载、Device 只读屏幕 PNG 截图与显式屏幕坐标单指触控、Android 物理显示尺寸、统一视觉感知与定位基座及条件等待传输超时解耦与只读设备本地时钟契约已确认；实际实现与验收状态以交付证据为准。当前平台范围明确不提供应用清数据Interface；`clear_app`不是待交付能力或当前模块限定Done义务，任何卸载结果均无数据删除保证。
 
 ## AIF-01 Read-Only Device Discovery
 
@@ -213,7 +213,7 @@
 
 ### Deadlines, Errors And Lifecycle
 
-- 目标 deadline 与 OperationControl 总 deadline 分开。wait 请求使用两者较早值；请求/睡眠间 condition 到期为 `condition_timeout/not_sent`，完整 read 响应后的 post-check 到期为 `condition_timeout/response_received`，在途无完整终态为 `condition_timeout/response_unknown` 并使 Session uncertain。
+- 目标 deadline（`condition_deadline`）与 `OperationControl` 总 deadline（`operation_deadline`）分开：`condition_deadline` 仅门控是否允许发起下一轮/下一个 `wait_request` 只读请求（请求/睡眠间到期为 `condition_timeout/not_sent`）以及完整只读响应后的 post-check（到期为 `condition_timeout/response_received`，Session 保持 `active`）；一旦发起 `wait_request`，其单次 HTTP 传输 timeout 使用 `operation_deadline`（`control=None` 沿锁定客户端默认），且在显式 `OperationControl` 下要求发送前剩余总预算 `>= 0.005` 秒（5ms 安全下界，不足则在发送前零请求拒绝，不因 `condition_deadline` 末尾毫秒级剩余时间截断正常只读 HTTP 请求）。在途请求因断连或 `operation_deadline` 耗尽无完整终态时仍为 `response_unknown` 并使 Session `uncertain`。
 - 发送前同时看到 cancellation/deadline 时 cancellation 优先；等待期总预算优先于 condition timeout。条件满足后 condition deadline 不再限制动作响应，动作只受总预算；control=None 沿锁定客户端默认响应处理。
 - long 动作发送前要求 `duration_ms / 1000.0 <` 总剩余预算；相等或更大为 `operation_timeout/not_sent`，不缩短 duration。该检查不构成硬实时完成保证。
 - 合法动作成功事实优先于随后观察到的取消/deadline，写 `action_completed` 并返回 None。有效动作错误为 `command_failed/response_received`，Session 可保持 active但不保证无副作用；无终态为 execution_unknown 或可证明的 cancel/timeout，`request_state=response_unknown`，Session uncertain、本地 client 关闭、占用保留且不重放。
@@ -263,7 +263,7 @@
 
 ### Deadlines, Errors And Lifecycle
 
-- 目标deadline与OperationControl总deadline分开；wait请求使用两者较早值。请求/睡眠间condition到期为 `condition_timeout/not_sent`，完整read响应后的post-check到期为 `condition_timeout/response_received`，在途无完整终态为 `condition_timeout/response_unknown` 并使Session uncertain。
+- 目标deadline（`condition_deadline`）与OperationControl总deadline（`operation_deadline`）分开：`condition_deadline` 仅门控是否允许发起下一轮/下一个 `wait_request` 只读请求（请求/睡眠间到期为 `condition_timeout/not_sent`）以及完整只读响应后的post-check（到期为 `condition_timeout/response_received`，Session保持 `active`）；一旦发起 `wait_request`，其单次HTTP传输timeout使用 `operation_deadline`（显式Control下要求发送前剩余总预算 `>= 0.005` 秒），在途请求因断连或 `operation_deadline` 耗尽无完整终态时仍为 `response_unknown` 并使Session uncertain。
 - 发送前同时看到cancellation/deadline时cancellation优先；等待期总预算优先于condition timeout。目标就绪后condition deadline不再限制final action，动作只受总预算；control=None沿锁定客户端默认响应处理。
 - 合法动作成功事实优先于随后观察到的取消/deadline，写 `action_completed` 并返回None。final stale、有效错误或非法返回为 `command_failed/response_received`，Session可保持active但不保证无副作用；无终态为execution_unknown或可证明的cancel/timeout，`request_state=response_unknown`，Session uncertain、本地client关闭、占用保留且不重放。
 - 稳定completed_steps沿用 `settings_read`、`settings_changed`、`target_resolved`、`target_displayed`、`target_enabled`、`action_completed`、`settings_restored`；失败wait轮次不提交target steps，只有固定helper/execute成功才写action_completed。
@@ -722,6 +722,51 @@ Device.display_size(*, control: OperationControl | None = None) -> DisplaySize
 
 - 本能力不提供 `assert_with_ai`，不自动执行点击/滑动，不缓存帧或重试。`png_bytes` 仅传给当前调用的 `provider.inspect`，不进入 `VisualInspection`、JSON、日志或异常文本。
 - 受控测试须覆盖 `extract`（Android/Mac2）、`locate`（1:1 与正整数倍缩放、Mac2 零请求拒绝、失配比例 `pointer_mapping_unavailable`）、`region` 边界与包含检查、APNG `frame_not_single`、`provider` 异常与非法响应、65,536/65,537 JSON 边界、取消/超时/unknown 隔离及共享 Session gate。
+
+## AIF-14 Condition-Wait Transport Timeout Decoupling And Device Local Clock (`Device.device_time`)
+
+本节定义 Issue #49、FeatureID `AIF-14` 的已确认契约增量。未列出的既有契约不变。
+
+### Condition-Wait Transport Timeout Decoupling
+
+- `Session` 的 `wait_request` 将条件等待窗口 `condition_deadline` 与单次 HTTP 传输超时解耦：
+  1. 请求发送前，`wait_checkpoint(condition_deadline)` 先检查取消、`operation_deadline` 与 `condition_deadline`；若 `condition_deadline` 已到期而总预算未到期，立即抛 `TargetError("condition_timeout", operation_id, "not_sent")`，零 HTTP 请求，Session 保持 `active`。
+  2. 一旦允许发起本次只读探测请求，底层 `_LifecycleConnection` 的单次传输 timeout 使用 `self._deadline`（即 `operation_deadline`；`control=None` 时沿客户端默认 `socket.getdefaulttimeout()`），不再用 `min(condition_deadline, self._deadline)` 将末尾只读请求挤压为几毫秒 timeout。
+  3. 当存在显式 `request_deadline`（`operation_deadline`）时，`_apply_request_control()` 要求发送前剩余时间 `remaining >= 0.005` 秒（`_MIN_REQUEST_TIMEOUT_SECONDS = 0.005`）；若 `remaining < 0.005`，在 `request_started` 置 `True` 之前直接按 preflight 超时拒绝（`request_state="not_sent"`，Session 保持 `active`），绝不发出必然在数毫秒内中断的半截 HTTP 请求。
+  4. 完整只读响应到达后，若 `time.monotonic() >= condition_deadline`，post-check 抛 `TargetError("condition_timeout", operation_id, "response_received")`，Session 保持 `active`。
+  5. 若在途请求真正发生网络断连或 `operation_deadline` 耗尽导致未收到完整响应，继续按既有 `_unknown_failure` 置 Session 为 `uncertain` 并返回 `response_unknown`。
+
+### Public Interface And Value Model For `Device.device_time`
+
+```python
+DeviceWeekday: TypeAlias = Literal[
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
+
+@dataclass(frozen=True, slots=True)
+class DeviceTime:
+    """Read-only snapshot of the device's local wall clock and timezone offset."""
+
+    iso_local: str
+    date: str
+    time: str
+    weekday: DeviceWeekday
+    utc_offset: str
+
+Device.device_time(*, control: OperationControl | None = None) -> DeviceTime
+```
+
+- `DeviceWeekday` 与 `DeviceTime` 由 `appium_connect_agent.automation` 公开导出。
+- Android 在唯一非阻塞 Session gate 的 `gateway.final_action` 中执行一次且仅一次 `driver.execute_script("mobile: getDeviceTime")`（wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script": "mobile: getDeviceTime", "args": []}`）。
+- 响应必须为实际 `str` 且精确匹配 ASCII ISO-8601 秒级时间戳 `YYYY-MM-DDTHH:MM:SS(?:Z|[+-]HH:MM)`（长度不超过 64 字符）。若末尾为 `"Z"`，归一化为 `"+00:00"`；使用 `datetime.fromisoformat` 校验日历与时分秒、偏移量合法性（拒绝非字符串、空白、毫秒/微秒、缺失偏移、>23:59 UTC 偏移或非法公历日期如 `2026-02-30`）。
+- 解析成功后构造 `DeviceTime(iso_local=..., date="YYYY-MM-DD", time="HH:MM:SS", weekday=..., utc_offset="±HH:MM")`，记唯一完成步骤 `device_time_read` 并返回。
+- 响应非法统一抛 `CommandError("command_failed", operation_id, "response_received")`，Session 保持 `active`。Mac2 在进入 gate 与网络请求前抛 `InvalidRequestError("unsupported_operation", operation_id, "not_sent")`。
 
 ## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
 

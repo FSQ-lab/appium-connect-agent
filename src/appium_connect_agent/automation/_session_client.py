@@ -17,6 +17,8 @@ from selenium.webdriver.remote.errorhandler import ErrorHandler
 
 _HEADER_LOCK = Lock()
 
+_MIN_REQUEST_TIMEOUT_SECONDS = 0.005
+
 
 class _RequestCancelled(Exception):
     pass
@@ -75,7 +77,7 @@ class _LifecycleConnection(AppiumConnection):
             self.client_config.timeout = socket.getdefaulttimeout()
             return
         remaining = request_deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining < _MIN_REQUEST_TIMEOUT_SECONDS:
             raise _RequestTimedOut
         self.client_config.timeout = remaining
 

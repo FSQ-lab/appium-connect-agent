@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读屏幕 PNG 截图与显式屏幕坐标单指触控，以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读设备本地时钟查询（`Device.device_time`）、只读屏幕 PNG 截图与显式屏幕坐标单指触控，以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -424,6 +424,14 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 - SDK 不持有任何模型 API key、HTTP 模型客户端或业务 prompt 策略，仅在同一 Session 非阻塞 gate 与单次 `OperationControl` 总预算内顺序执行：单帧 PNG 截图（拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG `frame_not_single`，提取 `IHDR` `image_size` 与 64 字符小写 `png_sha256`）→ 全图 `image-space` 的 `region` 边界核验 → `locate` 模式下获取平台权威 `pointer_size`（Android 走 `mobile: deviceInfo`，要求正整数倍轴对齐等比例缩放，失配则在调用 provider 前 `CommandError/pointer_mapping_unavailable/response_received`；Mac2 对 `locate` 在 gate/网络前 `InvalidRequestError/pointer_mapping_unavailable/not_sent`）→ 调用宿主注入的同步 `provider.inspect(request)` 一次（传入完整未裁剪原图 `png_bytes`）→ 严格校验 `VisualProviderResponse`（`extract` 必须 `candidates == ()`；`locate` 将每个全图 `image-space` 的 `VisualImageMatch.image_bounds` 映射为非 `None` 的 `pointer_bounds: Bounds` 与 `pointer_center: Point`）→ 65,536-byte 规范 JSON 计量并返回不可变 `VisualInspection`。
 - 方法绝不自动执行点击或滑动；调用方显式将 `pointer_center` / `pointer_bounds` 传给 `Device.tap_at` / `Device.swipe_between` 等平台原生动作方法。`png_bytes` 不进入 `VisualInspection`、规范 JSON、日志或异常文本。
 - 复用锁定 Appium/UiAutomator2/Mac2/Python Client/Selenium 与 CPython 3.11 标准库（`hashlib`、`struct`、`zlib`）；`Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 22 工具目录与 schema）、产品/开发依赖及 lockfile 均 no-delta。
+
+## Automation Condition-Wait Transport Timeout Decoupling And Device Local Clock（AIF-14）
+
+本节定义 Issue #49 经用户 SPEC Gate 确认的 AIF-14 契约增量。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- **条件等待单次 HTTP 传输超时与 `condition_deadline` 解耦**：`condition_deadline` 仅用于门控是否允许发起下一轮/下一个条件轮询请求（请求/睡眠间到期返回 `condition_timeout/not_sent`）以及完整只读响应返回后的 post-check（到期返回 `condition_timeout/response_received`，Session 保持 `active`）。一旦允许发起某次 `wait_request` 底层只读 HTTP 请求，其单次传输 timeout 固定使用整体 `operation_deadline`（`control=None` 时沿客户端默认），且在显式 `OperationControl` 下要求发送前剩余 `operation_deadline` 预算 `>= 0.005` 秒（5ms 安全下界，不足则在发送前以 `operation_timeout/not_sent` 或 `condition_timeout/not_sent` 拒绝，绝不发出几毫秒必断的半截 HTTP 请求自造 `response_unknown`）。若在途 HTTP 请求真正因断连或 `operation_deadline` 耗尽而未取得完整响应，继续严格执行既有 `response_unknown -> uncertain` 隔离。
+- **Android 只读设备本地时钟查询（`Device.device_time`）**：由 `appium_connect_agent.automation` 公开导出 `DeviceWeekday = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]`、不可变 `@dataclass(frozen=True, slots=True) class DeviceTime(iso_local: str, date: str, time: str, weekday: DeviceWeekday, utc_offset: str)`，以及绑定方法 `Device.device_time(*, control: OperationControl | None = None) -> DeviceTime`。
+- Android 在唯一非阻塞 Session gate 与 `gateway.final_action` 内执行一次 `driver.execute_script("mobile: getDeviceTime")`（wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script": "mobile: getDeviceTime", "args": []}`），严格校验返回为 canonical ISO-8601 本地时间字符串 `YYYY-MM-DDTHH:MM:SS±HH:MM`（或末尾 `Z` 归一为 `+00:00`），通过 `datetime.fromisoformat` 验证真实日历合法性并派生 `date`（`YYYY-MM-DD`）、`time`（`HH:MM:SS`）、英文全称 `weekday` 与 `utc_offset`（`±HH:MM`），记唯一完成步骤 `device_time_read`。非法形状或日期统一 `CommandError/command_failed/response_received`；Mac2 在网络前 `InvalidRequestError/unsupported_operation/not_sent`。零新增或升级依赖。
 
 ## Runtime Mac2 Target Static Diagnostics And Managed Cleanup Query（RT-MAC-01）
 
