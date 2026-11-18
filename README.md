@@ -729,7 +729,7 @@ CI 保留工具的静态检查和已有产品测试，不执行真实环境体�
 `CI` 在推送 `master`、面向 `master` 的 Pull Request，以及手动触发时运行；全部检查统一使用公网 PyPI 元数据、CPython 3.11（与 `.python-version` 一致）和 uv 0.12.5：
 
 - `Quality`：在 `ubuntu-latest` 锁定同步开发环境，执行 Ruff 格式与 lint、strict mypy 及生产 import-linter。
-- `Tests`：在 `macos-latest` 按四个测试分片执行全量 `pytest`。
+- `Tests`：在 `macos-15-intel` 按四个测试分片执行全量 `pytest`。
 - `Package (macOS / Windows)`：在 `macos-15-intel` 与 `windows-latest` 构建 wheel 与 sdist，并通过 `.github/scripts/check_distributions.py` 校验文件白名单、MIT 许可证与依赖元数据，以及隔离临时环境安装与导出符号检查（Windows 打包检查不代表支持 Windows Runtime）。
 
 `Release`（`.github/workflows/release.yml`）仅支持 `workflow_dispatch` 手动触发：

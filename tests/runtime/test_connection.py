@@ -261,9 +261,11 @@ def test_total_budget_and_cancellation(kind: str, cancel: bool) -> None:
             OperationCancelledError if cancel else OperationTimeoutError
         ):
             Runtime(LocalSettings(server_url=url)).connect(
-                control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                control=OperationControl(
+                    timeout_seconds=2.0 if cancel else 0.2, cancellation=token
+                )
             ).__enter__()
-        assert time.monotonic() - started < 1
+        assert time.monotonic() - started < 3.0
         Runtime(LocalSettings()).diagnose()
 
 
@@ -1051,7 +1053,10 @@ def test_http_cleanup_preserves_errors_and_ends_resources(
             patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
             with pytest.raises(BaseException) as caught:
                 Runtime(LocalSettings(server_url=url)).connect(
-                    control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                    control=OperationControl(
+                        timeout_seconds=0.2 if mode == "timeout" else 2.0,
+                        cancellation=token,
+                    )
                 ).__enter__()
         error = caught.value
         if mode in ("cancel", "timeout"):

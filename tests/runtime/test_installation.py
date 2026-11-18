@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import selectors
 import subprocess
 import sys
 import time
@@ -964,22 +965,50 @@ def start_group_child(
     delay: float,
     escape_group: bool = False,
 ) -> subprocess.Popen[bytes]:
-    child = "import os,time;"
-    if not inherit_pipes:
-        child += "os.close(1);os.close(2);"
-    child += f"time.sleep({delay!r})"
-    leader = (
-        "import subprocess,sys;"
-        f"subprocess.Popen([sys.executable,'-c',{child!r}],"
-        f"start_new_session={escape_group!r})"
-    )
-    return subprocess.Popen(
-        [sys.executable, "-c", leader],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    read_fd, write_fd = os.pipe()
+    try:
+        child = f"import os,time;os.write({write_fd},b'1');os.close({write_fd});"
+        if not inherit_pipes:
+            child += "os.close(1);os.close(2);"
+        child += f"time.sleep({delay!r})"
+        leader = (
+            "import os,subprocess,sys;"
+            f"subprocess.Popen([sys.executable,'-c',{child!r}],"
+            f"pass_fds=({write_fd},),start_new_session={escape_group!r});"
+            f"os.close({write_fd})"
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", leader],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=(write_fd,),
+            start_new_session=True,
+        )
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+    os.close(write_fd)
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(read_fd, selectors.EVENT_READ)
+            events = selector.select(timeout=5.0)
+            assert events, "grandchild did not signal readiness within 5s"
+            assert os.read(read_fd, 1) == b"1"
+    except BaseException:
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, 9)
+        with suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=1.0)
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
+        raise
+    finally:
+        os.close(read_fd)
+    return process
 
 
 @pytest.mark.parametrize("inherit_pipes", [False, True])
@@ -1017,7 +1046,7 @@ def test_owned_group_cleanup_and_gone_group_never_reacquired(
 def test_escaped_pipe_holder_remains_pending_until_eof() -> None:
     process = start_group_child(
         inherit_pipes=True,
-        delay=0.3,
+        delay=0.6,
         escape_group=True,
     )
     handle = _installation._ProcessHandle(process)
@@ -1030,7 +1059,7 @@ def test_escaped_pipe_holder_remains_pending_until_eof() -> None:
     with pytest.raises(TimeoutError):
         handle.wait(checkpoint, deadline)
     assert not handle.cleanup(time.monotonic() + 0.05)
-    time.sleep(0.35)
+    time.sleep(0.65)
     assert handle.cleanup(time.monotonic() + 1)
 
 
