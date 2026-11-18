@@ -71,8 +71,8 @@
 
 ### Public Interface And Local Snapshots
 
-- 同步入口为 `create_session(connection: RuntimeConnection, device_id: str, *, app_id: str | None = None, app_path: Path | None = None, auto_launch: bool = False, force_app_launch: bool = False, no_reset: bool = True, full_reset: bool = False, should_terminate_app: bool = False, new_command_timeout_seconds: float = 500, uiautomator2_wait_for_idle_timeout_ms: int | None = None, capabilities: Mapping[str, JsonValue] | None = None, control: OperationControl | None = None) -> Session`。
-- `Session` 生命周期入口包括 `session_info() -> SessionInfo`、`quit(*, control: OperationControl | None = None) -> None` 与限定的 `dispose(*, control: OperationControl | None = None) -> None`；后续 AIF 条款另增加 Element、Device 与观测能力，但不公开底层 WebDriver、任意命令执行、上下文管理器或按 ID 找回 Session。
+- 同步入口为 `create_session(connection: RuntimeConnection, device_id: str, *, app_id: str | None = None, app_path: Path | None = None, auto_launch: bool = False, force_app_launch: bool = False, no_reset: bool = True, full_reset: bool = False, should_terminate_app: bool = False, new_command_timeout_seconds: float | None = 900.0, uiautomator2_wait_for_idle_timeout_ms: int | None = None, capabilities: Mapping[str, JsonValue] | None = None, control: OperationControl | None = None) -> Session`。
+- `Session` 生命周期入口包括 `session_info() -> SessionInfo`、`ensure_alive(*, control: OperationControl | None = None) -> bool`（及同义别名 `ping(*, control: OperationControl | None = None) -> bool`）、`quit(*, control: OperationControl | None = None) -> None` 与限定的 `dispose(*, control: OperationControl | None = None) -> None`；当底层 WebDriver 请求明确命中确定性会话死亡信号（`InvalidSessionIdException`、`NoSuchDriver`、`session is either terminated or not started`、`Instrumentation process is not running`）时，自动以非破坏性参数（`noReset=True`、不传 `appPackage`/`appActivity`/`app`、保留当前前台页面与输入状态）重建同一设备 Session 并透明恢复。
 - `SessionInfo` 是不可变本地快照，字段为本库 `id`、`appium_session_id: str | None`、`device_id`、`target_app_id: str | None`、`state` 和 `busy`。`state` 只取 `creating`、`active`、`uncertain`、`disposing`、`disposed`、`closing`、`closed`；读取不发网络或设备命令，不重置 Session 空闲计时。
 - 创建请求进入未知状态时，抛出的 `ResourceStateError` 携带仍可达的 `session: Session`；uncertain Session 不允许普通命令或再次发送 quit，只可读取 `session_info()`，或在精确 managed ownership 条件下由调用方显式请求 terminal `dispose()`。核心不维护可按 ID 查询的公共 Registry。
 
@@ -625,6 +625,7 @@
 | `Device.take_screenshot(*, control: OperationControl | None = None)` | `bytes` |
 | `Device.tap_at(x: int, y: int, *, control: OperationControl | None = None)` | `None` |
 | `Device.swipe_between(start_x: int, start_y: int, end_x: int, end_y: int, *, duration_ms: int = 200, control: OperationControl | None = None)` | `None` |
+| `Device.swipe(direction: Literal["up", "down", "left", "right"] | None = None, *, start_x: int | None = None, start_y: int | None = None, end_x: int | None = None, end_y: int | None = None, duration_ms: int = 300, control: OperationControl | None = None)` | `None` |
 
 - 一次公共调用只产生一个 `operation_id`、`started` 和可选 `deadline`。可信 `Device` 绑定与全部纯值参数校验在获取 `_operation_gate` 及任何网络请求之前执行；任何非法参数抛 `InvalidRequestError/invalid_argument/not_sent`，非法优先于 `session_busy`。
 - `x`、`y`、`start_x`、`start_y`、`end_x`、`end_y` 均必须满足 `type(value) is int`（严格排除 `bool`、`float`、`str` 及子类）且 `0 <= value <= 2_147_483_647`；拒绝负坐标，不做静默截断（clamp）或参考分辨率缩放；允许 `start == end` 原样发送单次底层序列。

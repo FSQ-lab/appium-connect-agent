@@ -59,6 +59,35 @@ def _validate_percent(value: object, operation_id: str, *, maximum: float) -> _N
     return value
 
 
+def _validate_gesture_inset(
+    left: object,
+    top: object,
+    width: object,
+    height: object,
+    operation_id: str,
+) -> tuple[int, int, int, int] | None:
+    parts = (left, top, width, height)
+    if all(part is None for part in parts):
+        return None
+    if any(part is None or type(part) is not int for part in parts):
+        raise _invalid_argument(operation_id)
+    valid_left, valid_top, valid_width, valid_height = cast(
+        tuple[int, int, int, int], parts
+    )
+    if (
+        valid_left < 0
+        or valid_top < 0
+        or valid_width <= 0
+        or valid_height <= 0
+        or valid_left > _JAVA_INT_MAX
+        or valid_top > _JAVA_INT_MAX
+        or valid_width > _JAVA_INT_MAX
+        or valid_height > _JAVA_INT_MAX
+    ):
+        raise _invalid_argument(operation_id)
+    return valid_left, valid_top, valid_width, valid_height
+
+
 def _validate_max_swipes(value: object, operation_id: str) -> int:
     if type(value) is not int or not 1 <= value <= 30:
         raise _invalid_argument(operation_id)
@@ -115,8 +144,21 @@ def _execute_scroll_gesture(driver: WebDriver, payload: dict[str, object]) -> bo
 
 
 def _gesture_payload(
-    target: WebElement, direction: _Direction, percent: _Number
+    target: WebElement,
+    direction: _Direction,
+    percent: _Number,
+    area: tuple[int, int, int, int] | None = None,
 ) -> dict[str, object]:
+    if area is not None:
+        left, top, width, height = area
+        return {
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+            "direction": direction,
+            "percent": percent,
+        }
     return {
         "elementId": target.id,
         "direction": direction,
@@ -131,6 +173,7 @@ def _perform_swipe_gesture(
     *,
     direction: _Direction,
     percent: _Number,
+    area: tuple[int, int, int, int] | None = None,
     condition_deadline: float,
 ) -> None:
     def guarded_action() -> None:
@@ -146,7 +189,7 @@ def _perform_swipe_gesture(
             lambda: _execute_none(
                 driver,
                 "mobile: swipeGesture",
-                _gesture_payload(target, direction, percent),
+                _gesture_payload(target, direction, percent, area),
             )
         )
         gateway.complete("action_completed")
@@ -161,6 +204,7 @@ def _perform_scroll_gesture(
     *,
     direction: _Direction,
     percent: _Number,
+    area: tuple[int, int, int, int] | None = None,
     condition_deadline: float,
 ) -> bool:
     def guarded_action() -> bool:
@@ -174,7 +218,7 @@ def _perform_scroll_gesture(
         gateway.checkpoint()
         result = gateway.final_action(
             lambda: _execute_scroll_gesture(
-                driver, _gesture_payload(target, direction, percent)
+                driver, _gesture_payload(target, direction, percent, area)
             )
         )
         gateway.complete("action_completed")

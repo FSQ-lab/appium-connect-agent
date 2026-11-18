@@ -6,6 +6,7 @@ import threading
 import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -1143,3 +1144,195 @@ def test_device_binding_is_trusted_for_new_methods(
         assert service.snapshot() == before
         session.quit()
         other.quit()
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected_start", "expected_end"),
+    [
+        ("up", (540, 1920), (540, 480)),
+        ("down", (540, 480), (540, 1920)),
+        ("left", (885, 1200), (195, 1200)),
+        ("right", (195, 1200), (885, 1200)),
+    ],
+)
+def test_directional_swipe_default_coordinates_stay_within_safe_insets(
+    service: DeviceProtocolService,
+    direction: Any,
+    expected_start: tuple[int, int],
+    expected_end: tuple[int, int],
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(payload={"value": {"realDisplaySize": "1080x2400"}}),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, f"safe-swipe-{direction}")
+        session.device.swipe(direction=direction)
+        assert service.operation_kinds() == ["display_size", "swipe_between"]
+        swipe_req = service.of_kind("swipe_between")[0]
+        assert swipe_req.body is not None
+        actions = swipe_req.body["actions"][0]["actions"]
+        sx, sy = actions[0]["x"], actions[0]["y"]
+        ex, ey = actions[2]["x"], actions[2]["y"]
+        assert (sx, sy) == expected_start
+        assert (ex, ey) == expected_end
+        # Strict check: vertical strictly in [20%, 80%] (away from <15% and >85%),
+        # horizontal strictly in [18%, 82%] (away from <10% and >90%).
+        for x, y in ((sx, sy), (ex, ey)):
+            assert 0.18 * 1080 <= x <= 0.82 * 1080
+            assert 0.20 * 2400 <= y <= 0.80 * 2400
+            assert not (x < 0.10 * 1080 or x > 0.90 * 1080)
+            assert not (y < 0.15 * 2400 or y > 0.85 * 2400)
+        session.quit()
+
+
+def test_directional_swipe_respects_explicit_coordinates_without_display_size_query(
+    service: DeviceProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, "explicit-swipe-coords")
+        session.device.swipe(
+            direction="up",
+            start_x=50,
+            start_y=2300,
+            end_x=50,
+            end_y=100,
+            duration_ms=250,
+        )
+        assert service.operation_kinds() == ["swipe_between"]
+        swipe_req = service.of_kind("swipe_between")[0]
+        assert swipe_req.body is not None
+        actions = swipe_req.body["actions"][0]["actions"]
+        assert (actions[0]["x"], actions[0]["y"]) == (50, 2300)
+        assert (actions[2]["x"], actions[2]["y"]) == (50, 100)
+        assert actions[2]["duration"] == 250
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("error_code", "message"),
+    [
+        ("invalid session id", "A session is either terminated or not started"),
+        ("no such driver", "NoSuchDriverError: Driver is not known"),
+        (
+            "unknown error",
+            "Cannot be proxied to UiAutomator2 server because the instrumentation process is not running (probably crashed)",
+        ),
+    ],
+)
+def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
+    service: DeviceProtocolService,
+    tmp_path: Path,
+    error_code: str,
+    message: str,
+) -> None:
+    apk = tmp_path / "initial.apk"
+    apk.write_bytes(b"apk-bytes")
+    dead_payload = {
+        "value": {
+            "error": error_code,
+            "message": message,
+            "stacktrace": "",
+        }
+    }
+    service.queue(
+        "tap_at",
+        ResponsePlan(
+            status=404 if "invalid" in error_code else 500, payload=dead_payload
+        ),
+        ResponsePlan(payload={"value": None}),
+    )
+    with connected(service) as connection:
+        session = create_session(
+            connection,
+            f"reattach-{error_code.replace(' ', '-')}",
+            app_id="com.example.initial",
+            app_path=apk,
+            auto_launch=True,
+            force_app_launch=True,
+            no_reset=False,
+            full_reset=True,
+            should_terminate_app=True,
+            new_command_timeout_seconds=900,
+        )
+        initial_info = session.session_info()
+        assert initial_info.appium_session_id == "appium-1"
+        assert initial_info.target_app_id == "com.example.initial"
+
+        # First tap_at hits dead session -> transparently re-attaches and succeeds
+        session.device.tap_at(100, 200)
+
+        recovered_info = session.session_info()
+        assert recovered_info.state == "active"
+        assert recovered_info.id == initial_info.id
+        assert recovered_info.appium_session_id == "appium-2"
+        assert recovered_info.target_app_id == "com.example.initial"
+
+        creates = service.of_kind("create")
+        assert len(creates) == 2
+        reattach_caps = creates[1].body["capabilities"]["alwaysMatch"]  # type: ignore[index]
+        assert reattach_caps["appium:udid"] == initial_info.device_id
+        assert reattach_caps["appium:noReset"] is True
+        assert reattach_caps["appium:fullReset"] is False
+        assert reattach_caps["appium:autoLaunch"] is False
+        assert reattach_caps["appium:forceAppLaunch"] is False
+        assert reattach_caps["appium:shouldTerminateApp"] is False
+        assert reattach_caps["appium:newCommandTimeout"] == 900.0
+        assert "appium:appPackage" not in reattach_caps
+        assert "appPackage" not in reattach_caps
+        assert "appium:appActivity" not in reattach_caps
+        assert "appActivity" not in reattach_caps
+        assert "appium:app" not in reattach_caps
+
+        taps = service.of_kind("tap_at")
+        assert len(taps) == 2
+        assert "/session/appium-1/" in taps[0].path
+        assert "/session/appium-2/" in taps[1].path
+        session.quit()
+
+
+def test_ensure_alive_and_ping_reattach_only_when_session_is_dead(
+    service: DeviceProtocolService,
+) -> None:
+    dead_payload = {
+        "value": {
+            "error": "invalid session id",
+            "message": "session is either terminated or not started",
+            "stacktrace": "",
+        }
+    }
+    with connected(service) as connection:
+        session = session_for(service, connection, "ensure-alive-device")
+        assert session.ensure_alive() is False
+        assert session.ping() is False
+        assert len(service.of_kind("create")) == 1
+
+        service.queue(
+            "settings:get",
+            ResponsePlan(status=404, payload=dead_payload),
+        )
+        assert session.ensure_alive() is True
+        assert len(service.of_kind("create")) == 2
+        assert session.session_info().appium_session_id == "appium-2"
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_ordinary_element_or_command_errors_do_not_trigger_reattach(
+    service: DeviceProtocolService,
+) -> None:
+    service.matches[(None, "id", "com.example:id/missing")] = []
+    service.queue(
+        "tap_at",
+        ResponsePlan(
+            status=500,
+            payload=w3c_error("element click intercepted or ordinary failure"),
+        ),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "ordinary-error-no-reattach")
+        with pytest.raises(CommandError):
+            session.device.tap_at(10, 20)
+        assert len(service.of_kind("create")) == 1
+        assert session.session_info().appium_session_id == "appium-1"
+        session.quit()

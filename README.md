@@ -447,6 +447,11 @@ session.device.swipe_between(
     duration_ms=250,
     control=OperationControl(timeout_seconds=15),
 )
+session.device.swipe(
+    "up",
+    duration_ms=300,
+    control=OperationControl(timeout_seconds=15),
+)
 ```
 
 - `display_size` 发送一次 `mobile: deviceInfo`，只读取 UiAutomator2 由 Android `Display.getRealSize` 提供的 `realDisplaySize`，并返回不可变 `DisplaySize(width, height)`。它定义全屏 `tap_at` / `swipe_between` 的物理 pointer space；`observe_tree().viewport` 是应用层级 content viewport，可能因系统栏 inset 更小，不能用作全屏坐标缩放。响应只接受 canonical ASCII `WxH` 正整数且每维不超过 `2,147,483,647`，不回退截图、层级或 ADB，不缓存、clamp、缩放或暴露其他 device-info 字段。

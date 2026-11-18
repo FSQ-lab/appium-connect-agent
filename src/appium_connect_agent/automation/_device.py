@@ -57,6 +57,7 @@ from ._system_actions import (
     _status_bar,
     _status_bar_command,
     _swipe_between,
+    _swipe_directional,
     _take_screenshot,
     _tap_at,
     _terminate_app,
@@ -626,6 +627,58 @@ class Device:
                     },
                     duration_seconds=valid_duration / 1000.0,
                 )
+            ),
+        )
+
+    def swipe(
+        self,
+        direction: Literal["up", "down", "left", "right"] | None = None,
+        *,
+        start_x: int | None = None,
+        start_y: int | None = None,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 300,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Perform a screen swipe using safe inset bounds for directional swipes or explicit coordinates."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        coords = (start_x, start_y, end_x, end_y)
+        has_any_coord = any(value is not None for value in coords)
+        has_all_coords = all(value is not None for value in coords)
+        if has_any_coord and not has_all_coords:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        valid_sx = None if start_x is None else _coordinate(start_x, operation_id)
+        valid_sy = None if start_y is None else _coordinate(start_y, operation_id)
+        valid_ex = None if end_x is None else _coordinate(end_x, operation_id)
+        valid_ey = None if end_y is None else _coordinate(end_y, operation_id)
+        valid_direction: Literal["up", "down", "left", "right"] = "up"
+        if direction is not None:
+            if not isinstance(direction, str) or direction not in (
+                "up",
+                "down",
+                "left",
+                "right",
+            ):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            valid_direction = direction
+        elif not has_all_coords:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        valid_duration = _duration_ms(duration_ms, operation_id)
+        owner._reject_macos(operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _swipe_directional(
+                driver,
+                gateway,
+                direction=valid_direction,
+                start_x=valid_sx,
+                start_y=valid_sy,
+                end_x=valid_ex,
+                end_y=valid_ey,
+                duration_ms=valid_duration,
             ),
         )
 

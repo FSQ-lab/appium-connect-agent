@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读设备本地时钟查询（`Device.device_time`）、只读屏幕 PNG 截图与显式屏幕坐标单指触控，以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期（含默认 `newCommandTimeout=900`、非破坏性 Session 断联透明重建、`Session.ensure_alive` / `Session.ping`）及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读设备本地时钟查询（`Device.device_time`）、只读屏幕 PNG 截图、显式屏幕坐标单指触控与安全区内缩方向滑动（`Device.swipe`），以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -110,7 +110,7 @@
 - 产品直接运行依赖新增无 extras 的 `Appium-Python-Client==6.0.8` 与 `selenium==4.51.0`，仅供 Automation Session/WebDriver/Appium 命令及其传输使用；不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。发行元数据固定这两个直接版本，传递依赖由 `uv.lock` 固定。
 - 正常顺序为进入一次 Runtime connection、为明确设备创建一个或多个独立 Session、逐个 `quit()`、再退出 connection。Runtime 不替 Automation 关闭 Session；Automation 不缓存已退出 connection 的 URL 继续发送命令。
 - 同设备占用和 UiAutomator2 `systemPort` 只在当前 Python 进程内协调；不同 Session 不共享 WebDriver、sessionId 或命令连接。创建、存活、关闭及结果未知期间保留占用，只有可证明未创建或确认关闭且本地收尾完成后释放。
-- 默认能力包括 `appium:newCommandTimeout=500`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方 initial Settings capability。`create_session` 另提供 keyword-only `uiautomator2_wait_for_idle_timeout_ms: int | None = None`；默认 `None` 完全省略 `appium:settings[waitForIdleTimeout]` 并保持上游现状，只有调用方显式提供 `0..9_007_199_254_740_991` 范围内的 strict integer 时才发送该 initial Setting。SDK 不按应用/profile 自动选择值、不全局设 0、不增加 update/retry 或外层预算。契约确认不表示真实 Session 或 Automation 模块整体已验收。
+- 默认能力包括 `appium:newCommandTimeout=900`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方 initial Settings capability。`create_session` 另提供 keyword-only `uiautomator2_wait_for_idle_timeout_ms: int | None = None`；默认 `None` 完全省略 `appium:settings[waitForIdleTimeout]` 并保持上游现状，只有调用方显式提供 `0..9_007_199_254_740_991` 范围内的 strict integer 时才发送该 initial Setting。SDK 不按应用/profile 自动选择值、不全局设 0、不增加 update/retry 或外层预算。契约确认不表示真实 Session 或 Automation 模块整体已验收。
 
 
 ## Local Managed Installation Preparation

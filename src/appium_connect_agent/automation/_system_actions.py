@@ -76,6 +76,42 @@ def _display_size(driver: WebDriver, gateway: _SessionOperationGateway) -> Displ
     return result
 
 
+_VERTICAL_SAFE_MIN_RATIO = 0.20
+_VERTICAL_SAFE_MAX_RATIO = 0.80
+_HORIZONTAL_SAFE_MIN_RATIO = 0.18
+_HORIZONTAL_SAFE_MAX_RATIO = 0.82
+
+
+def _safe_swipe_coordinates(
+    display_size: DisplaySize,
+    direction: Literal["up", "down", "left", "right"],
+) -> tuple[int, int, int, int]:
+    """Compute default directional swipe coordinates strictly within safe screen insets.
+
+    Vertical swipes stay within [20%, 80%] of display height (avoiding <15% top
+    notification bar and >85% bottom system gesture bar).
+    Horizontal swipes stay within [18%, 82%] of display width (avoiding <10% and
+    >90% side-edge Back gesture zones).
+    """
+    width = display_size.width
+    height = display_size.height
+    max_x = max(width - 1, 0)
+    max_y = max(height - 1, 0)
+    center_x = min(max(width // 2, 0), max_x)
+    center_y = min(max(height // 2, 0), max_y)
+    top_y = min(max(math.ceil(height * _VERTICAL_SAFE_MIN_RATIO), 0), max_y)
+    bottom_y = min(max(math.floor(height * _VERTICAL_SAFE_MAX_RATIO), 0), max_y)
+    left_x = min(max(math.ceil(width * _HORIZONTAL_SAFE_MIN_RATIO), 0), max_x)
+    right_x = min(max(math.floor(width * _HORIZONTAL_SAFE_MAX_RATIO), 0), max_x)
+    if direction == "up":
+        return center_x, bottom_y, center_x, top_y
+    if direction == "down":
+        return center_x, top_y, center_x, bottom_y
+    if direction == "left":
+        return right_x, center_y, left_x, center_y
+    return left_x, center_y, right_x, center_y
+
+
 _DEVICE_TIME_PATTERN = re.compile(
     r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$"
 )
@@ -603,3 +639,35 @@ def _swipe_between(
 
     gateway.final_action(action)
     gateway.complete("action_completed")
+
+
+def _swipe_directional(
+    driver: WebDriver,
+    gateway: _SessionOperationGateway,
+    *,
+    direction: Literal["up", "down", "left", "right"],
+    start_x: int | None,
+    start_y: int | None,
+    end_x: int | None,
+    end_y: int | None,
+    duration_ms: int,
+) -> None:
+    if (
+        start_x is not None
+        and start_y is not None
+        and end_x is not None
+        and end_y is not None
+    ):
+        sx, sy, ex, ey = start_x, start_y, end_x, end_y
+    else:
+        size = _display_size(driver, gateway)
+        sx, sy, ex, ey = _safe_swipe_coordinates(size, direction)
+    _swipe_between(
+        driver,
+        gateway,
+        start_x=sx,
+        start_y=sy,
+        end_x=ex,
+        end_y=ey,
+        duration_ms=duration_ms,
+    )
