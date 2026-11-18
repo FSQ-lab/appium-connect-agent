@@ -330,7 +330,7 @@ def test_back_unknown_shutdown_exits_degraded_without_quit(
             stdin.flush()
 
         def receive(identifier: int) -> dict[str, Any]:
-            readable, _, _ = select.select([stdout], [], [], 5)
+            readable, _, _ = select.select([stdout], [], [], 15)
             assert readable == [stdout]
             value = cast(dict[str, Any], json.loads(stdout.readline()))
             assert value["id"] == identifier

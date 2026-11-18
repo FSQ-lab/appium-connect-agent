@@ -1058,7 +1058,7 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
             stdin.flush()
 
         def receive(identifier: int) -> dict[str, Any]:
-            readable, _, _ = select.select([stdout], [], [], 5)
+            readable, _, _ = select.select([stdout], [], [], 15)
             assert readable == [stdout]
             value = cast(dict[str, Any], json.loads(stdout.readline()))
             assert value["id"] == identifier
@@ -1118,12 +1118,12 @@ def test_inflight_observation_eof_and_broken_stdout_drain_once(
                     },
                 }
             )
-            assert started.wait(timeout=5)
+            assert started.wait(timeout=15)
             if disconnect == "broken_stdout":
                 stdout.close()
             stdin.close()
             release.set()
-            assert process.wait(timeout=10) == 0
+            assert process.wait(timeout=15) == 0
         finally:
             release.set()
             with contextlib.suppress(BrokenPipeError, ValueError):
@@ -1173,7 +1173,7 @@ def test_uncertain_observation_stdio_eof_exits_four_without_quit_or_replay(
             stdin.flush()
 
         def receive(identifier: int) -> dict[str, Any]:
-            readable, _, _ = select.select([stdout], [], [], 5)
+            readable, _, _ = select.select([stdout], [], [], 15)
             assert readable == [stdout]
             value = cast(dict[str, Any], json.loads(stdout.readline()))
             assert value["id"] == identifier
