@@ -122,10 +122,14 @@ jobs:
           - macos-15-intel
           - windows-latest
     steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.5"
-          python-version: "3.11"
+          enable-cache: false
+          ignore-empty-workdir: true
       - name: Download verified distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -144,7 +148,7 @@ jobs:
           for ($i = 0; $i -lt $artifacts.Count; $i++) {
             $artifact = $artifacts[$i]
             $venv = Join-Path $env:RUNNER_TEMP "aca-install-smoke-$i"
-            uv venv --python 3.11 --seed --no-python-downloads $venv
+            python -m venv $venv
             if ($LASTEXITCODE -ne 0) {
               throw "Virtual environment creation failed for $($artifact.Name) with exit code $LASTEXITCODE."
             }
@@ -156,6 +160,10 @@ jobs:
               $mcpCli = Join-Path $venv "bin/appium-connect-agent-mcp"
             }
 
+            & $python -m pip install --upgrade pip
+            if ($LASTEXITCODE -ne 0) {
+              throw "pip upgrade failed for $($artifact.Name) with exit code $LASTEXITCODE."
+            }
             & $python -m pip install $artifact.FullName
             if ($LASTEXITCODE -ne 0) {
               throw "pip install failed for $($artifact.Name) with exit code $LASTEXITCODE."
@@ -193,9 +201,13 @@ jobs:
               if ($LASTEXITCODE -ne 0) {
                 throw "appium-connect-agent --help failed for $($artifact.Name) with exit code $LASTEXITCODE."
               }
-              & $mcpCli --help > $null
-              if ($LASTEXITCODE -ne 0) {
-                throw "appium-connect-agent-mcp --help failed for $($artifact.Name) with exit code $LASTEXITCODE."
+              $catalogOut = & $cli catalog
+              if ($LASTEXITCODE -ne 0 -or -not ($catalogOut -match '"schema_version":1')) {
+                throw "appium-connect-agent catalog failed for $($artifact.Name) with exit code $LASTEXITCODE."
+              }
+              $mcpErr = & $mcpCli 2>&1
+              if ($LASTEXITCODE -ne 2 -or -not (($mcpErr | Out-String) -match 'startup_error code=bootstrap_invalid')) {
+                throw "appium-connect-agent-mcp bootstrap rejection smoke failed for $($artifact.Name) with exit code $LASTEXITCODE."
               }
             }
           }
@@ -214,10 +226,14 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.5"
-          python-version: "3.11"
+          enable-cache: false
+          ignore-empty-workdir: true
       - name: Download verified distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -228,7 +244,7 @@ jobs:
           EXPECTED_RELEASE_TAG: ${{ inputs.release_tag }}
           WORKFLOW_REF: ${{ github.ref }}
         run: |
-          uv run --no-project --python 3.11 - <<'PY'
+          python - <<'PY'
           import os
           import re
           from email import message_from_bytes

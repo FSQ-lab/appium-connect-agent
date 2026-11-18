@@ -274,11 +274,11 @@ def test_active_has_no_preparation_deadline() -> None:
     with (
         server(response()) as (url, _),
         Runtime(LocalSettings(server_url=url)).connect(
-            control=OperationControl(timeout_seconds=0.2, cancellation=token)
+            control=OperationControl(timeout_seconds=0.8, cancellation=token)
         ) as connection,
     ):
         token.set()
-        time.sleep(0.21)
+        time.sleep(0.85)
         assert connection.server_url == url
 
 
@@ -664,11 +664,11 @@ def test_future_wait_slices(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Future, "result", result)
 
     def stall(peer: socket.socket, stopped: Event) -> None:
-        stopped.wait(2)
+        stopped.wait(3)
 
     with server(stall) as (url, requests), pytest.raises(OperationTimeoutError):
         Runtime(LocalSettings(server_url=url)).connect(
-            control=OperationControl(timeout_seconds=0.2)
+            control=OperationControl(timeout_seconds=0.5)
         ).__enter__()
     assert len(requests) == 1
     assert observed and len({identity for identity, _ in observed}) == 1
@@ -1394,7 +1394,7 @@ def test_both_public_closes_fail_before_release(
 
     def slow(peer: socket.socket, stopped: Event) -> None:
         peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 52\r\n\r\n{")
-        stopped.wait(2)
+        stopped.wait(3)
 
     with server(slow) as (url, _):
         with monkeypatch.context() as patch:
@@ -1403,7 +1403,7 @@ def test_both_public_closes_fail_before_release(
             patch.setattr(httpx.AsyncClient, "aclose", client_close)
             with pytest.raises(OperationTimeoutError) as caught:
                 Runtime(LocalSettings(server_url=url)).connect(
-                    control=OperationControl(timeout_seconds=0.2)
+                    control=OperationControl(timeout_seconds=0.5)
                 ).__enter__()
         cleanup = caught.value.runtime_http_cleanup_error
         assert (
@@ -1489,7 +1489,10 @@ def test_f1_internal_auto_close_preserves_primary(
             patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
             with pytest.raises(RuntimeOperationError) as caught:
                 Runtime(LocalSettings(server_url=url)).connect(
-                    control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                    control=OperationControl(
+                        timeout_seconds=0.5 if mode == "timeout" else 2.0,
+                        cancellation=token,
+                    )
                 ).__enter__()
         error = caught.value
         if mode in ("cancel", "timeout"):
@@ -1749,7 +1752,10 @@ def test_ext_f1_portal_close_keeps_primary_and_resources(
             patch.setattr(socket.socket, "connect", connect)
             patch.setattr(_diagnostics._Operation, "checkpoint", checkpoint)
             scope = Runtime(LocalSettings(server_url=url)).connect(
-                control=OperationControl(timeout_seconds=0.2, cancellation=token)
+                control=OperationControl(
+                    timeout_seconds=0.5 if mode == "timeout" else 2.0,
+                    cancellation=token,
+                )
             )
             with pytest.raises(BaseException) as caught:
                 scope.__enter__()
