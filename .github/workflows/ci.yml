@@ -75,6 +75,8 @@ jobs:
 
   package:
     name: ${{ matrix.name }}
+    needs:
+      - tests
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
