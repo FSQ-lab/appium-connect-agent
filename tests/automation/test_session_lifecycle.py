@@ -2204,7 +2204,7 @@ def test_xcuitest_capabilities_coordination_and_release(
             "appium:noReset": True,
             "appium:fullReset": False,
             "appium:showXcodeLog": True,
-            "appium:newCommandTimeout": 300.0,
+            "appium:newCommandTimeout": 900.0,
             "appium:wdaLocalPort": 8100,
             "appium:derivedDataPath": (
                 f"/private/tmp/appium-connect-agent-{os.getuid()}"

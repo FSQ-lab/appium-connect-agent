@@ -57,6 +57,7 @@ from ._system_actions import (
     _get_clipboard_text,
     _hide_keyboard,
     _install_app,
+    _ios_display_size,
     _key_arguments,
     _label,
     _press_keycode,
@@ -498,17 +499,16 @@ class Device:
         )
 
     def display_size(self, *, control: OperationControl | None = None) -> DisplaySize:
-        """Return the default display's real physical pointer extent."""
+        """Return the platform pointer-space extent."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
-        owner._reject_ios(operation_id)
-        return owner._run_operation(operation_id, control, deadline, _display_size)
+        action = _ios_display_size if owner.platform == "ios" else _display_size
+        return owner._run_operation(operation_id, control, deadline, action)
 
     def device_time(self, *, control: OperationControl | None = None) -> DeviceTime:
         """Return a read-only snapshot of the device's local wall clock and offset."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         owner._reject_macos(operation_id)
-        owner._reject_ios(operation_id)
         return owner._run_operation(operation_id, control, deadline, _device_time)
 
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
@@ -537,7 +537,7 @@ class Device:
         ) = _validate_visual_inputs(
             prompt, provider, mode, region, max_candidates, operation_id
         )
-        if valid_mode == "locate" and owner.platform != "android":
+        if valid_mode == "locate" and owner.platform == "macos":
             raise InvalidRequestError(
                 "pointer_mapping_unavailable", operation_id, "not_sent"
             )
@@ -553,6 +553,7 @@ class Device:
                 mode=valid_mode,
                 region=valid_region,
                 max_candidates=valid_max_candidates,
+                ios=owner.platform == "ios",
             ),
         )
 
@@ -784,7 +785,6 @@ class Device:
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         valid_duration = _duration_ms(duration_ms, operation_id)
         owner._reject_macos(operation_id)
-        owner._reject_ios(operation_id)
         owner._run_operation(
             operation_id,
             control,
@@ -798,6 +798,7 @@ class Device:
                 end_x=valid_ex,
                 end_y=valid_ey,
                 duration_ms=valid_duration,
+                ios=owner.platform == "ios",
             ),
         )
 

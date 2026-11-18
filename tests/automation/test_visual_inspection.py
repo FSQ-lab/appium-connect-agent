@@ -23,6 +23,7 @@ from appium_connect_agent.automation import (
     OperationCancelledError,
     OperationTimeoutError,
     Point,
+    Session,
     SessionBusyError,
     VisualImageMatch,
     VisualInspection,
@@ -31,8 +32,10 @@ from appium_connect_agent.automation import (
     VisualProviderResponse,
     VisualTargetCandidate,
     create_mac2_session,
+    create_xcuitest_session,
 )
-from appium_connect_agent.runtime import OperationControl
+from appium_connect_agent.automation import _session as session_module
+from appium_connect_agent.runtime import OperationControl, RuntimeConnection
 from tests.automation._action_protocol import (
     ActionProtocolService,
     Request,
@@ -91,6 +94,8 @@ class VisualProtocolService(ActionProtocolService):
             script = request.body.get("script")
             if script == "mobile: deviceInfo":
                 return "display_size"
+            if script == "mobile: deviceScreenInfo":
+                return "ios_display_size"
             if script == "mobile: clickGesture":
                 return "tap_at"
         return ActionProtocolService._kind(request)
@@ -101,6 +106,8 @@ class VisualProtocolService(ActionProtocolService):
             return {"value": encoded}
         if kind == "display_size":
             return {"value": {"realDisplaySize": "1080x2400"}}
+        if kind == "ios_display_size":
+            return {"value": {"screenSize": {"width": 390, "height": 844}}}
         if kind == "tap_at":
             return {"value": None}
         return super()._default_payload(request, kind)
@@ -127,6 +134,19 @@ def service() -> Iterator[VisualProtocolService]:
     current = VisualProtocolService()
     with current:
         yield current
+
+
+def ios_session_for(
+    service: VisualProtocolService,
+    connection: RuntimeConnection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Session:
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    return create_xcuitest_session(connection, f"IOS-VISUAL-{id(service)}")
 
 
 def test_visual_provider_protocol_runtime_checkable() -> None:
@@ -318,6 +338,65 @@ def test_inspect_with_ai_macos_locate_rejected_before_io(
         assert service.snapshot() == before
         assert provider.requests == []
         mac_session.quit()
+
+
+def test_inspect_with_ai_ios_retina_mapping_and_mismatch_rejection(
+    service: VisualProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, encoded_2x = _encoded_png(780, 1688)
+    _, encoded_3x = _encoded_png(1170, 2532)
+    _, encoded_mismatch = _encoded_png(800, 1688)
+    service.queue(
+        "take_screenshot",
+        ResponsePlan(payload={"value": encoded_2x}),
+        ResponsePlan(payload={"value": encoded_3x}),
+        ResponsePlan(payload={"value": encoded_mismatch}),
+    )
+    provider = StubVisualProvider(
+        VisualProviderResponse(
+            summary="Found control",
+            candidates=(
+                VisualImageMatch(
+                    label="Control",
+                    image_bounds=Bounds(x=300, y=600, width=180, height=120),
+                ),
+            ),
+        )
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        result_2x = session.device.inspect_with_ai(
+            "Locate control", provider=provider, mode="locate"
+        )
+        assert result_2x.platform == "ios"
+        assert result_2x.image_size == DisplaySize(780, 1688)
+        assert result_2x.pointer_size == DisplaySize(390, 844)
+        assert result_2x.candidates[0].pointer_bounds == Bounds(150, 300, 90, 60)
+        assert result_2x.candidates[0].pointer_center == Point(195, 330)
+
+        result_3x = session.device.inspect_with_ai(
+            "Locate control", provider=provider, mode="locate"
+        )
+        assert result_3x.image_size == DisplaySize(1170, 2532)
+        assert result_3x.pointer_size == DisplaySize(390, 844)
+        assert result_3x.candidates[0].pointer_bounds == Bounds(100, 200, 60, 40)
+        assert result_3x.candidates[0].pointer_center == Point(130, 220)
+
+        with pytest.raises(CommandError) as caught:
+            session.device.inspect_with_ai(
+                "Locate control", provider=provider, mode="locate"
+            )
+        assert_error(
+            caught.value,
+            CommandError,
+            "pointer_mapping_unavailable",
+            "response_received",
+            steps=("screenshot_captured", "display_size_read"),
+        )
+        assert len(provider.requests) == 2
+        assert len(service.of_kind("ios_display_size")) == 3
+        session.quit()
 
 
 @pytest.mark.parametrize(
