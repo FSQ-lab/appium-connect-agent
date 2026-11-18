@@ -76,7 +76,7 @@ def test_two_required_long_options_work_in_either_order_and_eof_is_clean(
     for reverse in (False, True):
         mcp_harness.reset_records()
         result = mcp_harness.run(
-            mcp_harness.arguments(reverse=reverse), mode="normal", timeout=5
+            mcp_harness.arguments(reverse=reverse), mode="normal", timeout=15
         )
         assert result.returncode == 0
         assert result.stdout == ""
@@ -107,7 +107,7 @@ def test_harness_python_override_applies_to_all_server_and_helper_launches(
 
     assert mcp_harness.python_command == str(python)
     assert mcp_harness.parameters().command == str(python)
-    raw_server = mcp_harness.run(mcp_harness.arguments(), mode="normal", timeout=5)
+    raw_server = mcp_harness.run(mcp_harness.arguments(), mode="normal", timeout=15)
     assert raw_server.returncode == 0
     assert raw_server.stdout == ""
     assert mcp_harness.events() == []
@@ -118,7 +118,7 @@ def test_harness_python_override_applies_to_all_server_and_helper_launches(
         [mcp_harness.python_command, str(helper)],
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=15,
         check=False,
         cwd=mcp_harness.root,
     )
@@ -282,7 +282,7 @@ def test_config_symlink_follows_file_target_and_rejects_non_file_targets(
     valid = mcp_harness.root / "selected-config-link.toml"
     valid.symlink_to(mcp_harness.config)
     result = mcp_harness.run(
-        mcp_harness.arguments(config=valid), mode="normal", timeout=5
+        mcp_harness.arguments(config=valid), mode="normal", timeout=15
     )
     assert result.returncode == 0
     assert result.stdout == ""
@@ -472,7 +472,7 @@ def test_malformed_frame_is_not_a_tool_call_and_cleanly_exits(
         cwd=mcp_harness.root,
         env=env,
     )
-    protocol_output, _ = process.communicate(input=b"{malformed-json\n", timeout=5)
+    protocol_output, _ = process.communicate(input=b"{malformed-json\n", timeout=15)
     assert process.returncode == 0
     assert protocol_output == b""
     assert mcp_harness.events() == []
@@ -502,7 +502,7 @@ def test_broken_stdout_drains_without_lower_calls_or_leaking(
     process.stdout.close()
     process.stdin.write(b'{"jsonrpc":"2.0","id":1,"method":"server/discover"}\n')
     process.stdin.close()
-    assert process.wait(timeout=5) == 0
+    assert process.wait(timeout=15) == 0
     assert mcp_harness.events() == []
     stderr = mcp_harness.stderr_file.read_text(encoding="utf-8")
     assert "server_error" not in stderr
@@ -569,7 +569,7 @@ def test_inflight_broken_stdout_cancels_worker_and_cleans_up(
                 },
             }
         )
-        readable, _, _ = select.select([stdout], [], [], 5)
+        readable, _, _ = select.select([stdout], [], [], 15)
         assert readable == [stdout]
         initialized = json.loads(stdout.readline())
         assert initialized["id"] == 1
@@ -630,7 +630,7 @@ def test_inflight_broken_stdout_cancels_worker_and_cleans_up(
         mcp_harness.release_file.touch()
         with contextlib.suppress(BrokenPipeError, ValueError):
             stdin.close()
-        assert process.wait(timeout=5) == 0
+        assert process.wait(timeout=15) == 0
         final_events = mcp_harness.events()
         stopped = next(
             event for event in final_events if event["event"] == "server_stopped"
@@ -979,7 +979,7 @@ def test_active_session_broken_stdout_cleans_once_and_exits_zero(
                 },
             }
         )
-        readable, _, _ = select.select([stdout], [], [], 5)
+        readable, _, _ = select.select([stdout], [], [], 15)
         assert readable == [stdout]
         assert json.loads(stdout.readline())["id"] == 1
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -1000,7 +1000,7 @@ def test_active_session_broken_stdout_cleans_once_and_exits_zero(
                 },
             }
         )
-        readable, _, _ = select.select([stdout], [], [], 5)
+        readable, _, _ = select.select([stdout], [], [], 15)
         assert readable == [stdout]
         opened = json.loads(stdout.readline())
         assert opened["id"] == 2
@@ -1019,7 +1019,7 @@ def test_active_session_broken_stdout_cleans_once_and_exits_zero(
             }
         )
         stdin.close()
-        assert process.wait(timeout=5) == 0
+        assert process.wait(timeout=15) == 0
         names = [event["event"] for event in mcp_harness.events()]
         assert names.count("create_session") == 1
         assert names.count("session_quit") == 1

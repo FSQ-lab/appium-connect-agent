@@ -734,5 +734,5 @@ CI 保留工具的静态检查和已有产品测试，不执行真实环境体�
 
 `Release`（`.github/workflows/release.yml`）仅支持 `workflow_dispatch` 手动触发：
 
-- 默认 `publish=false`：完整执行 `Quality`、`Tests`、`verify`（制品构建与白名单校验），以及 `ubuntu-latest` / `macos-15-intel` / `windows-latest` 三平台纯净 `venv + pip` 安装与导入/元数据冒烟验证（其中 Ubuntu 与 macOS 另执行 `appium-connect-agent --help` / `catalog` 与 `appium-connect-agent-mcp` 启动前置校验双 CLI 冒烟；Windows 仅验证安装、导入、许可证与 22 工具 Catalog），上传已验证制品而不发布。
+- 默认 `publish=false`：完整执行 `Quality`、`Tests`、`verify`（制品构建与白名单校验），以及 `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台纯净 `venv + pip` 安装与导入/元数据冒烟验证（其中 Ubuntu 与 macOS 另执行 `appium-connect-agent --help` / `catalog` 与 `appium-connect-agent-mcp` 启动前置校验双 CLI 冒烟；Windows 仅验证安装、导入、许可证与 22 工具 Catalog），上传已验证制品而不发布。
 - 显式 `publish=true`（可选填写 `release_tag`，如 `v0.1.0`）：在上述全部门禁通过后，进入受保护的 GitHub `pypi` Environment，核验无直接 URL 依赖、MIT 许可证及版本/Tag 一致性，并通过 PyPI Trusted Publishing（OIDC，`uv publish --trusted-publishing always`）发布。

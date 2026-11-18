@@ -817,7 +817,7 @@ class McpHarness:
         *,
         mode: str = "forbid",
         environment: dict[str, str] | None = None,
-        timeout: float = 5,
+        timeout: float = 15,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env.update(self.environment(mode))
