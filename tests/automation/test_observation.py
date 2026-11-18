@@ -862,6 +862,75 @@ def test_inspect_preserves_attribute_order_states_and_bounds(
         session.quit()
 
 
+@pytest.mark.parametrize("raw_sentinel", [None, "", "null"])
+def test_inspect_normalizes_uiautomator2_null_and_empty_sentinels_without_clobbering_text(
+    service: ElementProtocolService, raw_sentinel: str | None
+) -> None:
+    service.attributes.update(
+        {
+            ("target", "resource-id"): raw_sentinel,
+            ("target", "content-desc"): raw_sentinel,
+            ("target", "package"): "null" if raw_sentinel is not None else None,
+            ("target", "class"): "null" if raw_sentinel is not None else None,
+            ("target", "window-id"): "null" if raw_sentinel is not None else None,
+            ("target", "text"): "null" if raw_sentinel == "null" else "",
+        }
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, f"uia2-sentinel-{raw_sentinel!r}")
+        result = session.element("id", "target").inspect(
+            attributes=("id", "desc", "package", "type", "window_id", "text")
+        )
+        assert [(item.name, item.state, item.value) for item in result.attributes] == [
+            ("id", "missing", None),
+            ("desc", "missing", None),
+            ("package", "missing", None),
+            ("type", "missing", None),
+            ("window_id", "missing", None),
+            (
+                "text",
+                "value",
+                "null" if raw_sentinel == "null" else "",
+            ),
+        ]
+        data = document(result)
+        assert data["payload"]["attributes"] == [
+            {"name": "id", "state": "missing"},
+            {"name": "desc", "state": "missing"},
+            {"name": "package", "state": "missing"},
+            {"name": "type", "state": "missing"},
+            {"name": "window_id", "state": "missing"},
+            {
+                "name": "text",
+                "state": "value",
+                "value": "null" if raw_sentinel == "null" else "",
+            },
+        ]
+        session.quit()
+
+
+@pytest.mark.parametrize("raw_id", ["", "null"])
+def test_tree_xml_empty_or_null_resource_id_is_missing_while_raw_structure_stays_exact(
+    service: ElementProtocolService, raw_id: str
+) -> None:
+    service.source = basic_xml(node_xml(resource_id=raw_id, desc="Target", text="null"))
+    with connected(service) as connection:
+        session = session_for(service, connection, f"tree-empty-id-{raw_id}")
+        tree = session.observe_tree()
+        node = tree.roots[0]
+        assert (node.id.state, node.id.value) == ("missing", None)
+        assert (node.text.state, node.text.value) == ("value", "null")
+        tree_doc = document(tree)["payload"]["roots"][0]
+        assert "id" not in tree_doc
+        assert "id" in tree_doc["missing"]
+        assert tree_doc["text"] == "null"
+        structure = session.element("accessibility id", "Target").inspect_structure(
+            scope="target"
+        )
+        assert ("resource-id", raw_id) in structure.roots[0].attributes
+        session.quit()
+
+
 def test_element_inspection_schema_is_canonical_immutable_and_reference_free(
     service: ElementProtocolService,
 ) -> None:

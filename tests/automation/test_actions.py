@@ -445,7 +445,7 @@ def test_condition_deadline_after_complete_response_is_response_received(
 
 
 @pytest.mark.parametrize("phase", ["header", "body"])
-def test_condition_deadline_in_flight_is_unknown_and_closes_local_path(
+def test_condition_deadline_in_flight_uses_operation_budget_and_keeps_session_active(
     service: ActionProtocolService, phase: str
 ) -> None:
     plan = (
@@ -455,14 +455,49 @@ def test_condition_deadline_in_flight_is_unknown_and_closes_local_path(
     )
     service.queue("find", plan)
     with connected(service) as connection:
-        session = session_for(service, connection, f"condition-unknown-{phase}")
+        session = session_for(service, connection, f"condition-active-{phase}")
         target = session.element("id", "target")
         with pytest.raises(TargetError) as caught:
-            target.click(wait_timeout_seconds=0.05)
+            target.click(
+                wait_timeout_seconds=0.05,
+                control=OperationControl(timeout_seconds=1.0),
+            )
         assert_error(
             caught.value,
             TargetError,
             "condition_timeout",
+            "response_received",
+            steps=(),
+        )
+        assert session.session_info().state == "active"
+        assert service.of_kind("action") == []
+        target.click()
+        assert len(service.of_kind("action")) == 1
+        session.quit()
+
+
+@pytest.mark.parametrize("phase", ["header", "body"])
+def test_operation_deadline_in_flight_during_wait_is_unknown_and_closes_local_path(
+    service: ActionProtocolService, phase: str
+) -> None:
+    plan = (
+        ResponsePlan(header_delay_seconds=0.2)
+        if phase == "header"
+        else ResponsePlan(body_delay_seconds=0.2)
+    )
+    service.queue("find", plan)
+    with connected(service) as connection:
+        session = session_for(service, connection, f"operation-unknown-{phase}")
+        target = session.element("id", "target")
+        with pytest.raises(OperationTimeoutError) as caught:
+            target.click(
+                wait_timeout_seconds=1.0,
+                control=OperationControl(timeout_seconds=0.05),
+            )
+        assert_error(
+            caught.value,
+            OperationTimeoutError,
+            "operation_timeout",
             "response_unknown",
             steps=(),
         )
@@ -471,6 +506,29 @@ def test_condition_deadline_in_flight_is_unknown_and_closes_local_path(
         with pytest.raises(InvalidSessionStateError):
             target.click()
         assert service.snapshot() == before
+
+
+def test_sub_threshold_remaining_operation_budget_rejects_before_sending_request(
+    service: ActionProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, "sub-threshold-budget")
+        before = service.snapshot()
+        with pytest.raises(OperationTimeoutError) as caught:
+            session.element("id", "target").click(
+                wait_timeout_seconds=1.0,
+                control=OperationControl(timeout_seconds=0.002),
+            )
+        assert_error(
+            caught.value,
+            OperationTimeoutError,
+            "operation_timeout",
+            "not_sent",
+            steps=(),
+        )
+        assert service.snapshot() == before
+        assert session.session_info().state == "active"
+        session.quit()
 
 
 def test_cancellation_wakes_poll_and_wins_at_a_shared_deadline(

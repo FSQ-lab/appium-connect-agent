@@ -20,8 +20,10 @@ from appium.options.android import UiAutomator2Options
 from appium.options.ios import XCUITestOptions
 from appium.options.mac import Mac2Options
 from selenium.common.exceptions import (
+    InvalidSessionIdException,
     SessionNotCreatedException,
     StaleElementReferenceException,
+    WebDriverException,
 )
 
 from appium_connect_agent.runtime import (
@@ -53,6 +55,7 @@ from ._gestures import (
     _perform_scroll_gesture,
     _perform_swipe_gesture,
     _validate_direction,
+    _validate_gesture_inset,
     _validate_max_swipes,
     _validate_percent,
     _validate_ratio,
@@ -135,6 +138,38 @@ _Result = TypeVar("_Result")
 _ALLOWED_CAPABILITIES = frozenset({"appium:deviceName", "appium:platformVersion"})
 _MAC_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,254}")
 _MAX_JSON_SAFE_INTEGER = 9_007_199_254_740_991
+
+_DEFAULT_NEW_COMMAND_TIMEOUT_SECONDS: float = 900.0
+_CAPABILITY_ALIASES: dict[str, str] = {
+    "deviceName": "appium:deviceName",
+    "platformVersion": "appium:platformVersion",
+}
+_TIMEOUT_CAPABILITY_KEYS = frozenset({"newCommandTimeout", "appium:newCommandTimeout"})
+_DEAD_SESSION_PATTERNS = (
+    "nosuchdriver",
+    "invalidsessionid",
+    "a session is either terminated or not started",
+    "session is either terminated or not started",
+    "instrumentation process is not running",
+    "cannot be proxied to uiautomator2 server because the instrumentation process is not running",
+)
+
+
+class _DeadSessionError(Exception):
+    """Raised when Appium/UiAutomator2 reports a deterministically dead Session."""
+
+
+def _is_dead_session_exception(cause: BaseException) -> bool:
+    if isinstance(cause, InvalidSessionIdException):
+        return True
+    if not isinstance(cause, WebDriverException):
+        return False
+    parts = [type(cause).__name__, str(cause)]
+    msg = getattr(cause, "msg", None)
+    if isinstance(msg, str):
+        parts.append(msg)
+    combined = " ".join(parts).lower()
+    return any(pattern in combined for pattern in _DEAD_SESSION_PATTERNS)
 
 
 class _InvalidCreateResponse(Exception):
@@ -221,9 +256,11 @@ def _validate_app_path(value: object, operation_id: str) -> Path | None:
     return value
 
 
-def _validate_capabilities(capabilities: object, operation_id: str) -> dict[str, str]:
+def _validate_capabilities(
+    capabilities: object, operation_id: str
+) -> tuple[dict[str, str], float | None]:
     if capabilities is None:
-        return {}
+        return {}, None
     if not isinstance(capabilities, Mapping):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     try:
@@ -232,22 +269,42 @@ def _validate_capabilities(capabilities: object, operation_id: str) -> dict[str,
         raise InvalidRequestError(
             "invalid_argument", operation_id, "not_sent"
         ) from None
-    if len(items) > 2:
+    if len(items) > 3:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     result: dict[str, str] = {}
+    cap_timeout: float | None = None
+    seen_timeout = False
     for key, value in items:
         if not isinstance(key, str):
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        if key not in _ALLOWED_CAPABILITIES:
+        if key in _TIMEOUT_CAPABILITY_KEYS:
+            if seen_timeout:
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            seen_timeout = True
+            cap_timeout = float(value)
+            continue
+        canonical_key = _CAPABILITY_ALIASES.get(key, key)
+        if canonical_key not in _ALLOWED_CAPABILITIES:
             raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        if canonical_key in result:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
         if (
             not isinstance(value, str)
             or not 1 <= len(value) <= 256
             or _contains_control(value)
         ):
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        result[key] = value
-    return result
+        result[canonical_key] = value
+    if len(result) > 2:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return result, cap_timeout
 
 
 def _validate_create_request(
@@ -280,7 +337,14 @@ def _validate_create_request(
             raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if no_reset and full_reset:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    timeout = new_command_timeout_seconds
+    extras, cap_timeout = _validate_capabilities(capabilities, operation_id)
+    timeout = (
+        cap_timeout
+        if new_command_timeout_seconds is None
+        else new_command_timeout_seconds
+    )
+    if timeout is None:
+        timeout = _DEFAULT_NEW_COMMAND_TIMEOUT_SECONDS
     if (
         isinstance(timeout, bool)
         or not isinstance(timeout, (int, float))
@@ -293,7 +357,6 @@ def _validate_create_request(
         type(idle_timeout) is not int or not 0 <= idle_timeout <= _MAX_JSON_SAFE_INTEGER
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    extras = _validate_capabilities(capabilities, operation_id)
     return (
         cast(str, device_id),
         cast(str | None, app_id),
@@ -751,7 +814,6 @@ class _SessionOperationGateway:
     def _preflight_failure(
         self,
         cause: BaseException,
-        condition_deadline: float | None,
         *,
         cancelled: bool,
     ) -> Never:
@@ -760,10 +822,6 @@ class _SessionOperationGateway:
             error = self.failure(
                 OperationCancelledError, "operation_cancelled", "not_sent"
             )
-        elif self._deadline is not None and time.monotonic() >= self._deadline:
-            error = self.failure(OperationTimeoutError, "operation_timeout", "not_sent")
-        elif condition_deadline is not None:
-            error = self.failure(TargetError, "condition_timeout", "not_sent")
         else:
             error = self.failure(OperationTimeoutError, "operation_timeout", "not_sent")
         raise error from cause
@@ -807,15 +865,19 @@ class _SessionOperationGateway:
         try:
             result = action()
         except _RequestCancelled as cause:
-            self._preflight_failure(cause, condition_deadline, cancelled=True)
+            self._preflight_failure(cause, cancelled=True)
         except _RequestTimedOut as cause:
-            self._preflight_failure(cause, condition_deadline, cancelled=False)
+            self._preflight_failure(cause, cancelled=False)
         except Exception as cause:
             if client.response_received:
                 if pre_action and isinstance(cause, StaleElementReferenceException):
                     assert condition_deadline is not None
                     self.wait_checkpoint(condition_deadline, response_received=True)
                     raise _PreActionStale from cause
+                if self._session._platform == "android" and _is_dead_session_exception(
+                    cause
+                ):
+                    raise _DeadSessionError from cause
                 raise self.failure(
                     CommandError, "command_failed", "response_received"
                 ) from cause
@@ -863,13 +925,10 @@ class _SessionOperationGateway:
         pre_action: bool = True,
     ) -> _Result:
         self.wait_checkpoint(condition_deadline)
-        request_deadline = condition_deadline
-        if self._deadline is not None:
-            request_deadline = min(request_deadline, self._deadline)
         return self._request(
             action,
             None,
-            request_deadline=request_deadline,
+            request_deadline=self._deadline,
             condition_deadline=condition_deadline,
             cleanup=False,
             pre_action=pre_action,
@@ -910,6 +969,8 @@ class Session:
     _device: Device
     _device_id: str
     _driver: webdriver.Remote | None
+    _extras: dict[str, str]
+    _new_command_timeout_seconds: float
     _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
@@ -919,6 +980,7 @@ class Session:
     _state: SessionState
     _state_lock: Lock
     _target_app_id: str | None
+    _uiautomator2_wait_for_idle_timeout_ms: int | None
 
     __slots__ = (
         "_appium_session_id",
@@ -926,7 +988,9 @@ class Session:
         "_device",
         "_device_id",
         "_driver",
+        "_extras",
         "_id",
+        "_new_command_timeout_seconds",
         "_operation_gate",
         "_platform",
         "_reservation",
@@ -935,6 +999,7 @@ class Session:
         "_state",
         "_state_lock",
         "_target_app_id",
+        "_uiautomator2_wait_for_idle_timeout_ms",
     )
 
     def __init__(self) -> None:
@@ -959,6 +1024,9 @@ class Session:
         instance._runtime_connection = runtime_connection
         instance._runtime_usage = runtime_usage
         instance._driver = None
+        instance._new_command_timeout_seconds = _DEFAULT_NEW_COMMAND_TIMEOUT_SECONDS
+        instance._uiautomator2_wait_for_idle_timeout_ms = None
+        instance._extras = {}
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
         return instance
@@ -1009,12 +1077,153 @@ class Session:
             predicate=predicate,
         )
 
+    def _reattach_locked(
+        self,
+        operation_id: str,
+        control: OperationControl | None,
+        deadline: float | None,
+    ) -> webdriver.Remote:
+        server_url = self._connection_is_active(operation_id)
+        _checkpoint(control, deadline, operation_id)
+        old_client = getattr(self, "_client", None)
+        if isinstance(old_client, _LifecycleConnection):
+            _close_client(old_client)
+        client = _new_connection(server_url)
+        options = _build_options(
+            self._device_id,
+            None,
+            None,
+            False,
+            False,
+            True,
+            False,
+            False,
+            self._new_command_timeout_seconds,
+            self._uiautomator2_wait_for_idle_timeout_ms,
+            self._reservation.system_port,
+            self._extras,
+        )
+        client.prepare_request(
+            control.cancellation if control is not None else None, deadline
+        )
+        try:
+            driver = _SessionWebDriver(command_executor=client, options=options)
+        except _RequestCancelled as cause:
+            _close_client(client)
+            raise OperationCancelledError(
+                "operation_cancelled", operation_id, "not_sent"
+            ) from cause
+        except _RequestTimedOut as cause:
+            _close_client(client)
+            raise OperationTimeoutError(
+                "operation_timeout", operation_id, "not_sent"
+            ) from cause
+        except Exception as cause:
+            cleanup_errors = _close_client(client)
+            if client.terminal_not_created:
+                raise CommandError(
+                    "command_failed",
+                    operation_id,
+                    "response_received",
+                    cleanup_errors=cleanup_errors,
+                ) from cause
+            if not client.request_started:
+                raise
+            self._set_state("uncertain")
+            request_state: RequestState = (
+                "response_received"
+                if client.response_received
+                and isinstance(cause, SessionNotCreatedException)
+                else "response_unknown"
+            )
+            raise ResourceStateError(
+                "session_create_unknown",
+                operation_id,
+                request_state,
+                session=self,
+                cleanup_errors=cleanup_errors,
+            ) from cause
+        except BaseException:
+            if client.request_started:
+                self._set_state("uncertain")
+            else:
+                _close_client(client)
+            raise
+
+        response = client.new_session_response
+        value = response.get("value") if response is not None else None
+        session_id = value.get("sessionId") if isinstance(value, dict) else None
+        capabilities = value.get("capabilities") if isinstance(value, dict) else None
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(capabilities, dict)
+            or driver.session_id != session_id
+        ):
+            cleanup_errors = _close_client(client)
+            self._set_state("uncertain")
+            raise ResourceStateError(
+                "session_create_unknown",
+                operation_id,
+                "response_received",
+                session=self,
+                cleanup_errors=cleanup_errors,
+            )
+        with self._state_lock:
+            self._client = client
+            self._driver = driver
+            self._appium_session_id = session_id
+            self._state = "active"
+        return driver
+
+    def ensure_alive(self, *, control: OperationControl | None = None) -> bool:
+        """Probe this Session and non-destructively re-attach if the remote Session died.
+
+        Returns True when a new Appium Session was re-attached, or False when the
+        existing Appium Session was already healthy.
+        """
+        operation_id, control, _, deadline = _new_operation(control)
+        if not self._operation_gate.acquire(blocking=False):
+            raise SessionBusyError("session_busy", operation_id, "not_sent")
+        try:
+            with self._state_lock:
+                state = self._state
+            if state != "active":
+                code = "session_closed" if state == "closed" else "session_invalid"
+                raise InvalidSessionStateError(code, operation_id, "not_sent")
+            self._connection_is_active(operation_id)
+            _checkpoint(control, deadline, operation_id)
+            driver = self._driver
+            if driver is None:
+                raise RuntimeError("active Session has no Appium client")
+            gateway = _SessionOperationGateway(self, operation_id, control, deadline)
+            try:
+                if self._platform == "macos":
+                    gateway.request(
+                        lambda: driver.execute_script("macos: listDisplays"),
+                        "session_probed",
+                    )
+                else:
+                    gateway.request(driver.get_settings, "session_probed")
+                return False
+            except _DeadSessionError:
+                self._reattach_locked(operation_id, control, deadline)
+                return True
+        finally:
+            self._operation_gate.release()
+
+    def ping(self, *, control: OperationControl | None = None) -> bool:
+        """Alias for ensure_alive(): verify or non-destructively restore Session health."""
+        return self.ensure_alive(control=control)
+
     def _run_operation(
         self,
         operation_id: str,
         control: OperationControl | None,
         deadline: float | None,
         action: Callable[[webdriver.Remote, _SessionOperationGateway], _Result],
+        *,
+        replay_on_dead_session: bool = True,
     ) -> _Result:
         if not self._operation_gate.acquire(blocking=False):
             raise SessionBusyError("session_busy", operation_id, "not_sent")
@@ -1029,10 +1238,27 @@ class Session:
             driver = self._driver
             if driver is None:
                 raise RuntimeError("active Session has no Appium client")
-            return action(
-                driver,
-                _SessionOperationGateway(self, operation_id, control, deadline),
-            )
+            gateway = _SessionOperationGateway(self, operation_id, control, deadline)
+            try:
+                return action(driver, gateway)
+            except _DeadSessionError as dead_error:
+                new_driver = self._reattach_locked(operation_id, control, deadline)
+                if not replay_on_dead_session:
+                    cause = dead_error.__cause__
+                    error = gateway.failure(
+                        CommandError, "command_failed", "response_received"
+                    )
+                    raise error from cause
+                retry_gateway = _SessionOperationGateway(
+                    self, operation_id, control, deadline
+                )
+                try:
+                    return action(new_driver, retry_gateway)
+                except _DeadSessionError as retry_dead:
+                    retry_error = retry_gateway.failure(
+                        CommandError, "command_failed", "response_received"
+                    )
+                    raise retry_error from retry_dead.__cause__
         except AutomationError as error:
             if self._platform == "ios":
                 _redact_xcuitest_error(error)
@@ -1590,7 +1816,11 @@ class Session:
         operation: _PreparedOperation,
         *,
         direction: Literal["up", "down", "left", "right"],
-        percent: float,
+        percent: float = 0.6,
+        left: int | None = None,
+        top: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> None:
         """Wait for a displayed Element and issue one native swipe."""
@@ -1598,6 +1828,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         valid_direction = _validate_direction(direction, operation_id)
         valid_percent = _validate_percent(percent, operation_id, maximum=1.0)
+        area = _validate_gesture_inset(left, top, width, height, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
@@ -1612,6 +1843,7 @@ class Session:
                 gateway,
                 direction=valid_direction,
                 percent=valid_percent,
+                area=area,
                 condition_deadline=started + wait_timeout,
             ),
         )
@@ -1622,7 +1854,11 @@ class Session:
         operation: _PreparedOperation,
         *,
         direction: Literal["up", "down", "left", "right"],
-        percent: float,
+        percent: float = 0.6,
+        left: int | None = None,
+        top: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
         wait_timeout_seconds: float = 15.0,
     ) -> bool:
         """Wait for a displayed Element and issue one native scroll gesture."""
@@ -1630,6 +1866,7 @@ class Session:
         valid_element = _validate_owner(element, self, operation_id)
         valid_direction = _validate_direction(direction, operation_id)
         valid_percent = _validate_percent(percent, operation_id, maximum=3.0)
+        area = _validate_gesture_inset(left, top, width, height, operation_id)
         wait_timeout = _validate_wait_timeout(wait_timeout_seconds, operation_id)
         _validate_raw_chains((valid_element,), operation_id)
         self._reject_macos(operation_id)
@@ -1644,6 +1881,7 @@ class Session:
                 gateway,
                 direction=valid_direction,
                 percent=valid_percent,
+                area=area,
                 condition_deadline=started + wait_timeout,
             ),
         )
@@ -1802,9 +2040,9 @@ class Session:
         with self._state_lock:
             self._state = state
 
-    def _connection_is_active(self, operation_id: str) -> None:
+    def _connection_is_active(self, operation_id: str) -> str:
         try:
-            _ = self._runtime_connection.server_url
+            return self._runtime_connection.server_url
         except Exception as cause:
             if getattr(cause, "code", None) != "connection_closed":
                 raise
@@ -2092,7 +2330,7 @@ def create_session(
     no_reset: bool = True,
     full_reset: bool = False,
     should_terminate_app: bool = False,
-    new_command_timeout_seconds: float = 500,
+    new_command_timeout_seconds: float | None = 900.0,
     uiautomator2_wait_for_idle_timeout_ms: int | None = None,
     capabilities: Mapping[str, JsonValue] | None = None,
     control: OperationControl | None = None,
@@ -2143,6 +2381,9 @@ def create_session(
         raise
     session._reservation = reservation
 
+    session._new_command_timeout_seconds = valid_timeout
+    session._uiautomator2_wait_for_idle_timeout_ms = valid_idle_timeout
+    session._extras = dict(valid_capabilities)
     try:
         client = _new_connection(server_url)
         session._client = client

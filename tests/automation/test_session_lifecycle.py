@@ -2104,6 +2104,55 @@ def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
         session.quit()
 
 
+def test_default_new_command_timeout_is_900_and_overrides_take_precedence(
+    service: ProtocolService,
+) -> None:
+    with connected(service) as connection:
+        default_session = create_session(connection, "timeout-default")
+        default_session.quit()
+
+        explicit_session = create_session(
+            connection, "timeout-explicit", new_command_timeout_seconds=1200
+        )
+        explicit_session.quit()
+
+        cap_session = create_session(
+            connection,
+            "timeout-cap",
+            new_command_timeout_seconds=None,
+            capabilities={"appium:newCommandTimeout": 1500},
+        )
+        cap_session.quit()
+
+        bare_cap_session = create_session(
+            connection,
+            "timeout-bare-cap",
+            new_command_timeout_seconds=None,
+            capabilities={"newCommandTimeout": 1800, "deviceName": "Pixel"},
+        )
+        bare_cap_session.quit()
+
+        both_session = create_session(
+            connection,
+            "timeout-both",
+            new_command_timeout_seconds=600,
+            capabilities={"appium:newCommandTimeout": 1500},
+        )
+        both_session.quit()
+
+    creates = [
+        request for request in service.lifecycle_requests() if request.method == "POST"
+    ]
+    assert [appium_caps(req)["appium:newCommandTimeout"] for req in creates] == [
+        900.0,
+        1200.0,
+        1500.0,
+        1800.0,
+        600.0,
+    ]
+    assert appium_caps(creates[3])["appium:deviceName"] == "Pixel"
+
+
 def configure_private_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     private_tmp = tmp_path / "private-tmp"
     private_tmp.mkdir(mode=0o700)

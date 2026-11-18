@@ -840,11 +840,20 @@ def test_real_ios_representative_flow_is_equivalent_across_three_shells(
         config.write_text(
             f'[runtime]\nserver_url = "{service.url}"\n', encoding="utf-8"
         )
+        stdio_home = tmp_path.resolve() / "stdio-account"
+        stdio_home.mkdir()
+        stdio_launcher = tmp_path / "stdio_mcp_launcher.py"
+        stdio_launcher.write_text(
+            "from pathlib import Path\n"
+            "from appium_connect_agent.runtime import _coordination\n"
+            "from appium_connect_agent.integrations._server import main\n"
+            f"_coordination._account_home = lambda: Path({str(stdio_home)!r})\n"
+            "raise SystemExit(main())\n",
+            encoding="utf-8",
+        )
         stdio_parameters = StdioServerParameters(
-            command=os.fspath(
-                Path(sys.executable).with_name("appium-connect-agent-mcp")
-            ),
-            args=["--config", str(config)],
+            command=sys.executable,
+            args=[str(stdio_launcher), "--config", str(config)],
         )
         derived_data = (
             Path("/private/tmp")

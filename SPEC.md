@@ -22,7 +22,7 @@
 
 `contracts` 提供共享边界；`configuration`、`runtime`、`automation` 和 `integrations` 按各自模块 SPEC 维护职责，并遵守下方 Module Import Constraints 的依赖方向。具体接口将在后续逐模块、逐 feature 的 SPEC gate 中确认。
 
-模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载和只读屏幕 PNG 截图与显式屏幕坐标单指触控。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
+模块级 Python 包名与逻辑模块对应，内部文件不要求镜像文档目录。Runtime 当前公开契约为本地静态诊断、已有本地 Appium 的同步连接、固定受管根初始安装、scope-managed Appium 启动/usage/自然清理、active owned 服务的显式 stop/restart，以及三个 allowlist 官方 driver 的显式 ensure 与显式 Driver Doctor；Automation 当前公开契约为只读 Android ADB 设备发现、明确 Session 生命周期（含默认 `newCommandTimeout=900`、非破坏性 Session 断联透明重建、`Session.ensure_alive` / `Session.ping`）及 managed Runtime usage lease 接缝、Android Native 结构观测与 Element 接缝、绑定 Element 的单击/双击/长按、文本输入/清空/替换、IME 动作、滑动/滚动/受限官方滚动查找/拖放，以及绑定 Device 的系统按键/隐藏键盘/剪贴板/弹窗、状态栏面板、应用激活/终止/状态查询、本地单 APK 安装/卸载、默认 display 物理像素尺寸查询、只读设备本地时钟查询（`Device.device_time`）、只读屏幕 PNG 截图、显式屏幕坐标单指触控与安全区内缩方向滑动（`Device.swipe`），以及依赖倒置的统一视觉感知与定位基座（`Device.inspect_with_ai`）。其他后续能力仍须逐 feature 确认。合同确认不等于实现、真实三平台资格、模块或平台 Done；团队角色不属于产品运行时架构。
 
 ## Development Rules
 
@@ -110,7 +110,7 @@
 - 产品直接运行依赖新增无 extras 的 `Appium-Python-Client==6.0.8` 与 `selenium==4.51.0`，仅供 Automation Session/WebDriver/Appium 命令及其传输使用；不启用 AppiumService、浏览器、Selenium Manager 或 BiDi。发行元数据固定这两个直接版本，传递依赖由 `uv.lock` 固定。
 - 正常顺序为进入一次 Runtime connection、为明确设备创建一个或多个独立 Session、逐个 `quit()`、再退出 connection。Runtime 不替 Automation 关闭 Session；Automation 不缓存已退出 connection 的 URL 继续发送命令。
 - 同设备占用和 UiAutomator2 `systemPort` 只在当前 Python 进程内协调；不同 Session 不共享 WebDriver、sessionId 或命令连接。创建、存活、关闭及结果未知期间保留占用，只有可证明未创建或确认关闭且本地收尾完成后释放。
-- 默认能力包括 `appium:newCommandTimeout=500`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方 initial Settings capability。`create_session` 另提供 keyword-only `uiautomator2_wait_for_idle_timeout_ms: int | None = None`；默认 `None` 完全省略 `appium:settings[waitForIdleTimeout]` 并保持上游现状，只有调用方显式提供 `0..9_007_199_254_740_991` 范围内的 strict integer 时才发送该 initial Setting。SDK 不按应用/profile 自动选择值、不全局设 0、不增加 update/retry 或外层预算。契约确认不表示真实 Session 或 Automation 模块整体已验收。
+- 默认能力包括 `appium:newCommandTimeout=900`、`appium:autoLaunch=false`、`appium:noReset=true`、`appium:fullReset=false`、`appium:shouldTerminateApp=false` 及 `enableMultiWindows=true` 的官方 initial Settings capability。`create_session` 另提供 keyword-only `uiautomator2_wait_for_idle_timeout_ms: int | None = None`；默认 `None` 完全省略 `appium:settings[waitForIdleTimeout]` 并保持上游现状，只有调用方显式提供 `0..9_007_199_254_740_991` 范围内的 strict integer 时才发送该 initial Setting。SDK 不按应用/profile 自动选择值、不全局设 0、不增加 update/retry 或外层预算。契约确认不表示真实 Session 或 Automation 模块整体已验收。
 
 
 ## Local Managed Installation Preparation
@@ -405,6 +405,33 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 - `take_screenshot` 固定发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的不可变字节流不超过 32 MiB（`33,554,432` bytes），并完成 PNG 8 字节签名与全 chunk 序列 framing/CRC32 校验（首块 13 字节正整数宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）；非法形状、非法 Base64、损坏/非 PNG chunk 或超限统一 `CommandError/command_failed/response_received`，成功记 `screenshot_captured`。截图字节仅在内存返回给直接调用方，严禁落盘或进入日志、异常与默认证据。
 - `tap_at` 与 `swipe_between` 的全部坐标必须为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 必须为排除 `bool` 的实际整数 `1..60,000`。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于当时剩余总预算，不足时取消优先否则 `OperationTimeoutError/operation_timeout/not_sent` 零请求拒绝。`tap_at` 固定发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）并校验 `None` 返回；`swipe_between` 固定使用锁定 Selenium 公开 `PointerInput(interaction.POINTER_TOUCH, "touch")` 经 `driver.execute(Command.W3C_ACTIONS, {"actions": [touch.encode()]})` 发送一次仅含单个 `touch` 指针的四步序列（起点 0ms move → down → `duration_ms` 终点 move → up）并严格校验响应 `Mapping` 显式包含键 `"value"` 且 `response["value"] is None`；两者成功均记 `action_completed`，开始发送后绝不重放。
 - 详细输入边界、协议载荷、隐私约束与验证义务见 [Automation 模块 SPEC](modules/automation/SPEC.md) 的 AIF-11 条款。
+
+## Automation Android Physical Display Size（AIF-12）
+
+本节定义 Issue #46 经用户 SPEC Gate 确认的 AIF-12 契约增量；依据为[已确认 AIF-12 设计](docs/superpowers/specs/2026-11-16-automation-aif-12-display-size-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- 新增不可变纯值 `DisplaySize(width: int, height: int)` 与绑定 `Device.display_size(*, control: OperationControl | None = None) -> DisplaySize`。返回 Android 默认 display 经 `Display.getRealSize` 得到的正物理像素宽高；它定义 AIF-11 `tap_at` / `swipe_between` 的全屏 pointer-space 尺寸。`TreeObservation.viewport` 仍只描述层级 content viewport，不得再用于全屏物理坐标缩放或本入口 fallback。
+- Android 固定在现有 Session gate 与 `gateway.final_action` 内发送一次 `driver.execute_script("mobile: deviceInfo")`，只读取 `realDisplaySize`。值必须精确为 canonical ASCII `WxH`：单个小写 `x`，两侧无前导零的正十进制整数且各不超过 `2_147_483_647`；缺失、非字符串、空白、Unicode 数字、额外分隔或越界统一 `CommandError/command_failed/response_received`，零 fallback、零第二请求、零缓存。
+- 成功记唯一完成步骤 `display_size_read`。方法沿用一次 operation id/总预算、取消优先、最终响应成功事实优先、no-replay 与 `response_unknown -> uncertain` 资源保留。Mac2 在网络前 `unsupported_operation/not_sent`；不声称 iOS/XCUITest 支持。
+- 上游 device-info 可能含设备标识、网络等额外字段；SDK 只读取尺寸，不日志化、缓存、返回或持久化任何其他字段。`tap_at` / `swipe_between` 不隐式调用本入口、不 clamp 或缩放，消费方负责显式转换与调用间时效。
+- 复用锁定 Appium/UiAutomator2/Python Client/Selenium 与 CPython 标准库；`Runtime`、`Contracts`、`Configuration`、`Integrations`、产品/开发依赖及 lockfile 均 no-delta。
+
+## Automation Unified Visual Perception And Grounding（AIF-13）
+
+本节定义 Issue #47 经用户 SPEC Gate 确认的 AIF-13 契约增量；依据为[已确认 AIF-13 设计](docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- 架构遵循“视觉识别是统一的，截图与视觉分析后的执行是分平台的”：Automation 在绑定 `Device` 上公开 `Device.inspect_with_ai(prompt: str, *, provider: VisualProvider, mode: VisualMode = "extract", region: ImageRegion | None = None, max_candidates: int = 5, control: OperationControl | None = None) -> VisualInspection`，并由 `appium_connect_agent.automation` 导出 `VisualMode`、`Point`、`ImageRegion`、`VisualImageMatch`、`VisualProviderRequest`、`VisualProviderResponse`、`VisualProvider`、`VisualTargetCandidate` 与 `VisualInspection`。不提供 `assert_with_ai`、同名别名或业务真假裁决。
+- SDK 不持有任何模型 API key、HTTP 模型客户端或业务 prompt 策略，仅在同一 Session 非阻塞 gate 与单次 `OperationControl` 总预算内顺序执行：单帧 PNG 截图（拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG `frame_not_single`，提取 `IHDR` `image_size` 与 64 字符小写 `png_sha256`）→ 全图 `image-space` 的 `region` 边界核验 → `locate` 模式下获取平台权威 `pointer_size`（Android 走 `mobile: deviceInfo`，要求正整数倍轴对齐等比例缩放，失配则在调用 provider 前 `CommandError/pointer_mapping_unavailable/response_received`；Mac2 对 `locate` 在 gate/网络前 `InvalidRequestError/pointer_mapping_unavailable/not_sent`）→ 调用宿主注入的同步 `provider.inspect(request)` 一次（传入完整未裁剪原图 `png_bytes`）→ 严格校验 `VisualProviderResponse`（`extract` 必须 `candidates == ()`；`locate` 将每个全图 `image-space` 的 `VisualImageMatch.image_bounds` 映射为非 `None` 的 `pointer_bounds: Bounds` 与 `pointer_center: Point`）→ 65,536-byte 规范 JSON 计量并返回不可变 `VisualInspection`。
+- 方法绝不自动执行点击或滑动；调用方显式将 `pointer_center` / `pointer_bounds` 传给 `Device.tap_at` / `Device.swipe_between` 等平台原生动作方法。`png_bytes` 不进入 `VisualInspection`、规范 JSON、日志或异常文本。
+- 复用锁定 Appium/UiAutomator2/Mac2/Python Client/Selenium 与 CPython 3.11 标准库（`hashlib`、`struct`、`zlib`）；`Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 22 工具目录与 schema）、产品/开发依赖及 lockfile 均 no-delta。
+
+## Automation Condition-Wait Transport Timeout Decoupling And Device Local Clock（AIF-14）
+
+本节定义 Issue #49 经用户 SPEC Gate 确认的 AIF-14 契约增量。契约确认不替代实现验证、独立审查或真实设备授权。
+
+- **条件等待单次 HTTP 传输超时与 `condition_deadline` 解耦**：`condition_deadline` 仅用于门控是否允许发起下一轮/下一个条件轮询请求（请求/睡眠间到期返回 `condition_timeout/not_sent`）以及完整只读响应返回后的 post-check（到期返回 `condition_timeout/response_received`，Session 保持 `active`）。一旦允许发起某次 `wait_request` 底层只读 HTTP 请求，其单次传输 timeout 固定使用整体 `operation_deadline`（`control=None` 时沿客户端默认），且在显式 `OperationControl` 下要求发送前剩余 `operation_deadline` 预算 `>= 0.005` 秒（5ms 安全下界，不足则在发送前以 `operation_timeout/not_sent` 或 `condition_timeout/not_sent` 拒绝，绝不发出几毫秒必断的半截 HTTP 请求自造 `response_unknown`）。若在途 HTTP 请求真正因断连或 `operation_deadline` 耗尽而未取得完整响应，继续严格执行既有 `response_unknown -> uncertain` 隔离。
+- **Android 只读设备本地时钟查询（`Device.device_time`）**：由 `appium_connect_agent.automation` 公开导出 `DeviceWeekday = Literal["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]`、不可变 `@dataclass(frozen=True, slots=True) class DeviceTime(iso_local: str, date: str, time: str, weekday: DeviceWeekday, utc_offset: str)`，以及绑定方法 `Device.device_time(*, control: OperationControl | None = None) -> DeviceTime`。
+- Android 在唯一非阻塞 Session gate 与 `gateway.final_action` 内执行一次 `driver.execute_script("mobile: getDeviceTime")`（wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script": "mobile: getDeviceTime", "args": []}`），严格校验返回为 canonical ISO-8601 本地时间字符串 `YYYY-MM-DDTHH:MM:SS±HH:MM`（或末尾 `Z` 归一为 `+00:00`），通过 `datetime.fromisoformat` 验证真实日历合法性并派生 `date`（`YYYY-MM-DD`）、`time`（`HH:MM:SS`）、英文全称 `weekday` 与 `utc_offset`（`±HH:MM`），记唯一完成步骤 `device_time_read`。非法形状或日期统一 `CommandError/command_failed/response_received`；Mac2 在网络前 `InvalidRequestError/unsupported_operation/not_sent`。零新增或升级依赖。
 
 ## Runtime Mac2 Target Static Diagnostics And Managed Cleanup Query（RT-MAC-01）
 

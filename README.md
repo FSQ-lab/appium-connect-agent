@@ -116,7 +116,7 @@ details = field.inspect(attributes=("text", "focused"))
 `source.drag_and_drop(destination, destination_x_ratio=0.5, destination_y_ratio=0.5)`，
 受限滚动查找使用 `container.scroll(target, max_swipes=5)`。
 `Session` 保留 `element`、`observe_tree`（含可选 parent）、`session_info`、`quit` 与限定的 `dispose`。`quit`只用于active Session并发送一次DELETE；若请求终态未知，Session进入`uncertain`且不再发送设备/Session命令。调用方可对仍持有本进程managed ownership的uncertain Session显式调用`session.dispose()`，它不发送DELETE/探活/ADB，而是终止当前SDK实例真实owned Appium、释放lease与本地device/systemPort；external Session明确拒绝。清理取消、超时或失败时错误继续携带同一Session且状态为`disposing`；调用方必须保留该引用、传播失败，并只用再次`dispose()`继续同一cleanup，不得把失败当成功或丢弃pending资源。成功后为`disposed`且重复调用幂等。Integrations现有19工具与自动shutdown不调用该入口。
-旧 `session.click(element)`、`session.inspect_element(element, ...)` 等入口已移除，不提供兼容别名。全部操作共用所属 Session 的准入、预算及恢复规则。
+旧 `session.click(element)`、`session.inspect_element(element, ...)` 等入口已移除，不提供兼容别名。全部操作共用所属 Session 的准入、预算及恢复规则；条件等待（`wait_timeout_seconds` / `condition_deadline`）仅控制是否允许开始下一轮只读探测及完整响应后的条件检查（到期返回 `condition_timeout/not_sent` 或 `condition_timeout/response_received`，Session 保持 `active`），单次已获准只读 HTTP 探测请求的传输 timeout 绑定整体 `OperationControl` 总预算（显式预算要求发送前剩余时间 `>= 0.005` 秒安全下界，避免条件窗口末尾毫秒级超时截断正常只读请求误标 `uncertain`；真实在途断连或总预算耗尽仍按 `response_unknown -> uncertain` 隔离）。
 
 ### Device 与 Element IME
 
@@ -425,6 +425,11 @@ uncertain、关闭本地client并保留device/systemPort。安装/卸载当前ta
 ```python
 from appium_connect_agent.runtime import OperationControl
 
+size = session.device.display_size(
+    control=OperationControl(timeout_seconds=15),
+)
+# Full-screen physical pointer range: x=0..size.width-1, y=0..size.height-1.
+
 
 png_bytes = session.device.take_screenshot(
     control=OperationControl(timeout_seconds=15),
@@ -442,11 +447,19 @@ session.device.swipe_between(
     duration_ms=250,
     control=OperationControl(timeout_seconds=15),
 )
+session.device.swipe(
+    "up",
+    duration_ms=300,
+    control=OperationControl(timeout_seconds=15),
+)
 ```
 
+- `display_size` 发送一次 `mobile: deviceInfo`，只读取 UiAutomator2 由 Android `Display.getRealSize` 提供的 `realDisplaySize`，并返回不可变 `DisplaySize(width, height)`。它定义全屏 `tap_at` / `swipe_between` 的物理 pointer space；`observe_tree().viewport` 是应用层级 content viewport，可能因系统栏 inset 更小，不能用作全屏坐标缩放。响应只接受 canonical ASCII `WxH` 正整数且每维不超过 `2,147,483,647`，不回退截图、层级或 ADB，不缓存、clamp、缩放或暴露其他 device-info 字段。
 - `take_screenshot` 发送一次标准 W3C `GET /session/{sessionId}/screenshot`，要求严格 Base64 解码后的字节数不超过 32 MiB（`33,554,432` bytes），并顺序遍历校验全流 PNG chunk 二进制帧与每个 chunk 的 CRC32（唯一首块 13 字节正宽高 `IHDR`、至少一个累计非空 `IDAT`、末块 0 字节 `IEND` 且无尾随字节；不做像素解压）。返回的 `bytes` 仅保留在调用方内存中，绝不落盘或写入日志、异常消息与默认证据。
-- `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。三者均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
+- `tap_at` 与 `swipe_between` 要求全部坐标为排除 `bool` 的实际整数 `0..2,147,483,647`；`duration_ms` 为排除 `bool` 的实际整数 `1..60,000`（默认 `200`）。显式 `OperationControl` 下发送前要求 `duration_ms / 1000.0` 严格小于剩余总预算，不足时零请求拒绝。`tap_at` 发送一次 `mobile: clickGesture`（`{"x": x, "y": y}`）；`swipe_between` 通过锁定 Selenium W3C `PointerInput` 发送一次单 `touch` 指针的四步 `POST /session/{sessionId}/actions` 请求。`display_size`、截图与两个动作均与 Element、观测及其他 Device 方法共享唯一非阻塞 Session gate、no-replay 与 `response_unknown -> uncertain` 资源保留规则。
 
+- `inspect_with_ai(prompt, *, provider, mode="extract", region=None, max_candidates=5, control=None) -> VisualInspection` 在同一 Session gate 内顺序执行单帧 PNG 截图（拒绝 APNG `frame_not_single`，提取 `image_size` 与 `png_sha256`）、全图 `image-space` 的 `region` 边界核验、`locate` 模式下的平台权威 `pointer_size` 正整数等比缩放校验（失配时在调用 provider 前返回 `pointer_mapping_unavailable`）、宿主注入 `VisualProvider.inspect` 单次同步调用，以及 `VisualTargetCandidate(label, image_bounds, pointer_bounds, pointer_center, confidence)` 转换与 65,536-byte 规范 JSON 计量；绝不自动执行点击/滑动，亦不提供 `assert_with_ai`。
+- `device_time(*, control=None) -> DeviceTime` 发送一次只读 `mobile: getDeviceTime`，校验并返回设备当前本地时区时间快照 `DeviceTime(iso_local, date, time, weekday, utc_offset)`（如 `date="2026-11-17"`, `time="10:35:42"`, `weekday="Tuesday"`, `utc_offset="+08:00"`），无需下拉通知栏或进入系统设置即可获取精确年月日、星期与时区偏移。
 ### 当前平台最小模块收口
 
 Automation当前限定收口固定为macOS宿主、单个明确Android Native目标、Appium3.7.0和UiAutomator2 8.7.0。不新增公共Interface、依赖、APK、专用App、永久runner、产品代码、测试或仓库工具。

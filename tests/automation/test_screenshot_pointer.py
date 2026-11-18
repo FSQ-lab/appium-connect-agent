@@ -6,6 +6,7 @@ import threading
 import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -16,6 +17,8 @@ from appium_connect_agent.automation import (
     AutomationError,
     CommandError,
     Device,
+    DeviceTime,
+    DisplaySize,
     ExecutionUnknownError,
     InvalidRequestError,
     InvalidSessionStateError,
@@ -80,14 +83,23 @@ class DeviceProtocolService(ActionProtocolService):
             request.method == "POST"
             and request.path.endswith("/execute/sync")
             and request.body is not None
-            and request.body.get("script") == "mobile: clickGesture"
         ):
-            return "tap_at"
+            script = request.body.get("script")
+            if script == "mobile: deviceInfo":
+                return "display_size"
+            if script == "mobile: getDeviceTime":
+                return "device_time"
+            if script == "mobile: clickGesture":
+                return "tap_at"
         return ActionProtocolService._kind(request)
 
     def _default_payload(self, request: Request, kind: str) -> object:
         if kind == "take_screenshot":
             return {"value": base64.b64encode(_MINIMAL_PNG).decode("ascii")}
+        if kind == "display_size":
+            return {"value": {"realDisplaySize": "1080x2400"}}
+        if kind == "device_time":
+            return {"value": "2026-11-17T10:35:42+08:00"}
         if kind in {"tap_at", "swipe_between"}:
             return {"value": None}
         return super()._default_payload(request, kind)
@@ -115,6 +127,10 @@ def _invoke(
     *,
     control: OperationControl | None = None,
 ) -> object:
+    if action == "display_size":
+        return device.display_size(control=control)
+    if action == "device_time":
+        return device.device_time(control=control)
     if action == "take_screenshot":
         return device.take_screenshot(control=control)
     if action == "tap_at":
@@ -130,6 +146,235 @@ def _invoke(
 def _assert_command_failure(error: CommandError) -> None:
     assert_error(error, CommandError, "command_failed", "response_received", steps=())
     assert error.__cause__ is not None
+
+
+def test_display_size_exact_protocol_and_immutable_value(
+    service: DeviceProtocolService,
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(payload={"value": {"realDisplaySize": "1080x2400"}}),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-valid")
+        result = session.device.display_size()
+        assert result == DisplaySize(width=1080, height=2400)
+        assert result.width == 1080 and result.height == 2400
+        with pytest.raises((AttributeError, FrozenInstanceError)):
+            result.width = 1  # type: ignore[misc]
+        requests = service.of_kind("display_size")
+        assert len(requests) == 1
+        assert requests[0].method == "POST"
+        assert requests[0].path.endswith("/execute/sync")
+        assert requests[0].body == {"script": "mobile: deviceInfo", "args": []}
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("1x1", DisplaySize(1, 1)),
+        ("2147483647x2147483647", DisplaySize(2_147_483_647, 2_147_483_647)),
+    ],
+)
+def test_display_size_accepts_exact_dimension_boundaries(
+    service: DeviceProtocolService, raw: str, expected: DisplaySize
+) -> None:
+    service.queue(
+        "display_size", ResponsePlan(payload={"value": {"realDisplaySize": raw}})
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, f"display-size-{raw}")
+        assert session.device.display_size() == expected
+        assert service.operation_kinds() == ["display_size"]
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        [],
+        True,
+        10802400,
+        {"realDisplaySize": None},
+        {"realDisplaySize": True},
+        {"realDisplaySize": 10802400},
+        {"realDisplaySize": ""},
+        {"realDisplaySize": "0x2400"},
+        {"realDisplaySize": "1080x0"},
+        {"realDisplaySize": "01080x2400"},
+        {"realDisplaySize": "1080x02400"},
+        {"realDisplaySize": "1080X2400"},
+        {"realDisplaySize": "1080 x 2400"},
+        {"realDisplaySize": " 1080x2400"},
+        {"realDisplaySize": "1080x2400\n"},
+        {"realDisplaySize": "\uff11\uff10\uff18\uff10x\uff12\uff14\uff10\uff10"},
+        {"realDisplaySize": "1080x2400x1"},
+        {"realDisplaySize": "2147483648x2400"},
+        {"realDisplaySize": "1080x2147483648"},
+        {"realDisplaySize": "99999999999x1"},
+    ],
+)
+def test_display_size_rejects_noncanonical_or_out_of_range_response(
+    service: DeviceProtocolService, value: object
+) -> None:
+    service.queue("display_size", ResponsePlan(payload={"value": value}))
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-invalid")
+        with pytest.raises(CommandError) as caught:
+            session.device.display_size()
+        _assert_command_failure(caught.value)
+        assert service.operation_kinds() == ["display_size"]
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_display_size_ignores_unrelated_device_info_fields(
+    service: DeviceProtocolService,
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(
+            payload={
+                "value": {
+                    "realDisplaySize": "1080x2400",
+                    "manufacturer": "private-canary",
+                    "displayDensity": 420,
+                }
+            }
+        ),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "display-size-fields")
+        assert session.device.display_size() == DisplaySize(1080, 2400)
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            "2026-11-17T10:35:42+08:00",
+            DeviceTime(
+                iso_local="2026-11-17T10:35:42+08:00",
+                date="2026-11-17",
+                time="10:35:42",
+                weekday="Tuesday",
+                utc_offset="+08:00",
+            ),
+        ),
+        (
+            "2026-11-15T23:59:59Z",
+            DeviceTime(
+                iso_local="2026-11-15T23:59:59+00:00",
+                date="2026-11-15",
+                time="23:59:59",
+                weekday="Sunday",
+                utc_offset="+00:00",
+            ),
+        ),
+        (
+            "2026-01-01T00:00:00-05:30",
+            DeviceTime(
+                iso_local="2026-01-01T00:00:00-05:30",
+                date="2026-01-01",
+                time="00:00:00",
+                weekday="Thursday",
+                utc_offset="-05:30",
+            ),
+        ),
+        (
+            "2026-11-17T10:35:42+23:59",
+            DeviceTime(
+                iso_local="2026-11-17T10:35:42+23:59",
+                date="2026-11-17",
+                time="10:35:42",
+                weekday="Tuesday",
+                utc_offset="+23:59",
+            ),
+        ),
+    ],
+)
+def test_device_time_exact_protocol_and_immutable_value(
+    service: DeviceProtocolService, raw: str, expected: DeviceTime
+) -> None:
+    service.queue("device_time", ResponsePlan(payload={"value": raw}))
+    with connected(service) as connection:
+        session = session_for(service, connection, f"device-time-{raw[:10]}")
+        result = session.device.device_time()
+        assert result == expected
+        with pytest.raises((AttributeError, FrozenInstanceError)):
+            result.date = "2020-01-01"  # type: ignore[misc]
+        requests = service.of_kind("device_time")
+        assert len(requests) == 1
+        assert requests[0].method == "POST"
+        assert requests[0].path.endswith("/execute/sync")
+        assert requests[0].body == {"script": "mobile: getDeviceTime", "args": []}
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {},
+        [],
+        True,
+        123456,
+        "",
+        "2026-11-17 10:35:42+08:00",
+        "2026-11-17T10:35:42",
+        "2026-11-17T10:35:42+0800",
+        "2026-11-17T10:35:42.123+08:00",
+        "2026-02-30T10:35:42+08:00",
+        "2026-13-01T10:35:42+08:00",
+        "2026-11-17T24:00:00+08:00",
+        "2026-11-17T10:35:42+24:00",
+        "2026-11-17T10:35:42+00:60",
+        "2026-11-17T10:35:42-00:60",
+        "2026-11-17T10:35:42+08:99",
+        "2026-11-17T10:35:42-08:99",
+        " 2026-11-17T10:35:42+08:00",
+        "2026-11-17T10:35:42+08:00\n",
+        "\uff12\uff10\uff12\uff16-11-17T10:35:42+08:00",
+    ],
+)
+def test_device_time_rejects_malformed_or_invalid_calendar_response(
+    service: DeviceProtocolService, value: object
+) -> None:
+    service.queue("device_time", ResponsePlan(payload={"value": value}))
+    with connected(service) as connection:
+        session = session_for(service, connection, "device-time-invalid")
+        with pytest.raises(CommandError) as caught:
+            session.device.device_time()
+        _assert_command_failure(caught.value)
+        assert service.operation_kinds() == ["device_time"]
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_device_time_records_device_time_read_step(
+    service: DeviceProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from appium_connect_agent.automation._session import _SessionOperationGateway
+
+    recorded_steps: list[tuple[str, ...]] = []
+    original_complete = _SessionOperationGateway.complete
+
+    def tracking_complete(self: _SessionOperationGateway, step: str) -> None:
+        original_complete(self, step)
+        recorded_steps.append(self.completed_steps)
+
+    monkeypatch.setattr(_SessionOperationGateway, "complete", tracking_complete)
+    with connected(service) as connection:
+        session = session_for(service, connection, "device-time-step")
+        result = session.device.device_time()
+        assert result.weekday == "Tuesday"
+        assert recorded_steps == [("device_time_read",)]
+        session.quit()
 
 
 @pytest.mark.parametrize("line_breaks", [False, True])
@@ -569,7 +814,10 @@ def test_swipe_budget_gate_preserves_cancellation_priority(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 @pytest.mark.parametrize("phase", ["disconnect", "header", "body"])
 def test_response_unknown_is_not_replayed_and_quarantines_session(
     service: DeviceProtocolService, action: str, phase: str
@@ -602,7 +850,10 @@ def test_response_unknown_is_not_replayed_and_quarantines_session(
         assert service.of_kind("quit") == []
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 def test_inflight_cancellation_is_unknown_and_not_replayed(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -657,7 +908,10 @@ def test_inflight_cancellation_is_unknown_and_not_replayed(
         assert service.of_kind("quit") == []
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 def test_official_errors_are_known_and_never_replayed(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -673,7 +927,10 @@ def test_official_errors_are_known_and_never_replayed(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 def test_presend_cancel_and_expired_budget_make_no_request(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -714,7 +971,10 @@ def test_presend_cancel_and_expired_budget_make_no_request(
         session.quit()
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 def test_closed_session_rejects_new_device_actions(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -735,7 +995,10 @@ def test_closed_session_rejects_new_device_actions(
         assert service.snapshot() == before
 
 
-@pytest.mark.parametrize("action", ["take_screenshot", "tap_at", "swipe_between"])
+@pytest.mark.parametrize(
+    "action",
+    ["display_size", "device_time", "take_screenshot", "tap_at", "swipe_between"],
+)
 def test_exited_runtime_connection_rejects_new_device_actions(
     service: DeviceProtocolService, action: str
 ) -> None:
@@ -775,6 +1038,8 @@ def test_new_device_actions_share_the_session_gate(
             assert started.wait(timeout=2)
             before = service.snapshot()
             attempts = (
+                session.device.display_size,
+                session.device.device_time,
                 lambda: session.device.tap_at(1, 2),
                 lambda: session.device.swipe_between(1, 2, 3, 4),
                 session.element("id", "target").click,
@@ -849,7 +1114,13 @@ def test_device_binding_is_trusted_for_new_methods(
             cast(Any, session.device)._owner = other
         before = service.snapshot()
         forged = object.__new__(Device)
-        for action in ("take_screenshot", "tap_at", "swipe_between"):
+        for action in (
+            "display_size",
+            "device_time",
+            "take_screenshot",
+            "tap_at",
+            "swipe_between",
+        ):
             with pytest.raises(InvalidRequestError) as caught:
                 _invoke(forged, action)
             assert_error(
@@ -873,3 +1144,195 @@ def test_device_binding_is_trusted_for_new_methods(
         assert service.snapshot() == before
         session.quit()
         other.quit()
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected_start", "expected_end"),
+    [
+        ("up", (540, 1920), (540, 480)),
+        ("down", (540, 480), (540, 1920)),
+        ("left", (885, 1200), (195, 1200)),
+        ("right", (195, 1200), (885, 1200)),
+    ],
+)
+def test_directional_swipe_default_coordinates_stay_within_safe_insets(
+    service: DeviceProtocolService,
+    direction: Any,
+    expected_start: tuple[int, int],
+    expected_end: tuple[int, int],
+) -> None:
+    service.queue(
+        "display_size",
+        ResponsePlan(payload={"value": {"realDisplaySize": "1080x2400"}}),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, f"safe-swipe-{direction}")
+        session.device.swipe(direction=direction)
+        assert service.operation_kinds() == ["display_size", "swipe_between"]
+        swipe_req = service.of_kind("swipe_between")[0]
+        assert swipe_req.body is not None
+        actions = swipe_req.body["actions"][0]["actions"]
+        sx, sy = actions[0]["x"], actions[0]["y"]
+        ex, ey = actions[2]["x"], actions[2]["y"]
+        assert (sx, sy) == expected_start
+        assert (ex, ey) == expected_end
+        # Strict check: vertical strictly in [20%, 80%] (away from <15% and >85%),
+        # horizontal strictly in [18%, 82%] (away from <10% and >90%).
+        for x, y in ((sx, sy), (ex, ey)):
+            assert 0.18 * 1080 <= x <= 0.82 * 1080
+            assert 0.20 * 2400 <= y <= 0.80 * 2400
+            assert not (x < 0.10 * 1080 or x > 0.90 * 1080)
+            assert not (y < 0.15 * 2400 or y > 0.85 * 2400)
+        session.quit()
+
+
+def test_directional_swipe_respects_explicit_coordinates_without_display_size_query(
+    service: DeviceProtocolService,
+) -> None:
+    with connected(service) as connection:
+        session = session_for(service, connection, "explicit-swipe-coords")
+        session.device.swipe(
+            direction="up",
+            start_x=50,
+            start_y=2300,
+            end_x=50,
+            end_y=100,
+            duration_ms=250,
+        )
+        assert service.operation_kinds() == ["swipe_between"]
+        swipe_req = service.of_kind("swipe_between")[0]
+        assert swipe_req.body is not None
+        actions = swipe_req.body["actions"][0]["actions"]
+        assert (actions[0]["x"], actions[0]["y"]) == (50, 2300)
+        assert (actions[2]["x"], actions[2]["y"]) == (50, 100)
+        assert actions[2]["duration"] == 250
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("error_code", "message"),
+    [
+        ("invalid session id", "A session is either terminated or not started"),
+        ("no such driver", "NoSuchDriverError: Driver is not known"),
+        (
+            "unknown error",
+            "Cannot be proxied to UiAutomator2 server because the instrumentation process is not running (probably crashed)",
+        ),
+    ],
+)
+def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
+    service: DeviceProtocolService,
+    tmp_path: Path,
+    error_code: str,
+    message: str,
+) -> None:
+    apk = tmp_path / "initial.apk"
+    apk.write_bytes(b"apk-bytes")
+    dead_payload = {
+        "value": {
+            "error": error_code,
+            "message": message,
+            "stacktrace": "",
+        }
+    }
+    service.queue(
+        "tap_at",
+        ResponsePlan(
+            status=404 if "invalid" in error_code else 500, payload=dead_payload
+        ),
+        ResponsePlan(payload={"value": None}),
+    )
+    with connected(service) as connection:
+        session = create_session(
+            connection,
+            f"reattach-{error_code.replace(' ', '-')}",
+            app_id="com.example.initial",
+            app_path=apk,
+            auto_launch=True,
+            force_app_launch=True,
+            no_reset=False,
+            full_reset=True,
+            should_terminate_app=True,
+            new_command_timeout_seconds=900,
+        )
+        initial_info = session.session_info()
+        assert initial_info.appium_session_id == "appium-1"
+        assert initial_info.target_app_id == "com.example.initial"
+
+        # First tap_at hits dead session -> transparently re-attaches and succeeds
+        session.device.tap_at(100, 200)
+
+        recovered_info = session.session_info()
+        assert recovered_info.state == "active"
+        assert recovered_info.id == initial_info.id
+        assert recovered_info.appium_session_id == "appium-2"
+        assert recovered_info.target_app_id == "com.example.initial"
+
+        creates = service.of_kind("create")
+        assert len(creates) == 2
+        reattach_caps = creates[1].body["capabilities"]["alwaysMatch"]  # type: ignore[index]
+        assert reattach_caps["appium:udid"] == initial_info.device_id
+        assert reattach_caps["appium:noReset"] is True
+        assert reattach_caps["appium:fullReset"] is False
+        assert reattach_caps["appium:autoLaunch"] is False
+        assert reattach_caps["appium:forceAppLaunch"] is False
+        assert reattach_caps["appium:shouldTerminateApp"] is False
+        assert reattach_caps["appium:newCommandTimeout"] == 900.0
+        assert "appium:appPackage" not in reattach_caps
+        assert "appPackage" not in reattach_caps
+        assert "appium:appActivity" not in reattach_caps
+        assert "appActivity" not in reattach_caps
+        assert "appium:app" not in reattach_caps
+
+        taps = service.of_kind("tap_at")
+        assert len(taps) == 2
+        assert "/session/appium-1/" in taps[0].path
+        assert "/session/appium-2/" in taps[1].path
+        session.quit()
+
+
+def test_ensure_alive_and_ping_reattach_only_when_session_is_dead(
+    service: DeviceProtocolService,
+) -> None:
+    dead_payload = {
+        "value": {
+            "error": "invalid session id",
+            "message": "session is either terminated or not started",
+            "stacktrace": "",
+        }
+    }
+    with connected(service) as connection:
+        session = session_for(service, connection, "ensure-alive-device")
+        assert session.ensure_alive() is False
+        assert session.ping() is False
+        assert len(service.of_kind("create")) == 1
+
+        service.queue(
+            "settings:get",
+            ResponsePlan(status=404, payload=dead_payload),
+        )
+        assert session.ensure_alive() is True
+        assert len(service.of_kind("create")) == 2
+        assert session.session_info().appium_session_id == "appium-2"
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_ordinary_element_or_command_errors_do_not_trigger_reattach(
+    service: DeviceProtocolService,
+) -> None:
+    service.matches[(None, "id", "com.example:id/missing")] = []
+    service.queue(
+        "tap_at",
+        ResponsePlan(
+            status=500,
+            payload=w3c_error("element click intercepted or ordinary failure"),
+        ),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "ordinary-error-no-reattach")
+        with pytest.raises(CommandError):
+            session.device.tap_at(10, 20)
+        assert len(service.of_kind("create")) == 1
+        assert session.session_info().appium_session_id == "appium-1"
+        session.quit()

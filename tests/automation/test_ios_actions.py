@@ -19,6 +19,7 @@ from appium_connect_agent.automation import (
     Session,
     SessionBusyError,
     TargetError,
+    _session_client,
     create_xcuitest_session,
 )
 from appium_connect_agent.automation import _session as session_module
@@ -1049,6 +1050,11 @@ def test_ios_install_timeout_strict_millisecond_boundary(
     succeeds: bool,
 ) -> None:
     monkeypatch.setattr(time_module, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(
+        _session_client,
+        "time",
+        type("Clock", (), {"monotonic": staticmethod(lambda: 90.0)})(),
+    )
     ipa = tmp_path.resolve() / "Budget.ipa"
     ipa.write_bytes(b"ipa")
     with connected(service) as connection:

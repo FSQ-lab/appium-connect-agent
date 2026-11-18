@@ -271,7 +271,11 @@ class Element:
         self,
         *,
         direction: Literal["up", "down", "left", "right"],
-        percent: float,
+        percent: float = 0.6,
+        left: int | None = None,
+        top: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> None:
@@ -281,6 +285,10 @@ class Element:
             operation,
             direction=direction,
             percent=percent,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
             wait_timeout_seconds=wait_timeout_seconds,
         )
 
@@ -288,7 +296,11 @@ class Element:
         self,
         *,
         direction: Literal["up", "down", "left", "right"],
-        percent: float,
+        percent: float = 0.6,
+        left: int | None = None,
+        top: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
         wait_timeout_seconds: float = 15.0,
         control: OperationControl | None = None,
     ) -> bool:
@@ -298,6 +310,10 @@ class Element:
             operation,
             direction=direction,
             percent=percent,
+            left=left,
+            top=top,
+            width=width,
+            height=height,
             wait_timeout_seconds=wait_timeout_seconds,
         )
 

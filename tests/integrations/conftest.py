@@ -12,6 +12,16 @@ from typing import Any, cast
 import pytest
 from mcp import StdioServerParameters
 
+from appium_connect_agent.runtime import _coordination
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_account(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path.resolve() / "runtime-account"
+    home.mkdir()
+    monkeypatch.setattr(_coordination, "_account_home", lambda: home)
+
+
 TOOL_NAMES = (
     "appium.capabilities.get",
     "appium.runtime.check",
@@ -73,6 +83,9 @@ if STDERR:
     _STDERR_STREAM = open(STDERR, "a", encoding="utf-8")
     os.dup2(_STDERR_STREAM.fileno(), 2)
 _FORCED_HANDLES = iter(json.loads(os.environ.get("ACA_TEST_HANDLES", "[]")))
+if "HOME" in os.environ:
+    from appium_connect_agent.runtime import _coordination as _rt_coord
+    _rt_coord._account_home = lambda: Path(os.environ["HOME"])
 _REAL_TOKEN_URLSAFE = secrets.token_urlsafe
 
 

@@ -36,13 +36,23 @@ from ._macos_actions import (
     _validate_number,
 )
 from ._macos_keyboard import MacKeyStroke
-from ._models import InvalidRequestError
+from ._models import (
+    DeviceTime,
+    DisplaySize,
+    ImageRegion,
+    InvalidRequestError,
+    VisualInspection,
+    VisualMode,
+    VisualProvider,
+)
 from ._system_actions import (
     _activate_app,
     _alert,
     _back,
     _clipboard_content,
     _coordinate,
+    _device_time,
+    _display_size,
     _duration_ms,
     _get_clipboard_text,
     _hide_keyboard,
@@ -56,10 +66,12 @@ from ._system_actions import (
     _status_bar,
     _status_bar_command,
     _swipe_between,
+    _swipe_directional,
     _take_screenshot,
     _tap_at,
     _terminate_app,
 )
+from ._visual import _inspect_with_ai, _validate_visual_inputs
 
 if TYPE_CHECKING:
     from ._session import Session
@@ -485,10 +497,64 @@ class Device:
             ),
         )
 
+    def display_size(self, *, control: OperationControl | None = None) -> DisplaySize:
+        """Return the default display's real physical pointer extent."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
+        return owner._run_operation(operation_id, control, deadline, _display_size)
+
+    def device_time(self, *, control: OperationControl | None = None) -> DeviceTime:
+        """Return a read-only snapshot of the device's local wall clock and offset."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
+        return owner._run_operation(operation_id, control, deadline, _device_time)
+
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
+
+    def inspect_with_ai(
+        self,
+        prompt: str,
+        *,
+        provider: VisualProvider,
+        mode: VisualMode = "extract",
+        region: ImageRegion | None = None,
+        max_candidates: int = 5,
+        control: OperationControl | None = None,
+    ) -> VisualInspection:
+        """Capture one single-frame PNG and run host-provided visual perception."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        (
+            valid_prompt,
+            valid_provider,
+            valid_mode,
+            valid_region,
+            valid_max_candidates,
+        ) = _validate_visual_inputs(
+            prompt, provider, mode, region, max_candidates, operation_id
+        )
+        if valid_mode == "locate" and owner.platform != "android":
+            raise InvalidRequestError(
+                "pointer_mapping_unavailable", operation_id, "not_sent"
+            )
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _inspect_with_ai(
+                driver,
+                gateway,
+                prompt=valid_prompt,
+                provider=valid_provider,
+                mode=valid_mode,
+                region=valid_region,
+                max_candidates=valid_max_candidates,
+            ),
+        )
 
     def tap_at(
         self, x: int, y: int, *, control: OperationControl | None = None
@@ -679,6 +745,59 @@ class Device:
                     },
                     duration_seconds=valid_duration / 1000.0,
                 )
+            ),
+        )
+
+    def swipe(
+        self,
+        direction: Literal["up", "down", "left", "right"] | None = None,
+        *,
+        start_x: int | None = None,
+        start_y: int | None = None,
+        end_x: int | None = None,
+        end_y: int | None = None,
+        duration_ms: int = 300,
+        control: OperationControl | None = None,
+    ) -> None:
+        """Perform a screen swipe using safe inset bounds for directional swipes or explicit coordinates."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        coords = (start_x, start_y, end_x, end_y)
+        has_any_coord = any(value is not None for value in coords)
+        has_all_coords = all(value is not None for value in coords)
+        if has_any_coord and not has_all_coords:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        valid_sx = None if start_x is None else _coordinate(start_x, operation_id)
+        valid_sy = None if start_y is None else _coordinate(start_y, operation_id)
+        valid_ex = None if end_x is None else _coordinate(end_x, operation_id)
+        valid_ey = None if end_y is None else _coordinate(end_y, operation_id)
+        valid_direction: Literal["up", "down", "left", "right"] = "up"
+        if direction is not None:
+            if not isinstance(direction, str) or direction not in (
+                "up",
+                "down",
+                "left",
+                "right",
+            ):
+                raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+            valid_direction = direction
+        elif not has_all_coords:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        valid_duration = _duration_ms(duration_ms, operation_id)
+        owner._reject_macos(operation_id)
+        owner._reject_ios(operation_id)
+        owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            lambda driver, gateway: _swipe_directional(
+                driver,
+                gateway,
+                direction=valid_direction,
+                start_x=valid_sx,
+                start_y=valid_sy,
+                end_x=valid_ex,
+                end_y=valid_ey,
+                duration_ms=valid_duration,
             ),
         )
 

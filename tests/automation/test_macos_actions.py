@@ -429,6 +429,25 @@ def test_macos_only_device_actions_reject_android_without_io(
         session.quit()
 
 
+def test_android_display_size_and_device_time_reject_macos_without_io(
+    service: MacActionService,
+) -> None:
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        before = service.snapshot()
+        for invoke in (
+            lambda: session.device.display_size(),
+            lambda: session.device.device_time(),
+        ):
+            with pytest.raises(InvalidRequestError) as caught:
+                invoke()
+            assert_error(
+                caught.value, InvalidRequestError, "unsupported_operation", "not_sent"
+            )
+        assert service.snapshot() == before
+        session.quit()
+
+
 @pytest.mark.parametrize(
     "invoke",
     [

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import math
+import re
 import struct
 import time
 import zlib
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from appium.webdriver.webdriver import WebDriver
@@ -17,7 +20,13 @@ from selenium.webdriver.common.actions.mouse_button import MouseButton
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 from selenium.webdriver.remote.command import Command
 
-from ._models import InvalidRequestError, OperationTimeoutError
+from ._models import (
+    DeviceTime,
+    DeviceWeekday,
+    DisplaySize,
+    InvalidRequestError,
+    OperationTimeoutError,
+)
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
@@ -25,6 +34,139 @@ if TYPE_CHECKING:
 _TERMINATE_TIMEOUT_CAP_MS = 500
 _REMOVE_TIMEOUT_CAP_MS = 100_000
 _INSTALL_TIMEOUT_CAP_MS = 300_000
+
+
+_DISPLAY_SIZE_MAX = 2_147_483_647
+
+
+def _parse_display_size(response: object) -> DisplaySize:
+    if not isinstance(response, Mapping):
+        raise ValueError("deviceInfo response must be a mapping")
+    raw = response.get("realDisplaySize")
+    if type(raw) is not str:
+        raise ValueError("realDisplaySize must be a string")
+    separator = raw.find("x")
+    if separator <= 0 or separator != raw.rfind("x") or separator == len(raw) - 1:
+        raise ValueError("realDisplaySize must have exact WxH form")
+    width_text = raw[:separator]
+    height_text = raw[separator + 1 :]
+    if (
+        len(width_text) > 10
+        or len(height_text) > 10
+        or width_text[0] == "0"
+        or height_text[0] == "0"
+        or any(not "0" <= character <= "9" for character in width_text)
+        or any(not "0" <= character <= "9" for character in height_text)
+    ):
+        raise ValueError(
+            "realDisplaySize dimensions must be canonical positive ASCII integers"
+        )
+    width = int(width_text)
+    height = int(height_text)
+    if width > _DISPLAY_SIZE_MAX or height > _DISPLAY_SIZE_MAX:
+        raise ValueError("realDisplaySize dimension exceeds Java int range")
+    return DisplaySize(width=width, height=height)
+
+
+def _display_size(driver: WebDriver, gateway: _SessionOperationGateway) -> DisplaySize:
+    result = gateway.final_action(
+        lambda: _parse_display_size(driver.execute_script("mobile: deviceInfo"))
+    )
+    gateway.complete("display_size_read")
+    return result
+
+
+_VERTICAL_SAFE_MIN_RATIO = 0.20
+_VERTICAL_SAFE_MAX_RATIO = 0.80
+_HORIZONTAL_SAFE_MIN_RATIO = 0.18
+_HORIZONTAL_SAFE_MAX_RATIO = 0.82
+
+
+def _safe_swipe_coordinates(
+    display_size: DisplaySize,
+    direction: Literal["up", "down", "left", "right"],
+) -> tuple[int, int, int, int]:
+    """Compute default directional swipe coordinates strictly within safe screen insets.
+
+    Vertical swipes stay within [20%, 80%] of display height (avoiding <15% top
+    notification bar and >85% bottom system gesture bar).
+    Horizontal swipes stay within [18%, 82%] of display width (avoiding <10% and
+    >90% side-edge Back gesture zones).
+    """
+    width = display_size.width
+    height = display_size.height
+    max_x = max(width - 1, 0)
+    max_y = max(height - 1, 0)
+    center_x = min(max(width // 2, 0), max_x)
+    center_y = min(max(height // 2, 0), max_y)
+    top_y = min(max(math.ceil(height * _VERTICAL_SAFE_MIN_RATIO), 0), max_y)
+    bottom_y = min(max(math.floor(height * _VERTICAL_SAFE_MAX_RATIO), 0), max_y)
+    left_x = min(max(math.ceil(width * _HORIZONTAL_SAFE_MIN_RATIO), 0), max_x)
+    right_x = min(max(math.floor(width * _HORIZONTAL_SAFE_MAX_RATIO), 0), max_x)
+    if direction == "up":
+        return center_x, bottom_y, center_x, top_y
+    if direction == "down":
+        return center_x, top_y, center_x, bottom_y
+    if direction == "left":
+        return right_x, center_y, left_x, center_y
+    return left_x, center_y, right_x, center_y
+
+
+_DEVICE_TIME_PATTERN = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})$"
+)
+_WEEKDAYS: tuple[DeviceWeekday, ...] = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def _parse_device_time(response: object) -> DeviceTime:
+    if type(response) is not str or len(response) > 64 or not response.isascii():
+        raise ValueError("deviceTime response must be a bounded ASCII string")
+    match = _DEVICE_TIME_PATTERN.fullmatch(response)
+    if match is None:
+        raise ValueError(
+            "deviceTime response must match canonical ISO-8601 local timestamp"
+        )
+    date_part, time_part, raw_offset = match.groups()
+    if raw_offset == "Z":
+        utc_offset = "+00:00"
+    else:
+        offset_hour = int(raw_offset[1:3])
+        offset_minute = int(raw_offset[4:6])
+        if offset_hour > 23 or offset_minute > 59:
+            raise ValueError("deviceTime response contains invalid UTC offset")
+        utc_offset = raw_offset
+    iso_local = f"{date_part}T{time_part}{utc_offset}"
+    try:
+        parsed = datetime.fromisoformat(iso_local)
+    except ValueError as cause:
+        raise ValueError(
+            "deviceTime response contains invalid calendar date"
+        ) from cause
+    if parsed.tzinfo is None:
+        raise ValueError("deviceTime response missing timezone offset")
+    return DeviceTime(
+        iso_local=iso_local,
+        date=date_part,
+        time=time_part,
+        weekday=_WEEKDAYS[parsed.weekday()],
+        utc_offset=utc_offset,
+    )
+
+
+def _device_time(driver: WebDriver, gateway: _SessionOperationGateway) -> DeviceTime:
+    result = gateway.final_action(
+        lambda: _parse_device_time(driver.execute_script("mobile: getDeviceTime"))
+    )
+    gateway.complete("device_time_read")
+    return result
 
 
 def _activate_app(
@@ -332,6 +474,11 @@ _SCREENSHOT_DECODED_MIN_BYTES = 58
 _SCREENSHOT_DECODED_MAX_BYTES = 33_554_432
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_CHUNK_MAX_LEN = 2_147_483_647
+_APNG_CHUNKS = frozenset({b"acTL", b"fcTL", b"fdAT"})
+
+
+class _SingleFrameRequiredError(ValueError):
+    """Raised when a PNG contains APNG animation control or frame data chunks."""
 
 
 def _is_png_chunk_type(chunk_type: bytes) -> bool:
@@ -340,16 +487,24 @@ def _is_png_chunk_type(chunk_type: bytes) -> bool:
     )
 
 
-def _validate_png_container(data: bytes) -> None:
+def _parse_png_container(
+    data: bytes, *, reject_apng: bool = False, compute_sha256: bool = False
+) -> tuple[DisplaySize, str | None]:
     total = len(data)
     if not (
         _SCREENSHOT_DECODED_MIN_BYTES <= total <= _SCREENSHOT_DECODED_MAX_BYTES
     ) or not data.startswith(_PNG_SIGNATURE):
         raise ValueError("invalid PNG container header or size")
+    view = memoryview(data)
+    digest = hashlib.sha256() if compute_sha256 else None
+    if digest is not None:
+        digest.update(view[: len(_PNG_SIGNATURE)])
     offset = len(_PNG_SIGNATURE)
     chunk_index = 0
     idat_bytes = 0
     saw_iend = False
+    width = 0
+    height = 0
     while offset < total:
         if offset + 8 > total:
             raise ValueError("truncated PNG chunk header")
@@ -359,15 +514,19 @@ def _validate_png_container(data: bytes) -> None:
         chunk_type = data[offset + 4 : offset + 8]
         if not _is_png_chunk_type(chunk_type):
             raise ValueError("invalid PNG chunk type")
+        if reject_apng and chunk_type in _APNG_CHUNKS:
+            raise _SingleFrameRequiredError("APNG chunks are not permitted")
         data_start = offset + 8
         data_end = data_start + chunk_len
         crc_end = data_end + 4
         if crc_end > total:
             raise ValueError("truncated PNG chunk body")
         (expected_crc,) = struct.unpack_from(">I", data, data_end)
-        actual_crc = zlib.crc32(memoryview(data)[offset + 4 : data_end]) & 0xFFFFFFFF
+        actual_crc = zlib.crc32(view[offset + 4 : data_end]) & 0xFFFFFFFF
         if actual_crc != expected_crc:
             raise ValueError("PNG chunk CRC mismatch")
+        if digest is not None:
+            digest.update(view[offset:crc_end])
         if chunk_index == 0:
             if chunk_type != b"IHDR" or chunk_len != 13:
                 raise ValueError("PNG must start with 13-byte IHDR")
@@ -389,9 +548,17 @@ def _validate_png_container(data: bytes) -> None:
         chunk_index += 1
     if not saw_iend:
         raise ValueError("missing PNG IEND chunk")
+    return (
+        DisplaySize(width=width, height=height),
+        digest.hexdigest() if digest is not None else None,
+    )
 
 
-def _decode_screenshot_response(response: object) -> bytes:
+def _validate_png_container(data: bytes) -> None:
+    _parse_png_container(data)
+
+
+def _decode_screenshot_base64(response: object) -> bytes:
     if not isinstance(response, Mapping) or "value" not in response:
         raise ValueError("screenshot response missing value")
     raw = response["value"]
@@ -409,9 +576,13 @@ def _decode_screenshot_response(response: object) -> bytes:
     ):
         raise ValueError("invalid screenshot base64 length")
     try:
-        decoded = base64.b64decode(compact, validate=True)
+        return base64.b64decode(compact, validate=True)
     except binascii.Error as cause:
         raise ValueError("invalid screenshot base64 content") from cause
+
+
+def _decode_screenshot_response(response: object) -> bytes:
+    decoded = _decode_screenshot_base64(response)
     _validate_png_container(decoded)
     return decoded
 
@@ -470,3 +641,35 @@ def _swipe_between(
 
     gateway.final_action(action)
     gateway.complete("action_completed")
+
+
+def _swipe_directional(
+    driver: WebDriver,
+    gateway: _SessionOperationGateway,
+    *,
+    direction: Literal["up", "down", "left", "right"],
+    start_x: int | None,
+    start_y: int | None,
+    end_x: int | None,
+    end_y: int | None,
+    duration_ms: int,
+) -> None:
+    if (
+        start_x is not None
+        and start_y is not None
+        and end_x is not None
+        and end_y is not None
+    ):
+        sx, sy, ex, ey = start_x, start_y, end_x, end_y
+    else:
+        size = _display_size(driver, gateway)
+        sx, sy, ex, ey = _safe_swipe_coordinates(size, direction)
+    _swipe_between(
+        driver,
+        gateway,
+        start_x=sx,
+        start_y=sy,
+        end_x=ex,
+        end_y=ey,
+        duration_ms=duration_ms,
+    )
