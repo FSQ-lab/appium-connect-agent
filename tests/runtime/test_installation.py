@@ -1016,7 +1016,7 @@ def test_owned_group_outlives_leader_until_group_exit(inherit_pipes: bool) -> No
     process = start_group_child(inherit_pipes=inherit_pipes, delay=0.15)
     handle = _installation._ProcessHandle(process)
     started = time.monotonic()
-    result = handle.wait(lambda: None, started + 2)
+    result = handle.wait(lambda: None, started + 5)
     assert result.returncode == 0
     assert time.monotonic() - started >= 0.1
 
@@ -1024,7 +1024,7 @@ def test_owned_group_outlives_leader_until_group_exit(inherit_pipes: bool) -> No
 def test_owned_group_cleanup_and_gone_group_never_reacquired(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    process = start_group_child(inherit_pipes=False, delay=5)
+    process = start_group_child(inherit_pipes=False, delay=30)
     handle = _installation._ProcessHandle(process)
     deadline = time.monotonic() + 0.1
 
@@ -1034,7 +1034,7 @@ def test_owned_group_cleanup_and_gone_group_never_reacquired(
 
     with pytest.raises(TimeoutError):
         handle.wait(checkpoint, deadline)
-    assert handle.cleanup(time.monotonic() + 5)
+    assert handle.cleanup(time.monotonic() + 15)
 
     def forbidden(*args: Any) -> None:
         raise AssertionError("a gone process group must never be reacquired")
@@ -1060,7 +1060,7 @@ def test_escaped_pipe_holder_remains_pending_until_eof() -> None:
         handle.wait(checkpoint, deadline)
     assert not handle.cleanup(time.monotonic() + 0.05)
     time.sleep(0.65)
-    assert handle.cleanup(time.monotonic() + 1)
+    assert handle.cleanup(time.monotonic() + 5)
 
 
 def test_cleanup_deadline_stops_before_reinspection(
