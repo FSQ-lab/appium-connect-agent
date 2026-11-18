@@ -336,11 +336,14 @@ class ElementProtocolService:
             handler.send_response(plan.status)
             handler.send_header("Content-Type", "application/json")
             handler.send_header("Content-Length", str(len(data)))
-            handler.end_headers()
-            handler.wfile.write(data)
-            plan.responded_at = datetime.now(UTC)
-            if plan.after_send is not None:
+            if not data and plan.after_send is not None:
                 plan.after_send()
+            handler.end_headers()
+            if data and plan.after_send is not None:
+                plan.after_send()
+            handler.wfile.write(data)
+            handler.wfile.flush()
+            plan.responded_at = datetime.now(UTC)
         except (BrokenPipeError, ConnectionResetError):
             pass
 

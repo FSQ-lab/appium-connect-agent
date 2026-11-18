@@ -1,0 +1,292 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified distributions to PyPI
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Optional expected release tag (e.g. v0.1.0) verified against package version when publishing
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Sync locked development environment
+        run: uv sync --locked
+      - name: Format, lint, strict types, and import boundaries
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+          uv run --locked mypy src tests tools/diagnose.py .github/scripts/check_distributions.py
+          uv run --locked lint-imports
+
+  tests:
+    name: ${{ matrix.name }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Tests (Core & Runtime)
+            paths: tests/test_package_import.py tests/contracts tests/configuration tests/runtime/test_connection.py tests/runtime/test_coordination.py tests/runtime/test_diagnostics.py tests/runtime/test_installation.py tests/runtime/test_maintenance.py
+          - name: Tests (Runtime Managed)
+            paths: tests/runtime/test_managed.py
+          - name: Tests (Integrations)
+            paths: tests/integrations
+          - name: Tests (Automation)
+            paths: tests/automation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Sync locked development environment
+        run: uv sync --locked
+      - name: Run test suite shard
+        run: uv run --locked pytest -ra ${{ matrix.paths }}
+
+  verify:
+    name: Complete release verification
+    needs:
+      - quality
+      - tests
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Sync locked package environment
+        run: uv sync --locked --no-dev
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Check archive whitelist, metadata, and isolated installations
+        run: uv run --no-project --python 3.11 .github/scripts/check_distributions.py
+      - name: Upload verified distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-distributions
+          path: dist/
+          if-no-files-found: error
+
+  install-smoke:
+    name: Install smoke (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-15
+          - windows-latest
+    steps:
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+      - name: Download verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-distributions
+          path: dist/
+      - name: Install wheel and sdist in clean pip environments and verify entry points
+        shell: pwsh
+        run: |
+          $wheels = @(Get-ChildItem -Path dist -Filter "*.whl")
+          $sdists = @(Get-ChildItem -Path dist -Filter "*.tar.gz")
+          if ($wheels.Count -ne 1 -or $sdists.Count -ne 1) {
+            throw "Expected exactly one wheel and one sdist in dist/, found $($wheels.Count) wheel(s) and $($sdists.Count) sdist(s)."
+          }
+
+          $artifacts = @($wheels[0], $sdists[0])
+          for ($i = 0; $i -lt $artifacts.Count; $i++) {
+            $artifact = $artifacts[$i]
+            $venv = Join-Path $env:RUNNER_TEMP "aca-install-smoke-$i"
+            uv venv --python 3.11 --seed --no-python-downloads $venv
+            if ($LASTEXITCODE -ne 0) {
+              throw "Virtual environment creation failed for $($artifact.Name) with exit code $LASTEXITCODE."
+            }
+            if ($IsWindows) {
+              $python = Join-Path $venv "Scripts/python.exe"
+            } else {
+              $python = Join-Path $venv "bin/python"
+              $cli = Join-Path $venv "bin/appium-connect-agent"
+              $mcpCli = Join-Path $venv "bin/appium-connect-agent-mcp"
+            }
+
+            & $python -m pip install $artifact.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "pip install failed for $($artifact.Name) with exit code $LASTEXITCODE."
+            }
+
+            $smoke = @'
+          import sys
+          from importlib.metadata import distribution
+          from importlib.resources import files
+          import appium_connect_agent
+          from appium_connect_agent.contracts import LocalSettings
+          from appium_connect_agent.integrations import TOOL_CATALOG
+
+          assert files(appium_connect_agent).joinpath("py.typed").is_file()
+          assert LocalSettings().server_mode == "external"
+          assert len(TOOL_CATALOG.specs) == 22
+          meta = distribution("appium-connect-agent").metadata
+          assert meta["Name"] == "appium-connect-agent"
+          assert meta["License-Expression"] == "MIT"
+          assert meta["Author"] == "Microsoft Corporation"
+          if sys.platform == "darwin":
+              from appium_connect_agent.runtime import Runtime
+              from appium_connect_agent.automation import Device, Element, Session
+              from appium_connect_agent.integrations import Application, SyncApplication
+              assert callable(Runtime) and callable(Application) and callable(SyncApplication)
+              assert Device is not None and Element is not None and Session is not None
+          '@
+            $smoke | & $python -I -
+            if ($LASTEXITCODE -ne 0) {
+              throw "Python import/metadata smoke failed for $($artifact.Name) with exit code $LASTEXITCODE."
+            }
+
+            if (-not $IsWindows) {
+              & $cli --help > $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "appium-connect-agent --help failed for $($artifact.Name) with exit code $LASTEXITCODE."
+              }
+              & $mcpCli --help > $null
+              if ($LASTEXITCODE -ne 0) {
+                throw "appium-connect-agent-mcp --help failed for $($artifact.Name) with exit code $LASTEXITCODE."
+              }
+            }
+          }
+
+  publish:
+    name: Publish to PyPI
+    if: ${{ inputs.publish }}
+    needs:
+      - quality
+      - tests
+      - verify
+      - install-smoke
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          python-version: "3.11"
+      - name: Download verified distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: python-distributions
+          path: dist/
+      - name: Verify PyPI-compatible metadata and release version gate
+        env:
+          EXPECTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          uv run --no-project --python 3.11 - <<'PY'
+          import os
+          import re
+          from email import message_from_bytes
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          sdists = sorted(Path("dist").glob("*.tar.gz"))
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(
+                  f"Expected 1 wheel and 1 sdist in dist/, found {len(wheels)} wheel(s) and {len(sdists)} sdist(s)."
+              )
+
+          with ZipFile(wheels[0]) as archive:
+              metadata_names = [
+                  name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+              ]
+              if len(metadata_names) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one .dist-info/METADATA in {wheels[0].name}, found {metadata_names}."
+                  )
+              message = message_from_bytes(archive.read(metadata_names[0]))
+
+          version = message["Version"]
+          license_expr = message["License-Expression"]
+          if license_expr != "MIT":
+              raise SystemExit(f"Expected License-Expression 'MIT', got {license_expr!r}.")
+
+          requires_dist = message.get_all("Requires-Dist") or []
+          url_scheme_re = re.compile(
+              r"(@|://|\b(?:git|hg|svn|bzr)\+|\b(?:http|https|file|ssh)://)",
+              flags=re.IGNORECASE,
+          )
+          if any(url_scheme_re.search(entry) for entry in requires_dist):
+              raise SystemExit(
+                  "PyPI publication blocked: wheel metadata contains a direct URL or VCS dependency."
+              )
+
+          workflow_ref = (os.environ.get("WORKFLOW_REF") or "").strip()
+          if workflow_ref == "refs/heads/master":
+              pass
+          elif workflow_ref.startswith("refs/tags/"):
+              ref_tag = workflow_ref.removeprefix("refs/tags/")
+              if ref_tag != f"v{version}":
+                  raise SystemExit(
+                      f"Git tag ref {ref_tag!r} does not match built wheel version 'v{version}'."
+                  )
+          else:
+              raise SystemExit(
+                  f"PyPI publication blocked: workflow_dispatch publish is restricted to 'refs/heads/master' or matching 'refs/tags/v{version}', got {workflow_ref!r}."
+              )
+
+          expected_tag = (os.environ.get("EXPECTED_RELEASE_TAG") or "").strip()
+          if expected_tag and expected_tag not in {version, f"v{version}"}:
+              raise SystemExit(
+                  f"Release tag {expected_tag!r} does not match built wheel version {version!r} (expected 'v{version}' or '{version}')."
+              )
+
+          print(f"Verified PyPI-compatible distributions for appium-connect-agent=={version} on {workflow_ref}.")
+          PY
+      - name: Publish with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always dist/*

@@ -7,6 +7,11 @@ name = "appium-connect-agent"
 version = "0.1.0"
 description = "Local Appium readiness and automation for AI agent integrations."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Microsoft Corporation" },
+]
 requires-python = ">=3.11"
 dependencies = [
     "httpx==0.28.1",
@@ -19,6 +24,11 @@ dependencies = [
     "mcp==2.3.0",
     "pydantic==2.14.1",
 ]
+
+[project.urls]
+Documentation = "https://github.com/FSQ-lab/appium-connect-agent#readme"
+Issues = "https://github.com/FSQ-lab/appium-connect-agent/issues"
+Repository = "https://github.com/FSQ-lab/appium-connect-agent"
 
 [project.scripts]
 appium-connect-agent-mcp = "appium_connect_agent.integrations._server:main"

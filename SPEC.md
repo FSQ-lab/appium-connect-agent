@@ -45,7 +45,7 @@
 - pytest 从 `tests/` 收集测试，使用已安装包，不注入源码搜索路径；初始测试只验证包可导入。默认测试不得隐式要求 Appium 服务或设备。
 - Ruff 使用 Python 3.11 目标、88 字符行宽、四空格缩进和双引号，统一格式化与 lint；mypy 对源码和测试采用 strict 基线，不全局忽略缺失类型。
 - 基础验证入口为 `uv sync --locked`、`uv run ruff format --check .`、`uv run ruff check .`、`uv run mypy src tests`、`uv run pytest` 和 `uv build`；构建产物还须在隔离环境安装并验证导入及 `py.typed`。
-- wheel/sdist 元数据必须与批准的直接运行依赖一致；各自在隔离环境按元数据安装依赖，执行 uv pip check、包导入及 py.typed 验证。项目锁定环境另以 uv sync --locked 验证，不把消费者解析的传递版本冒充与本地锁完全相同。保留 macOS 质量与 Windows 打包检查，后者不构成 Windows Runtime 支持。
+- 发行包采用 MIT 许可证（根 `LICENSE`，`pyproject.toml` 声明 `license = "MIT"`、`authors` 与公开仓库 `[project.urls]`）。wheel/sdist 元数据必须与批准的直接运行依赖及许可证元数据一致；各自在隔离环境按元数据安装依赖，执行 uv pip check、包导入及 py.typed 验证。项目锁定环境另以 uv sync --locked 验证，不把消费者解析的传递版本冒充与本地锁完全相同。保留 macOS 质量与 Windows 打包检查，后者不构成 Windows Runtime 支持。仓库另提供手动触发的 `.github/workflows/release.yml`（`workflow_dispatch`，默认 `publish=false` 仅执行全量质量/测试、构建校验与 Ubuntu/macOS/Windows 安装冒烟；仅当维护者显式设置 `publish=true` 且通过 GitHub `pypi` 环境与 PyPI Trusted Publishing OIDC 校验后才向 PyPI 发布制品，不自动发布）。
 
 ## Module Import Constraints
 

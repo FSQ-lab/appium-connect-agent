@@ -616,6 +616,19 @@ def test_valid_upstream_error_and_final_success_each_beat_later_cancellation(
         assert cancellation.is_set()
         success.quit()
 
+        cancellation.clear()
+        service.queue(
+            "action",
+            ResponsePlan(payload=b"", after_send=cancellation.set),
+        )
+        empty_body = session_for(service, connection, "empty-body-after-send")
+        with pytest.raises(CommandError):
+            empty_body.element("id", "target").click(
+                control=OperationControl(timeout_seconds=1, cancellation=cancellation),
+            )
+        assert cancellation.is_set()
+        empty_body.quit()
+
 
 def test_condition_deadline_no_longer_limits_an_action_already_started(
     service: ActionProtocolService,
