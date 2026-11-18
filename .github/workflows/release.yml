@@ -45,10 +45,11 @@ jobs:
 
   tests:
     name: ${{ matrix.name }}
-    runs-on: macos-15
-    timeout-minutes: 20
+    runs-on: macos-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: Tests (Core & Runtime)
@@ -81,8 +82,8 @@ jobs:
     needs:
       - quality
       - tests
-    runs-on: macos-15
-    timeout-minutes: 15
+    runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -112,13 +113,13 @@ jobs:
     name: Install smoke (${{ matrix.os }})
     needs: verify
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         os:
           - ubuntu-latest
-          - macos-15
+          - macos-latest
           - windows-latest
     steps:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0

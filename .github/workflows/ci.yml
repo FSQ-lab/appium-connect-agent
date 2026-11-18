@@ -41,10 +41,11 @@ jobs:
           uv run --locked lint-imports
   tests:
     name: ${{ matrix.name }}
-    runs-on: macos-15
-    timeout-minutes: 20
+    runs-on: macos-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - name: Tests (Core & Runtime)
@@ -75,12 +76,12 @@ jobs:
   package:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          - os: macos-latest
             name: Package (macOS)
           - os: windows-latest
             name: Package (Windows)

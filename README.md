@@ -729,10 +729,10 @@ CI 保留工具的静态检查和已有产品测试，不执行真实环境体�
 `CI` 在推送 `master`、面向 `master` 的 Pull Request，以及手动触发时运行；全部检查统一使用公网 PyPI 元数据、CPython 3.11（与 `.python-version` 一致）和 uv 0.12.5：
 
 - `Quality`：在 `ubuntu-latest` 锁定同步开发环境，执行 Ruff 格式与 lint、strict mypy 及生产 import-linter。
-- `Tests`：在 `macos-15` 按四个测试分片执行全量 `pytest`。
-- `Package (macOS / Windows)`：在 `macos-15` 与 `windows-latest` 构建 wheel 与 sdist，并通过 `.github/scripts/check_distributions.py` 校验文件白名单、MIT 许可证与依赖元数据，以及隔离临时环境安装与导出符号检查（Windows 打包检查不代表支持 Windows Runtime）。
+- `Tests`：在 `macos-latest` 按四个测试分片执行全量 `pytest`。
+- `Package (macOS / Windows)`：在 `macos-latest` 与 `windows-latest` 构建 wheel 与 sdist，并通过 `.github/scripts/check_distributions.py` 校验文件白名单、MIT 许可证与依赖元数据，以及隔离临时环境安装与导出符号检查（Windows 打包检查不代表支持 Windows Runtime）。
 
 `Release`（`.github/workflows/release.yml`）仅支持 `workflow_dispatch` 手动触发：
 
-- 默认 `publish=false`：完整执行 `Quality`、`Tests`、`verify`（制品构建与白名单校验），以及 `ubuntu-latest` / `macos-15` / `windows-latest` 三平台纯净 `pip` 安装与导入/元数据冒烟验证（其中 Ubuntu 与 macOS 另执行 `appium-connect-agent --help` 与 `appium-connect-agent-mcp --help` 双 CLI 冒烟；Windows 仅验证安装、导入、许可证与 22 工具 Catalog），上传已验证制品而不发布。
+- 默认 `publish=false`：完整执行 `Quality`、`Tests`、`verify`（制品构建与白名单校验），以及 `ubuntu-latest` / `macos-latest` / `windows-latest` 三平台纯净 `pip` 安装与导入/元数据冒烟验证（其中 Ubuntu 与 macOS 另执行 `appium-connect-agent --help` 与 `appium-connect-agent-mcp --help` 双 CLI 冒烟；Windows 仅验证安装、导入、许可证与 22 工具 Catalog），上传已验证制品而不发布。
 - 显式 `publish=true`（可选填写 `release_tag`，如 `v0.1.0`）：在上述全部门禁通过后，进入受保护的 GitHub `pypi` Environment，核验无直接 URL 依赖、MIT 许可证及版本/Tag 一致性，并通过 PyPI Trusted Publishing（OIDC，`uv publish --trusted-publishing always`）发布。
