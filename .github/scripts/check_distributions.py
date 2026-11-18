@@ -23,6 +23,12 @@ DEPENDENCIES = {
     "pydantic==2.14.1",
 }
 METADATA_DEPENDENCIES = {dependency.lower() for dependency in DEPENDENCIES}
+AUTHOR = "Microsoft Corporation"
+PROJECT_URLS = {
+    "Documentation, https://github.com/FSQ-lab/appium-connect-agent#readme",
+    "Issues, https://github.com/FSQ-lab/appium-connect-agent/issues",
+    "Repository, https://github.com/FSQ-lab/appium-connect-agent",
+}
 STUB = "typings/nodesemver/__init__.pyi"
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = """
@@ -44,6 +50,13 @@ metadata = distribution('appium-connect-agent').metadata
 assert metadata['Name'] == 'appium-connect-agent'
 assert metadata['Version'] == sys.argv[1]
 assert metadata['Requires-Python'] == sys.argv[2]
+assert metadata['License-Expression'] == 'MIT'
+assert metadata['Author'] == 'Microsoft Corporation'
+assert set(metadata.get_all('Project-URL')) == {
+    'Documentation, https://github.com/FSQ-lab/appium-connect-agent#readme',
+    'Issues, https://github.com/FSQ-lab/appium-connect-agent/issues',
+    'Repository, https://github.com/FSQ-lab/appium-connect-agent',
+}
 assert set(metadata.get_all('Requires-Dist')) == {
     'httpx==0.28.1', 'anyio==4.15.1', 'httpcore==1.0.9', 'node-semver==0.9.1',
     'appium-python-client==6.0.8', 'selenium==4.51.0', 'defusedxml==0.7.1',
@@ -163,7 +176,13 @@ def main() -> None:
                 info = f"{stem}.dist-info"
                 metadata_names = {
                     f"{info}/{n}"
-                    for n in ("WHEEL", "METADATA", "entry_points.txt", "RECORD")
+                    for n in (
+                        "WHEEL",
+                        "METADATA",
+                        "entry_points.txt",
+                        "RECORD",
+                        "licenses/LICENSE",
+                    )
                 }
                 require(len(names) == len(set(names)), "Duplicate wheel members")
                 require(
@@ -174,6 +193,11 @@ def main() -> None:
                     require(
                         wheel.read(name) == content, f"Wheel source differs: {name}"
                     )
+                require(
+                    wheel.read(f"{info}/licenses/LICENSE")
+                    == (ROOT / "LICENSE").read_bytes(),
+                    "Wheel LICENSE differs from root LICENSE",
+                )
                 metadata = wheel.read(f"{info}/METADATA")
         else:
             with tarfile.open(artifact) as sdist:
@@ -186,7 +210,13 @@ def main() -> None:
                 source_names = {f"{stem}/src/{name}" for name in expected}
                 metadata_names = {
                     f"{stem}/{n}"
-                    for n in ("PKG-INFO", "README.md", "pyproject.toml", STUB)
+                    for n in (
+                        "PKG-INFO",
+                        "README.md",
+                        "LICENSE",
+                        "pyproject.toml",
+                        STUB,
+                    )
                 }
                 allowed = (
                     source_names | metadata_names | {f"{stem}/pyproject.toml.orig"}
@@ -213,11 +243,24 @@ def main() -> None:
                     contents[f"{stem}/{STUB}"] == (ROOT / STUB).read_bytes(),
                     "Sdist local type declaration differs",
                 )
+                require(
+                    contents[f"{stem}/LICENSE"] == (ROOT / "LICENSE").read_bytes(),
+                    "Sdist LICENSE differs from root LICENSE",
+                )
         parsed = message_from_bytes(metadata)
         require(parsed["Name"] == project["name"], "Incorrect distribution name")
         require(parsed["Version"] == version, "Incorrect version")
         require(
             parsed["Requires-Python"] == python_requirement, "Incorrect Python range"
+        )
+        require(
+            parsed["License-Expression"] == "MIT",
+            "Incorrect license metadata",
+        )
+        require(parsed["Author"] == AUTHOR, "Incorrect author metadata")
+        require(
+            set(parsed.get_all("Project-URL", [])) == PROJECT_URLS,
+            "Incorrect project URL metadata",
         )
         require(
             set(parsed.get_all("Requires-Dist", [])) == METADATA_DEPENDENCIES,

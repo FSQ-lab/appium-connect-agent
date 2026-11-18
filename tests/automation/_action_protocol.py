@@ -263,6 +263,8 @@ class ActionProtocolService:
         handler.send_response(plan.status)
         handler.send_header("Content-Type", "application/json")
         handler.send_header("Content-Length", str(len(data)))
+        if not data and plan.after_send is not None:
+            plan.after_send()
         handler.end_headers()
         if plan.body_started is not None:
             plan.body_started.set()
@@ -270,13 +272,15 @@ class ActionProtocolService:
             time.sleep(plan.body_delay_seconds)
         count = max(plan.chunk_count, 1)
         chunk_size = max((len(data) + count - 1) // count, 1)
-        for offset in range(0, len(data), chunk_size):
+        offsets = range(0, len(data), chunk_size)
+        for index, offset in enumerate(offsets):
+            is_last_chunk = index == len(offsets) - 1
+            if is_last_chunk and plan.after_send is not None:
+                plan.after_send()
             handler.wfile.write(data[offset : offset + chunk_size])
             handler.wfile.flush()
-            if offset + chunk_size < len(data) and plan.chunk_delay_seconds:
+            if not is_last_chunk and plan.chunk_delay_seconds:
                 time.sleep(plan.chunk_delay_seconds)
-        if plan.after_send is not None:
-            plan.after_send()
 
     def _handle(self, handler: BaseHTTPRequestHandler) -> None:
         request = self._record(handler)

@@ -83,7 +83,12 @@ def test_integrations_lazy_exports_resolve_public_symbols_and_reject_unknown() -
 
 def test_repository_uses_only_public_pypi_registry_metadata() -> None:
     root = Path(__file__).resolve().parents[1]
-    for relative in ("pyproject.toml", "uv.lock", ".github/workflows/ci.yml"):
+    for relative in (
+        "pyproject.toml",
+        "uv.lock",
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+    ):
         content = (root / relative).read_text(encoding="utf-8")
         assert "packagefeedproxy.microsoft.io" not in content, relative
         assert "visualstudio.com" not in content, relative
