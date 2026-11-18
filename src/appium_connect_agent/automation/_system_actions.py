@@ -185,7 +185,9 @@ def _bounded_timeout(
     """Fit one positive integer timeout strictly inside the original budget."""
     gateway.checkpoint()
     remaining = deadline - time.monotonic()
-    if remaining <= 0.001:
+    if remaining <= 0.001 or math.isclose(
+        remaining, 0.001, rel_tol=0.0, abs_tol=math.ulp(deadline)
+    ):
         # A sub-millisecond budget can be unexpired; cancellation still wins.
         gateway.checkpoint()
         raise gateway.failure(OperationTimeoutError, "operation_timeout", "not_sent")

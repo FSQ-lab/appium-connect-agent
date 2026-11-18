@@ -319,7 +319,7 @@ RuntimeUsage.release() -> None
 ### Official CLI Behavior
 
 - gate 后固定执行 `<node> <managed-appium-entry> driver list --installed --json`。未传 `--updates`，不得请求 update metadata。Runtime 允许 Appium 3.x 增加未知字段，但只读取目标 map key 的 `installed/pkgName/version/installType/appiumVersion/installPath`；Appium 3.7.0 installed manifest/list 不保留 `driverName`，不得要求该字段。short-name identity 由 map key 精确等于请求值证明；同时要求固定官方 package、installed is True、可靠 SemVer、可选 installType/appiumVersion 不矛盾，以及解析后的 installPath 位于已验证 driver home并指向官方 package identity。目标 key absent 才是 missing；必需字段缺失/类型错、identity/path 矛盾、非法版本、非零、非法 UTF-8/JSON 或超限是 damaged/unknown，不得当 missing 覆盖。若另核对 package 内 appium.driverName，只能安全有界读取受管 installPath/package.json，不得声称来自 list。
-- 05A 若 before verified，直接 reused/changed=false，不写 intent、不运行 install。若明确 missing，唯一写命令是 `<node> <entry> driver install <driver> --json`；short name 直接来自 Literal且不带版本。Appium/npm 选择默认版本并执行 peer compatibility；任何不兼容原样失败，不搜索旧版、不更新 Appium、不 retry/fallback。exit 0 后必须再次 list 并完整验证目标 identity/version/path，才写 complete、返回 installed。
+- 05A 若 before verified，直接 reused/changed=false，不写 intent、不运行 install。若明确 missing，原无版本 `<driver>` CLI 语句已被下方 `RT-IOS-01` 正式替代为固定 `<node> <entry> driver install <driver>@<designated_version> --json`（调用方公开 API 仍只传无版本 Literal，严禁任意版本字符串）；任何 peer/安装失败原样失败，不搜索旧版、不更新 Appium、不 retry/fallback。exit 0 后必须再次 list 并完整验证目标 identity、精确指定版本与受管 path，才写 complete、返回 installed。
 - 05B 要求 before verified；missing 以 driver_not_installed 失败且不自动 ensure。唯一命令是 `<node> <entry> driver doctor <driver> --json`。Appium 3.7.0 动态加载 manifest Doctor checks；`--json` 不关闭 `hasAutofix()` 的 fix，成功 stdout 仅为 integer check count；仅有无-autofix optional finding 时仍可能 exit 0。故 success 仅称 accepted；非零统一失败，不自动 rerun/rollback，不追加 SDK/Xcode/signing/Accessibility/ADB/设备命令。
 - 所有命令使用固定受管 Node/Appium/APPIUM_HOME/cwd/cache/tmp/PATH，`shell=False`、`stdin=DEVNULL`、双流 PIPE、`start_new_session=True`。可继承已批准的 npm registry/proxy/certificate/auth 行为但不读取、返回或修改其值；不修改 npmrc、shell、全局 PATH/prefix 或默认 `~/.appium`。
 
@@ -385,7 +385,7 @@ RuntimeUsage.release() -> None
 
 ### Public Interface And Locking
 
-- `Runtime.diagnose(*, target_driver: OfficialDriver = "uiautomator2", control: OperationControl | None = None) -> DiagnosticReport` 增加目标选择。默认值的报告头、检查顺序、状态、reason code 与 evidence 保持兼容；`xcuitest` 在对应批次确认前以固定 `ValueError` 拒绝，bool、非字符串和未知值在锁与 I/O 前拒绝。
+- `Runtime.diagnose(*, target_driver: OfficialDriver = "uiautomator2", control: OperationControl | None = None) -> DiagnosticReport` 增加目标选择。默认值的报告头、检查顺序、状态、reason code 与 evidence 保持兼容；`xcuitest` 由下方 `RT-IOS-01` 正式启用，bool、非字符串和未知值在锁与 I/O 前拒绝。
 - `Runtime.managed_cleanup_pending: bool` 是只读、O(1)、零 I/O 属性，表示同一 Runtime 是否仍持有待 `cleanup_managed()` 继续处理的 owned service 句柄。
 - `_managed_scope` 与 `_managed_cleanup` 的所有产品代码读写都通过 `_managed_guard` 下的原子 helper；公开属性与 `cleanup_managed()` 使用同一快照。`_ManagedScope._usage_lock` 和 `Runtime._managed_guard` 绝不嵌套持有。
 
@@ -402,3 +402,22 @@ RuntimeUsage.release() -> None
 - Xcode 检查只信任系统 `/Applications`。若 `/var/db/xcode_select_link` 是 symlink，其目标必须精确匹配 `/Applications/Xcode*.app/Contents/Developer`；`/Applications`、bundle、`Contents`、`Info.plist`、`Developer/usr/bin/xcodebuild` 全链逐级 `lstat` 且零 symlink，两个叶文件必须是普通文件，`Info.plist` 通过既有有界 Reader 读取。合规则 `xcode_developer_dir_observed`；Command Line Tools 目标为 `command_line_tools_only`，其他目标为 `invalid_developer_directory`。
 - xcode-select link 缺失时最多按名称排序检查 16 个 `/Applications/Xcode*.app`；存在完整 bundle 但 active developer dir 未知时报告 `active_developer_dir_unknown`，否则 `missing`；权限或 I/O 不确定性报告 `path_unreadable`。不扫描用户 Applications，不调用 `xcode-select` 或 `xcodebuild`。
 - 永久测试必须覆盖默认 Android 零变化、目标纯值拒绝、受管根 ready/missing/损坏/非终态、外部 Mac2 identity、strict SemVer、Xcode 完整/CLT-only/缺失/symlink/I/O 分支、零子进程/网络写入，以及 cleanup pending 初始 false、提前退出 true、显式 cleanup 后 false 与并发锁顺序。真实受管根静态诊断、发行物验证和独立完整审查仍是 Issue Done gate。
+
+## iOS XCUITest Static Diagnostics And Designated 3.x Driver Pinning
+
+本节定义 Issue #39 `RT-IOS-01`（关联收口 Issue #13 `xcuitest`）的 Runtime 契约增量；默认 Android / UiAutomator2 与已确认 macOS / Mac2 静态诊断、受管服务生命周期和模块边界保持不变。
+
+### Designated Appium 3.x Official Driver Pinning
+
+- 鉴于上游 npm 默认 `latest` 标签已迁移至要求 `peerDependencies.appium = "^4.0.0-beta.6"` 的新主版本，本节正式替代上文 05A 无版本 CLI 安装条款：Runtime 在内部为受管 Appium `3.7.0` 固定唯一官方驱动指定版本表：`uiautomator2 -> "8.7.0"`、`mac2 -> "4.6.1"`、`xcuitest -> "12.22.8"`。
+- 公开 `Runtime.ensure_managed_driver(driver: OfficialDriver, *, control: OperationControl | None = None) -> DriverMaintenanceResult` 与 `Runtime.run_driver_doctor(...)` 签名、锁、预检门禁、预算和脱敏规则保持不变；调用方仍只能传入三个精确小写 short name，严禁传入任意版本、tag、source 或包名。
+- `driver list --installed --json` 快照核验要求已安装目标除满足既有官方 `pkgName`、`installed is True`、可靠 SemVer 与受管 `installPath` 外，其观测版本还必须精确等于上述指定版本：相等判为 `verified/driver_verified`（`ensure_managed_driver` 零写入返回 `reused`）；不等判为 `damaged/driver_version_mismatch`，`ensure_managed_driver` 与 `run_driver_doctor` 均零覆盖、零子进程失败（`driver_damaged`）。
+- 当目标明确 `missing` 时，`ensure_managed_driver` 固定执行 `<node> <managed-appium-entry> driver install <driver>@<designated_version> --json`，exit `0` 后二次 `driver list --installed --json` 复查必须达到 `verified`（含指定版本精确匹配）方可写 `maintenance.json = complete` 并返回 `installed`。
+
+### XCUITest Static Diagnostic Behavior
+
+- `Runtime.diagnose(*, target_driver: OfficialDriver = "uiautomator2", control: OperationControl | None = None) -> DiagnosticReport` 解除 `xcuitest` 拒绝门禁，完整接受 `"uiautomator2" | "mac2" | "xcuitest"`；bool、非字符串和未知值仍在锁与 I/O 前抛 `ValueError`。
+- `target_driver="xcuitest"` 返回 `host="macOS"`、`target="iOS"`、`driver="XCUITest"`，保持零子进程、零 HTTP、除账号协调锁 `runtime.lock` 外零写入；默认 `"uiautomator2"` 与 `"mac2"` 的报告头、检查顺序、状态、reason code 和 evidence 保持 100% 兼容。
+- 受管根与外部环境分支与 `mac2` 参数化共用同一安全检查逻辑，目标驱动包固定为 `appium-xcuitest-driver`（核验 `name="appium-xcuitest-driver"`、`appium.driverName="xcuitest"`、`appium.automationName="XCUITest"` 与严格 SemVer）。
+- `target_driver="xcuitest"` 的静态 `xcode_layout` 在 `mac2` 的系统 `/Applications/Xcode*.app` 全链非 symlink `lstat` 检查基础上，额外要求 `Contents/Developer/usr/bin/simctl` 与 `Contents/Developer/usr/bin/xcdevice` 同为非 symlink 普通文件（`mac2` 的 `xcode_layout` 仍只要求 `xcodebuild` 以保持零行为漂移）。`java_layout` 与 `android_sdk_layout` 均为 `not_applicable/not_applicable_for_driver`；`qualified_support` 为 `unknown/not_qualified`（`"No iOS Session qualification evidence is bundled."`），`service` 与 `device` 为 `unknown/not_checked`。
+- 永久测试须覆盖三官方驱动精确 `<driver>@<designated_version>` 安装参数、同版复用、非指定版本 `driver_version_mismatch -> driver_damaged` 阻断、`target_driver="xcuitest"` 受管/外部/Xcode（含缺失或 symlink `simctl`/`xcdevice`）分支，以及 `"uiautomator2"` / `"mac2"` 零退化。

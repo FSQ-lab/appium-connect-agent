@@ -26,13 +26,16 @@ from appium_connect_agent.automation import (
     Element,
     ElementInspection,
     ElementValidationError,
+    IosDeviceInfo,
     MacKeyStroke,
     RawStructureObservation,
     Session,
     TreeObservation,
     create_mac2_session,
     create_session,
+    create_xcuitest_session,
     list_devices,
+    list_ios_devices,
 )
 from appium_connect_agent.contracts import LocalSettings
 from appium_connect_agent.runtime import (
@@ -55,6 +58,7 @@ from ._models import (
     _OBSERVATION_DOCUMENT_MAX_BYTES,
     AUTOMATION_MODULE_STATUS,
     MAX_INTEGRATION_SCREENSHOT_BYTES,
+    AndroidKeycodePressRequest,
     AndroidPlatformData,
     AndroidSessionOpenRequest,
     AppActivateRequest,
@@ -99,8 +103,8 @@ from ._models import (
     DeviceKeyboardHideData,
     DeviceKeyboardHideRequest,
     DeviceKeyboardHideResult,
+    DeviceKeyBranch,
     DeviceKeyData,
-    DeviceKeyRequest,
     DeviceKeyResult,
     DeviceListData,
     DeviceListResult,
@@ -130,6 +134,8 @@ from ._models import (
     ElementImeActionData,
     ElementImeActionRequest,
     ElementImeActionResult,
+    ElementIosScrollData,
+    ElementIosScrollRequest,
     ElementMacosSwipeData,
     ElementMacosSwipeRequest,
     ElementScrollByData,
@@ -147,6 +153,9 @@ from ._models import (
     ElementTextResult,
     ElementTextSendRequest,
     HoverClickRequest,
+    IosHardwareButtonRequest,
+    IosPlatformData,
+    IosSessionOpenRequest,
     LocatorV1,
     LongClickRequest,
     MacosElementKeysRequest,
@@ -208,7 +217,7 @@ class ApplicationError(Exception):
 @dataclass(slots=True)
 class _SessionEntry:
     handle: str
-    platform: Literal["android", "macos"]
+    platform: Literal["android", "macos", "ios"]
     device_id: str
     target_app_id: str | None
     state: SessionState
@@ -220,7 +229,7 @@ class _SessionEntry:
 @dataclass(frozen=True, slots=True)
 class _Tombstone:
     handle: str
-    platform: Literal["android", "macos"]
+    platform: Literal["android", "macos", "ios"]
     device_id: str
     target_app_id: str | None
 
@@ -433,13 +442,14 @@ class Application:
                 host="macos", target="android_native", driver="uiautomator2"
             ),
             MacosPlatformData(host="macos", target="macos_desktop", driver="mac2"),
+            IosPlatformData(host="macos", target="ios_native", driver="xcuitest"),
         )
         limitations: CapabilityLimitations = (
-            "android_and_macos_native_automation",
+            "android_macos_and_ios_native_automation",
             "no_automatic_post_action_observation",
             "clipboard_current_caller_only",
             "status_bar_output_current_caller_only",
-            "local_apk_and_macos_app_paths_only",
+            "local_apk_app_and_ipa_paths_only",
             "package_remove_no_data_deletion_guarantee",
             "ime_requires_explicit_element_and_action",
             "explicit_screen_coordinates_only",
@@ -515,11 +525,11 @@ class Application:
     async def runtime_check(
         self,
         mode: Literal["static", "external_connection"],
-        target_driver: Literal["uiautomator2", "mac2"],
+        target_driver: Literal["uiautomator2", "mac2", "xcuitest"],
         timeout_seconds: float,
     ) -> RuntimeCheckResult:
         call_id = self._call_id()
-        if mode == "external_connection" and target_driver == "mac2":
+        if mode == "external_connection" and target_driver in ("mac2", "xcuitest"):
             self._raise_not_sent(call_id, "unsupported_operation")
         if mode == "external_connection" and self._settings.server_mode != "external":
             self._raise_not_sent(call_id, "runtime_mode_mismatch")
@@ -574,14 +584,27 @@ class Application:
             ),
         )
 
-    async def devices_list(self, timeout_seconds: float) -> DeviceListResult:
+    async def devices_list(
+        self, timeout_seconds: float, platform: Literal["android", "ios"] = "android"
+    ) -> DeviceListResult:
         call_id = self._call_id()
-        adb_executable = self._adb_executable
-        if adb_executable is None:
-            self._raise_not_sent(call_id, "adb_not_configured")
+        if platform == "android":
+            adb_executable = self._adb_executable
+            if adb_executable is None:
+                self._raise_not_sent(call_id, "adb_not_configured")
 
-        def discover(control: OperationControl) -> tuple[DeviceInfo, ...]:
-            return list_devices(adb_executable, control=control)
+            def discover_android(control: OperationControl) -> tuple[DeviceInfo, ...]:
+                return list_devices(adb_executable, control=control)
+
+            discover: Callable[
+                [OperationControl], tuple[DeviceInfo, ...] | tuple[IosDeviceInfo, ...]
+            ] = discover_android
+        else:
+
+            def discover_ios(control: OperationControl) -> tuple[IosDeviceInfo, ...]:
+                return list_ios_devices(control=control)
+
+            discover = discover_ios
 
         try:
             devices_value = await self._workers.run(timeout_seconds, discover)
@@ -598,7 +621,16 @@ class Application:
             DeviceData(
                 id=device.id,
                 name=device.name,
-                connection_state=device.connection_state,
+                connection_state=(
+                    device.connection_state
+                    if isinstance(device, DeviceInfo)
+                    else device.state
+                ),
+                kind=None if isinstance(device, DeviceInfo) else device.kind,
+                platform_version=(
+                    None if isinstance(device, DeviceInfo) else device.platform_version
+                ),
+                interface=None if isinstance(device, DeviceInfo) else device.interface,
             )
             for device in devices_value
         )
@@ -651,10 +683,10 @@ class Application:
     def _require_session_platform(
         self,
         entry: _SessionEntry,
-        platform: Literal["android", "macos"],
+        allowed: tuple[Literal["android", "macos", "ios"], ...],
         call_id: str,
     ) -> None:
-        if entry.platform != platform:
+        if entry.platform not in allowed:
             self._raise_not_sent(call_id, "unsupported_operation", entry=entry)
 
     @staticmethod
@@ -883,7 +915,7 @@ class Application:
         )
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android",), call_id)
 
         def ime_action_once(budget: OperationBudget) -> ElementImeActionResult:
             try:
@@ -964,14 +996,16 @@ class Application:
                     )
                 elif isinstance(request, ElementScrollToRequest):
                     container = self._element(session, request.container_locator)
+                    by_map = {
+                        "accessibility_id": "accessibility id",
+                        "class_name": "class name",
+                        "ios_predicate_string": "-ios predicate string",
+                    }
                     target = session.element(
-                        by=(
-                            "accessibility id"
-                            if request.target_by == "accessibility_id"
-                            else "id"
-                        ),
+                        by=by_map.get(request.target_by, request.target_by),
                         value=request.target_value,
                         package=request.target_package,
+                        predicate=request.target_predicate,
                         parent=container,
                     )
                     container.scroll(
@@ -1030,6 +1064,20 @@ class Application:
                     )
                     data = ElementMacosSwipeData(
                         intent="macos_swipe",
+                        can_scroll_more=None,
+                        session_state="active",
+                        busy=False,
+                    )
+                elif isinstance(request, ElementIosScrollRequest):
+                    element = self._element(session, request.locator)
+                    element.ios_scroll(
+                        request.direction,
+                        distance=request.distance,
+                        wait_timeout_seconds=request.wait_timeout_seconds,
+                        control=control,
+                    )
+                    data = ElementIosScrollData(
+                        intent="ios_scroll",
                         can_scroll_more=None,
                         session_state="active",
                         busy=False,
@@ -1128,7 +1176,7 @@ class Application:
         )
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android",), call_id)
 
         def back_once(budget: OperationBudget) -> DeviceBackResult:
             try:
@@ -1170,25 +1218,32 @@ class Application:
                 f"successful {action} did not leave Session active and idle"
             )
 
-    async def device_key(self, request: DeviceKeyRequest) -> DeviceKeyResult:
+    async def device_key(self, request: DeviceKeyBranch) -> DeviceKeyResult:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        if isinstance(request, IosHardwareButtonRequest):
+            self._require_session_platform(entry, ("ios",), call_id)
+        else:
+            self._require_session_platform(entry, ("android",), call_id)
 
         def key_once(budget: OperationBudget) -> DeviceKeyResult:
             try:
-                method = (
-                    session.device.press_keycode
-                    if request.kind == "press"
-                    else session.device.long_press_keycode
-                )
-                method(
-                    request.keycode,
-                    metastate=request.metastate,
-                    flags=request.flags,
-                    control=budget.control(),
-                )
+                control = budget.control()
+                if isinstance(request, IosHardwareButtonRequest):
+                    session.device.press_button(request.button, control=control)
+                else:
+                    method = (
+                        session.device.press_keycode
+                        if isinstance(request, AndroidKeycodePressRequest)
+                        else session.device.long_press_keycode
+                    )
+                    method(
+                        request.keycode,
+                        metastate=request.metastate,
+                        flags=request.flags,
+                        control=control,
+                    )
                 self._assert_device_action_complete(session, "key action")
                 return DeviceKeyResult(
                     schema_version=1,
@@ -1215,7 +1270,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android", "ios"), call_id)
 
         def hide_once(budget: OperationBudget) -> DeviceKeyboardHideResult:
             try:
@@ -1246,7 +1301,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android", "macos", "ios"), call_id)
 
         def clipboard_once(budget: OperationBudget) -> DeviceClipboardResult:
             try:
@@ -1293,7 +1348,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android", "ios"), call_id)
 
         def alert_once(budget: OperationBudget) -> DeviceAlertResult:
             try:
@@ -1329,7 +1384,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android",), call_id)
 
         def status_bar_once(budget: OperationBudget) -> DeviceStatusBarResult:
             try:
@@ -1428,7 +1483,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "android", call_id)
+        self._require_session_platform(entry, ("android", "ios"), call_id)
 
         def package_once(budget: OperationBudget) -> AppPackageResult:
             try:
@@ -1588,7 +1643,7 @@ class Application:
         budget = OperationBudget(time.monotonic() + request.timeout_seconds, Event())
         call_id = self._call_id()
         entry, session = self._prepare_ui_operation(request.session_handle, call_id)
-        self._require_session_platform(entry, "macos", call_id)
+        self._require_session_platform(entry, ("macos", "ios"), call_id)
 
         def keys_once(budget: OperationBudget) -> MacosKeysResult:
             try:
@@ -1643,6 +1698,9 @@ class Application:
                 if isinstance(request, AndroidSessionOpenRequest):
                     device_id = request.device_id
                     target_app_id = request.app_id
+                elif isinstance(request, IosSessionOpenRequest):
+                    device_id = request.udid
+                    target_app_id = request.bundle_id
                 else:
                     device_id = "macos:local"
                     target_app_id = request.bundle_id
@@ -1731,6 +1789,27 @@ class Application:
                         should_terminate_app=request.should_terminate_app,
                         new_command_timeout_seconds=request.new_command_timeout_seconds,
                         capabilities=None,
+                        control=budget.control(),
+                    )
+                elif isinstance(request, IosSessionOpenRequest):
+                    session = create_xcuitest_session(
+                        connection,
+                        request.udid,
+                        bundle_id=request.bundle_id,
+                        app_path=(
+                            None if request.app_path is None else Path(request.app_path)
+                        ),
+                        arguments=request.arguments,
+                        auto_launch=request.auto_launch,
+                        force_app_launch=request.force_app_launch,
+                        should_terminate_app=request.should_terminate_app,
+                        no_reset=request.no_reset,
+                        xcode_org_id=request.xcode_org_id,
+                        xcode_signing_id=request.xcode_signing_id,
+                        updated_wda_bundle_id=request.updated_wda_bundle_id,
+                        show_xcode_log=False,
+                        wda_launch_timeout_ms=None,
+                        new_command_timeout_seconds=request.new_command_timeout_seconds,
                         control=budget.control(),
                     )
                 else:
@@ -2083,14 +2162,15 @@ class Application:
         if report.host != "macOS" or pair not in {
             ("Android", "UiAutomator2"),
             ("macOS", "Mac2"),
+            ("iOS", "XCUITest"),
         }:
             raise ValueError("runtime report platform is outside the fixed contract")
         return RuntimeReport(
             operation_id=report.operation_id,
             observed_at=observed_at,
             host="macOS",
-            target=cast(Literal["Android", "macOS"], report.target),
-            driver=cast(Literal["UiAutomator2", "Mac2"], report.driver),
+            target=cast(Literal["Android", "macOS", "iOS"], report.target),
+            driver=cast(Literal["UiAutomator2", "Mac2", "XCUITest"], report.driver),
             checks=tuple(
                 RuntimeCheck(
                     check_id=check.check_id,

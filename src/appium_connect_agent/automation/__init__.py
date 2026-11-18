@@ -2,6 +2,7 @@
 
 from ._device import Device as Device
 from ._discovery import list_devices as list_devices
+from ._discovery import list_ios_devices as list_ios_devices
 from ._element import Element as Element
 from ._element import ElementValidationError as ElementValidationError
 from ._macos_keyboard import MACOS_MODIFIER_CAPS_LOCK as MACOS_MODIFIER_CAPS_LOCK
@@ -28,6 +29,9 @@ from ._models import ExecutionUnknownError as ExecutionUnknownError
 from ._models import ImageRegion as ImageRegion
 from ._models import InvalidRequestError as InvalidRequestError
 from ._models import InvalidSessionStateError as InvalidSessionStateError
+from ._models import IosDeviceInfo as IosDeviceInfo
+from ._models import IosDeviceKind as IosDeviceKind
+from ._models import IosDeviceState as IosDeviceState
 from ._models import LocatorValue as LocatorValue
 from ._models import ObservationScope as ObservationScope
 from ._models import ObservedValue as ObservedValue
@@ -57,3 +61,4 @@ from ._models import VisualTargetCandidate as VisualTargetCandidate
 from ._session import Session as Session
 from ._session import create_mac2_session as create_mac2_session
 from ._session import create_session as create_session
+from ._session import create_xcuitest_session as create_xcuitest_session

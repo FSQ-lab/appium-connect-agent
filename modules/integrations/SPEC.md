@@ -651,3 +651,27 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 - `SessionOpenRequest`、`AppLifecycleRequest`、`AppPackageRequest`、`DeviceClipboardRequest`、`DevicePointerRequest`、`MacosKeysRequest` 使用同一私有 RootModel 校验错误；`.app`/`.apk` 路径、arguments、clipboard set、keystrokes、locator、坐标及下层标识不得进入错误文本、日志、stderr 或持久证据。
 - 零新增或升级依赖；只使用已批准版本的 Pydantic、MCP、AnyIO、Python 标准库及 Runtime/Automation/Contracts 公开 Interface，禁止导入下层私有模块或建立第二协议/registry/tool 表。
 - 不交付自动导航、后观测、验证、retry/replay/rollback、attach/recovery、clear-app、HTTP、任意 shell/script、ADB 推导、多 Session、其他平台或具体 Host 资格。完整字段、schema、错误、帧边界及验证矩阵见[INT-MAC-01 详细设计](../../docs/superpowers/specs/2026-11-14-integrations-macos-mac2-tools-design.md)。
+
+## INT-IOS-01 Three-Platform 22-Tool iOS XCUITest Cutover
+
+本节是 Issue #42 经用户 SPEC Gate 确认的 clean cutover 合同；与此前双平台（Android + Mac2）限制条款冲突时以本节及根 SPEC 的 `INT-IOS-01` 条款为准。详细字段、Schema 与验证矩阵见[INT-IOS-01 详细设计](../../docs/superpowers/specs/2026-11-16-integrations-ios-xcuitest-tools-design.md)。
+
+### Single source and three-platform capability truth
+
+- 唯一不可变 `TOOL_CATALOG` 保持精确有序 22 项工具（零新增第 23 项工具、零新增或升级依赖），继续同时驱动本地 stdio MCP、FSQ Python ToolCall 与正式产品 CLI。
+- `CapabilityData.platforms` clean cutover 为变长同构三元组（`min_length=3, max_length=3`，零 `prefixItems`），按固定顺序精确包含 `AndroidPlatformData("macos", "android_native", "uiautomator2")`、`MacosPlatformData("macos", "macos_desktop", "mac2")` 与 `IosPlatformData("macos", "ios_native", "xcuitest")`。`CapabilityLimitations` 更新为 `android_macos_and_ios_native_automation` 与 `local_apk_app_and_ipa_paths_only`；多平台工具描述与 MCP `instructions` 按详细设计逐字同步。
+- `runtime.check` 支持 `target_driver: Literal["uiautomator2", "mac2", "xcuitest"] = "uiautomator2"` 及 `("iOS", "XCUITest")` 报告对；`external_connection + xcuitest` 在任何 Runtime 门禁/锁/HTTP 前返回 `unsupported_operation/not_sent`。
+- `devices.list` 新增 `platform: Literal["android", "ios"] = "android"`：`"android"` 保持既有 `adb_not_configured` 门禁与输出；`"ios"` 零 ADB 依赖调用公开 `list_ios_devices`，支持最多 512 项设备并在 `DeviceData` 中填充 `kind`、`platform_version`、`interface`（Android 分支固定为 `null`）及扩展 `connection_state`（含 `booted|shutdown|unavailable`）。
+
+### Multi-platform session, observation and action tools
+
+- `session.open` 升级为 `android | macos | ios` 三分支判别联合：iOS 分支 `IosSessionOpenRequest` 接受非 `"auto"` `udid`、可选 `bundle_id`、词法绝对 `.app`/`.ipa` `app_path`、`arguments`、生命周期布尔值与可选真机签名字段（`xcode_org_id`、`xcode_signing_id`、`updated_wda_bundle_id`），调用公开 `create_xcuitest_session`；`SessionData`、`_SessionEntry` 与 `_Tombstone` 全程保存并返回三平台枚举。
+- `ui.observe` 将 `_ELEMENT_ATTRIBUTE` 扩展至 27 项（新增 `accessible`、`index`、`traits`）；`AutomationLocatorDocument` 保持 `model_fields_set` 序列化不变（Android 5 键逐字节不变，Mac2 与 iOS 保留显式 `predicate`）。
+- `element.gesture` 新增第 7 分支 `ios_scroll`（`direction` + `distance` `(0,1]` -> `Element.ios_scroll`），并将 `scroll_to` 的 `target_by` 扩展为 `id|accessibility_id|name|class_name|ios_predicate_string` 加可选 `target_predicate`（仅 `id` 允许非 `None` `target_package`）。
+- `device.key` clean cutover 为 `press | long_press | ios_button` 三分支判别联合（互斥 `const` 满足 FSQ `_verify_disjoint_one_of` -> `anyOf` 投射），`ios_button` 接受 `home|volumeUp|volumeDown|action|camera` 并调用公开 `Device.press_button`（结果 `DeviceKeyData` 只报告 `kind`）。
+- `app.package` 的 `install` 接受词法绝对 `.apk`/`.app`/`.ipa` 路径，`remove` 接受跨平台 `_CROSS_PLATFORM_APP_ID`；`Application` 门禁对齐下层公开契约：`ime_action`/`back`/`device_status_bar` 限 `("android",)`，`device_keyboard_hide`/`device_alert`/`app_package` 允许 `("android", "ios")`，`device_clipboard` 允许全三平台 `("android", "macos", "ios")`，`macos.keys` 允许 `("macos", "ios")`。
+
+### Privacy, FSQ projection and verification
+
+- 包含 `DeviceKeyRequest` 在内的全部 7 个敏感判别联合 Request（`SessionOpenRequest`、`DeviceKeyRequest`、`DeviceClipboardRequest`、`AppLifecycleRequest`、`AppPackageRequest`、`DevicePointerRequest`、`MacosKeysRequest`）统一继承 `_PrivateRootModel`；UDID、路径、参数、签名标识、剪贴板文本、按键/物理键名、坐标及下层标识严禁进入错误文本、stderr、日志或持久证据。
+- 全部 22 项投射 Schema 必须通过真实 FSQ OpenAI `ensure_strict_json_schema` 与 Google Gemini `google_schema` 转换器校验（22 + 22 零错误），并完成受控协议全矩阵、三壳同源、wheel/sdist 隔离验证、独立 full 审查 0 open findings 及获准 iOS Simulator 三壳端到端冒烟（严禁触碰未授权物理真机）。

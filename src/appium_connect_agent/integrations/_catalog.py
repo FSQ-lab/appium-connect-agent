@@ -497,7 +497,9 @@ async def _runtime_check(application: Application, request: BaseModel) -> BaseMo
 
 async def _devices_list(application: Application, request: BaseModel) -> BaseModel:
     value = cast(DeviceListRequest, request)
-    return await application.devices_list(value.timeout_seconds)
+    return await application.devices_list(
+        value.timeout_seconds, platform=value.platform
+    )
 
 
 async def _session_open(application: Application, request: BaseModel) -> BaseModel:
@@ -540,7 +542,8 @@ async def _gesture(application: Application, request: BaseModel) -> BaseModel:
 
 
 async def _device_key(application: Application, request: BaseModel) -> BaseModel:
-    return await application.device_key(cast(DeviceKeyRequest, request))
+    value = cast(DeviceKeyRequest, request)
+    return await application.device_key(value.root)
 
 
 async def _device_keyboard_hide(
@@ -649,7 +652,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.devices.list",
             "appium_devices_list",
             "devices_list",
-            "List Android devices through the bootstrapped ADB executable.",
+            "List Android or iOS devices through configured local platform tools.",
             DeviceListRequest,
             DeviceListResult,
             _READ_OPEN,
@@ -659,7 +662,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.session.open",
             "appium_session_open",
             "session_open",
-            "Open the single Application-owned Android Session.",
+            "Open the single Application-owned Android, macOS, or iOS Session.",
             SessionOpenRequest,
             SessionOpenResult,
             ToolAnnotations(False, False, False, True),
@@ -699,7 +702,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.element.click",
             "appium_element_click",
             "element_click",
-            "Perform one single, double, or long click on an explicitly located Native Element.",
+            "Perform one single, double, right, hover, or long click on an explicitly located Native Element.",
             ElementClickRequest,
             ElementClickResult,
             _WRITE_OPEN,
@@ -749,7 +752,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.device.key",
             "appium_device_key",
             "device_key",
-            "Send one press or long-press Android keycode command to the bound Device.",
+            "Send one Android keycode or iOS hardware button command to the bound Device.",
             DeviceKeyRequest,
             DeviceKeyResult,
             _WRITE_OPEN,
@@ -759,7 +762,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.device.keyboard_hide",
             "appium_device_keyboard_hide",
             "device_keyboard_hide",
-            "Hide the keyboard for the bound Device and return the official boolean.",
+            "Hide the keyboard for the bound Android or iOS Device and return the official boolean.",
             DeviceKeyboardHideRequest,
             DeviceKeyboardHideResult,
             _WRITE_OPEN,
@@ -799,7 +802,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.app.lifecycle",
             "appium_app_lifecycle",
             "app_lifecycle",
-            "Activate, terminate, or query one explicit application package.",
+            "Activate, terminate, query, or launch one explicit application.",
             AppLifecycleRequest,
             AppLifecycleResult,
             _WRITE_OPEN,
@@ -809,7 +812,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.app.package",
             "appium_app_package",
             "app_package",
-            "Install one local APK or remove one explicit application package.",
+            "Install one local application package or remove one explicit application identifier.",
             AppPackageRequest,
             AppPackageResult,
             _WRITE_OPEN,
@@ -839,7 +842,7 @@ TOOL_CATALOG = ToolCatalog(
             "appium.macos.keys",
             "appium_macos_keys",
             "macos_keys",
-            "Send one sequence of macOS keystrokes or keyboard shortcuts to the application or an Element.",
+            "Send one sequence of Apple XCUI keystrokes or keyboard shortcuts to the application or an Element.",
             MacosKeysRequest,
             MacosKeysResult,
             _WRITE_OPEN,

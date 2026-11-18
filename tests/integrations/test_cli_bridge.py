@@ -117,6 +117,7 @@ def test_cli_application_reports_truthful_surface_without_schema_drift(
                     "driver": "uiautomator2",
                 },
                 {"host": "macos", "target": "macos_desktop", "driver": "mac2"},
+                {"host": "macos", "target": "ios_native", "driver": "xcuitest"},
             ],
             "tools": list(TOOL_CATALOG.tool_names),
             "limitations": list(application.capabilities().data.limitations),
@@ -1665,5 +1666,64 @@ def test_unexpected_listener_close_uses_fatal_shutdown(
         assert outcome.exit_code == (4 if degraded else 1)
         assert application.close_count == 1
         assert listener.closed
+
+    anyio.run(scenario)
+
+
+def test_cli_exchange_timeout_maps_to_bridge_timeout_not_protocol_error(
+    tmp_path: Path,
+    short_root: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def scenario() -> None:
+        account = short_root / "account"
+        _secure_directory(account)
+        endpoint = account / "bridge.sock"
+        application = _BlockingApplication()
+
+        def factory(*args: object, **kwargs: object) -> Any:
+            del args, kwargs
+            return application
+
+        async def daemon() -> None:
+            await create_and_serve_daemon(
+                LocalSettings(),
+                tmp_path / "adb",
+                endpoint,
+                30.0,
+                application_factory=factory,
+                account_directory=account,
+                watch_signals=False,
+            )
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(daemon)
+            with anyio.fail_after(2):
+                while not endpoint.exists():
+                    await anyio.sleep(0.01)
+            exit_code = await anyio.to_thread.run_sync(
+                cli.main,
+                [
+                    "call",
+                    "appium_capabilities_get",
+                    "--json-args",
+                    '{"schema_version":1}',
+                    "--socket",
+                    os.fspath(endpoint),
+                    "--timeout-seconds",
+                    "0.05",
+                ],
+            )
+            captured = capsys.readouterr()
+            assert exit_code == 3
+            assert captured.out == ""
+            assert captured.err == "bridge_error code=timeout\n"
+            with anyio.fail_after(2):
+                await application.cancelled.wait()
+            await cli._exchange(
+                endpoint,
+                StopRequest(protocol_version=1, operation="daemon.stop"),
+                5.0,
+            )
 
     anyio.run(scenario)

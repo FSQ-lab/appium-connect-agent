@@ -62,6 +62,11 @@ _PACKAGES: dict[OfficialDriver, str] = {
     "xcuitest": "appium-xcuitest-driver",
     "mac2": "appium-mac2-driver",
 }
+_DESIGNATED_DRIVER_VERSIONS: dict[OfficialDriver, str] = {
+    "uiautomator2": "8.7.0",
+    "mac2": "4.6.1",
+    "xcuitest": "12.22.8",
+}
 _MaintenanceKind = Literal["driver_install", "driver_doctor"]
 _MaintenanceResult = DriverMaintenanceResult | DriverDoctorResult
 _CleanupResult = InstallationResult | _MaintenanceResult
@@ -582,6 +587,14 @@ class _MaintenanceRunner:
                 "damaged",
                 "driver_package_invalid",
             )
+        if observed.text != _DESIGNATED_DRIVER_VERSIONS[self.operation.driver_name]:
+            return _driver_component(
+                self.operation.driver_name,
+                observed.text,
+                "damaged",
+                "driver_version_mismatch",
+                (f"version={observed.text}",),
+            )
         return _driver_component(
             self.operation.driver_name,
             observed.text,
@@ -630,7 +643,7 @@ class _MaintenanceRunner:
                 str(self.appium_entry),
                 "driver",
                 "install",
-                self.operation.driver_name,
+                f"{self.operation.driver_name}@{_DESIGNATED_DRIVER_VERSIONS[self.operation.driver_name]}",
                 "--json",
             ],
             self.environment,

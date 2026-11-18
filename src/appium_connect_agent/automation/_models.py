@@ -20,7 +20,7 @@ SessionState = Literal[
     "closing",
     "closed",
 ]
-AutomationPlatform: TypeAlias = Literal["android", "macos"]
+AutomationPlatform: TypeAlias = Literal["android", "macos", "ios"]
 ElementBy: TypeAlias = Literal[
     "id",
     "accessibility id",
@@ -55,6 +55,9 @@ ElementAttribute: TypeAlias = Literal[
     "placeholder_value",
     "element_type",
     "hittable",
+    "accessible",
+    "index",
+    "traits",
 ]
 ValueState: TypeAlias = Literal["value", "missing", "unknown", "not_applicable"]
 Coverage: TypeAlias = Literal[
@@ -82,6 +85,22 @@ class DeviceInfo:
     id: str
     name: str | None
     connection_state: ConnectionState
+
+
+IosDeviceKind: TypeAlias = Literal["simulator", "device"]
+IosDeviceState: TypeAlias = Literal[
+    "booted", "shutdown", "connected", "unavailable", "unknown"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class IosDeviceInfo:
+    id: str
+    name: str | None
+    kind: IosDeviceKind
+    platform_version: str | None
+    state: IosDeviceState
+    interface: Literal["simulator", "usb", "network", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)

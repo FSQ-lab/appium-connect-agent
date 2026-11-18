@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from appium_connect_agent.runtime import OperationControl
 
+from ._ios_privacy import _redact_ios_public_methods
 from ._macos_keyboard import MacKeyStroke
 from ._models import (
     AutomationPlatform,
@@ -56,6 +57,7 @@ class ElementValidationError(ValueError):
         self.code = code
 
 
+@_redact_ios_public_methods
 @dataclass(frozen=True, slots=True, init=False)
 class Element:
     by: ElementBy
@@ -245,6 +247,23 @@ class Element:
             direction=direction,
             velocity=velocity,
             key_modifier_flags=key_modifier_flags,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
+
+    def ios_scroll(
+        self,
+        direction: Literal["up", "down", "left", "right"],
+        *,
+        distance: float = 1.0,
+        wait_timeout_seconds: float = 15.0,
+        control: OperationControl | None = None,
+    ) -> None:
+        owner, operation = _bind_operation(self, control)
+        owner._ios_scroll(
+            self,
+            operation,
+            direction=direction,
+            distance=distance,
             wait_timeout_seconds=wait_timeout_seconds,
         )
 
@@ -479,6 +498,12 @@ def _make_element(
             if by in ("xpath", "-ios class chain"):
                 raise ElementValidationError("unsupported_operation")
             if (
+                platform == "ios"
+                and by == "class name"
+                and not value.startswith("XCUIElementType")
+            ):
+                raise ElementValidationError("invalid_argument")
+            if (
                 not isinstance(predicate, str)
                 or not 1 <= len(predicate) <= 4_096
                 or "\0" in predicate
@@ -569,7 +594,7 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
             value.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
             return "invalid_argument"
-        if platform == "macos":
+        if platform in ("macos", "ios"):
             if package is not None or raw_id or (by == "xpath" and parent is not None):
                 return "invalid_argument"
             if predicate is not None:
@@ -582,6 +607,12 @@ def _trusted_chain_error(element: Element, owner: object) -> str | None:
                 try:
                     predicate.encode("utf-8", errors="strict")
                 except UnicodeEncodeError:
+                    return "invalid_argument"
+                if (
+                    platform == "ios"
+                    and by == "class name"
+                    and not value.startswith("XCUIElementType")
+                ):
                     return "invalid_argument"
         else:
             if predicate is not None:
