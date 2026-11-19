@@ -96,6 +96,8 @@ class VisualProtocolService(ActionProtocolService):
                 return "display_size"
             if script == "mobile: deviceScreenInfo":
                 return "ios_display_size"
+            if script == "macos: listDisplays":
+                return "macos_display_size"
             if script == "mobile: clickGesture":
                 return "tap_at"
         return ActionProtocolService._kind(request)
@@ -108,6 +110,16 @@ class VisualProtocolService(ActionProtocolService):
             return {"value": {"realDisplaySize": "1080x2400"}}
         if kind == "ios_display_size":
             return {"value": {"screenSize": {"width": 390, "height": 844}}}
+        if kind == "macos_display_size":
+            return {
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+                    }
+                }
+            }
         if kind == "tap_at":
             return {"value": None}
         return super()._default_payload(request, kind)
@@ -315,28 +327,121 @@ def test_inspect_with_ai_locate_mode_1to1_and_integer_scaled_coordinates(
         session.quit()
 
 
-def test_inspect_with_ai_macos_locate_rejected_before_io(
+def test_inspect_with_ai_macos_locate_1x_2x_retina_and_multi_or_mismatch_rejection(
     service: VisualProtocolService,
 ) -> None:
-    provider = StubVisualProvider(VisualProviderResponse(summary="unused"))
+    _, enc_1x = _encoded_png(1512, 982)
+    _, enc_2x = _encoded_png(3024, 1964)
+    _, enc_mismatch = _encoded_png(1600, 982)
+    service.queue(
+        "take_screenshot",
+        ResponsePlan(payload={"value": enc_1x}),
+        ResponsePlan(payload={"value": enc_2x}),
+        ResponsePlan(payload={"value": enc_2x}),
+        ResponsePlan(payload={"value": enc_mismatch}),
+        ResponsePlan(payload={"value": enc_1x}),
+        ResponsePlan(payload={"value": enc_1x}),
+    )
+    service.queue(
+        "macos_display_size",
+        ResponsePlan(),
+        ResponsePlan(),
+        ResponsePlan(
+            payload={
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+                    },
+                    "2": {
+                        "id": 2,
+                        "isMain": False,
+                        "rect": {"x": 1512, "y": 0, "width": 1920, "height": 1080},
+                    },
+                }
+            }
+        ),
+        ResponsePlan(),
+        ResponsePlan(
+            payload={
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 1512.0, "height": 982.0},
+                    }
+                }
+            }
+        ),
+        ResponsePlan(
+            payload={
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 10**400, "height": 982},
+                    }
+                }
+            }
+        ),
+    )
+    provider = StubVisualProvider(
+        VisualProviderResponse(
+            summary="Found keypad button",
+            candidates=(
+                VisualImageMatch(
+                    label="Button 7",
+                    image_bounds=Bounds(x=200, y=400, width=100, height=60),
+                ),
+            ),
+        )
+    )
     with connected(service) as connection:
         mac_session = create_mac2_session(connection)
-        before = service.snapshot()
-        with pytest.raises(InvalidRequestError) as caught:
-            mac_session.device.inspect_with_ai(
-                "Locate button",
-                provider=provider,
-                mode="locate",
-            )
-        assert_error(
-            caught.value,
-            InvalidRequestError,
-            "pointer_mapping_unavailable",
-            "not_sent",
-            steps=(),
+        res_1x = mac_session.device.inspect_with_ai(
+            "Locate Button 7 (1x)",
+            provider=provider,
+            mode="locate",
         )
-        assert service.snapshot() == before
-        assert provider.requests == []
+        assert res_1x.platform == "macos"
+        assert res_1x.pointer_size == DisplaySize(1512, 982)
+        assert res_1x.candidates[0].pointer_bounds == Bounds(
+            x=200, y=400, width=100, height=60
+        )
+        assert res_1x.candidates[0].pointer_center == Point(x=250, y=430)
+
+        res_2x = mac_session.device.inspect_with_ai(
+            "Locate Button 7 (2x Retina)",
+            provider=provider,
+            mode="locate",
+        )
+        assert res_2x.image_size == DisplaySize(3024, 1964)
+        assert res_2x.pointer_size == DisplaySize(1512, 982)
+        assert res_2x.candidates[0].pointer_bounds == Bounds(
+            x=100, y=200, width=50, height=30
+        )
+        assert res_2x.candidates[0].pointer_center == Point(x=125, y=215)
+
+        for _ in range(4):
+            with pytest.raises(CommandError) as caught:
+                mac_session.device.inspect_with_ai(
+                    "Locate Button 7 rejected",
+                    provider=provider,
+                    mode="locate",
+                )
+            assert_error(
+                caught.value,
+                CommandError,
+                "pointer_mapping_unavailable",
+                "response_received",
+                steps=("screenshot_captured", "display_size_read")
+                if caught.value.completed_steps
+                == ("screenshot_captured", "display_size_read")
+                else ("screenshot_captured",),
+            )
+            assert caught.value.__cause__ is None
+        assert len(provider.requests) == 2
         mac_session.quit()
 
 

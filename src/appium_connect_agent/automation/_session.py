@@ -970,7 +970,10 @@ class Session:
     _driver: webdriver.Remote | None
     _extras: dict[str, str]
     _new_command_timeout_seconds: float
+    _server_startup_timeout_ms: int | None
+    _show_server_logs: bool
     _show_xcode_log: bool
+    _skip_app_kill: bool | None
     _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
@@ -1001,7 +1004,10 @@ class Session:
         "_reservation",
         "_runtime_connection",
         "_runtime_usage",
+        "_server_startup_timeout_ms",
+        "_show_server_logs",
         "_show_xcode_log",
+        "_skip_app_kill",
         "_state",
         "_state_lock",
         "_target_app_id",
@@ -1038,7 +1044,10 @@ class Session:
         instance._uiautomator2_wait_for_idle_timeout_ms = None
         instance._extras = {}
         instance._derived_data_path = None
+        instance._server_startup_timeout_ms = None
+        instance._show_server_logs = False
         instance._show_xcode_log = False
+        instance._skip_app_kill = None
         instance._updated_wda_bundle_id = None
         instance._wda_launch_timeout_ms = None
         instance._xcode_org_id = None
@@ -1101,17 +1110,26 @@ class Session:
     ) -> webdriver.Remote:
         server_url = self._connection_is_active(operation_id)
         _checkpoint(control, deadline, operation_id)
-        if self._platform == "macos":
-            self._set_state("uncertain")
-            raise InvalidSessionStateError(
-                "session_invalid", operation_id, "response_received"
-            )
         old_client = getattr(self, "_client", None)
         if isinstance(old_client, _LifecycleConnection):
             _close_client(old_client)
         client = _new_connection(server_url)
-        options: UiAutomator2Options | XCUITestOptions
-        if self._platform == "ios":
+        options: Mac2Options | UiAutomator2Options | XCUITestOptions
+        if self._platform == "macos":
+            options = _build_mac2_options(
+                bundle_id=self._target_app_id,
+                app_path=None,
+                arguments=None,
+                no_reset=True,
+                skip_app_kill=(
+                    True if self._skip_app_kill is None else self._skip_app_kill
+                ),
+                show_server_logs=self._show_server_logs,
+                server_startup_timeout_ms=self._server_startup_timeout_ms,
+                new_command_timeout_seconds=self._new_command_timeout_seconds,
+                system_port=self._reservation.system_port,
+            )
+        elif self._platform == "ios":
             derived_data_path = self._derived_data_path
             if derived_data_path is None:
                 raise RuntimeError("iOS Session has no derived data path")
@@ -1261,7 +1279,7 @@ class Session:
                 self._reattach_locked(operation_id, control, deadline)
                 return True
         except AutomationError as error:
-            if self._platform == "ios":
+            if self._platform in ("ios", "macos"):
                 _redact_xcuitest_error(error)
             raise
         finally:
@@ -1315,7 +1333,7 @@ class Session:
                     )
                     raise retry_error from retry_dead.__cause__
         except AutomationError as error:
-            if self._platform == "ios":
+            if self._platform in ("ios", "macos"):
                 _redact_xcuitest_error(error)
             raise
         finally:
@@ -2192,6 +2210,10 @@ class Session:
             self._set_state("closed")
             self._reservation.release()
             self._runtime_usage.release()
+        except AutomationError as error:
+            if self._platform in ("ios", "macos"):
+                _redact_xcuitest_error(error)
+            raise
         finally:
             self._operation_gate.release()
 
@@ -2292,6 +2314,10 @@ class Session:
                 ) from cause
             self._reservation.release()
             self._set_state("disposed")
+        except AutomationError as error:
+            if self._platform in ("ios", "macos"):
+                _redact_xcuitest_error(error)
+            raise
         finally:
             self._operation_gate.release()
 
@@ -2516,7 +2542,7 @@ def create_session(
     return session
 
 
-def create_mac2_session(
+def _create_mac2_session(
     connection: RuntimeConnection,
     *,
     bundle_id: str | None = None,
@@ -2526,7 +2552,7 @@ def create_mac2_session(
     skip_app_kill: bool | None = None,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
-    new_command_timeout_seconds: float = 300.0,
+    new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
     """Create one independently owned local Mac2 Session."""
@@ -2568,6 +2594,10 @@ def create_mac2_session(
         usage.release()
         raise
     session._reservation = reservation
+    session._new_command_timeout_seconds = valid_timeout
+    session._skip_app_kill = skip_app_kill
+    session._show_server_logs = show_server_logs
+    session._server_startup_timeout_ms = server_startup_timeout_ms
 
     try:
         client = _new_connection(server_url)
@@ -2641,6 +2671,40 @@ def create_mac2_session(
         )
         raise error from cause
     return session
+
+
+def create_mac2_session(
+    connection: RuntimeConnection,
+    *,
+    bundle_id: str | None = None,
+    app_path: Path | None = None,
+    arguments: Sequence[str] | None = None,
+    no_reset: bool = True,
+    skip_app_kill: bool | None = None,
+    show_server_logs: bool = False,
+    server_startup_timeout_ms: int | None = None,
+    new_command_timeout_seconds: float = 900.0,
+    control: OperationControl | None = None,
+) -> Session:
+    """Create one independently owned local Mac2 Session."""
+    error: AutomationError | None = None
+    try:
+        return _create_mac2_session(
+            connection,
+            bundle_id=bundle_id,
+            app_path=app_path,
+            arguments=arguments,
+            no_reset=no_reset,
+            skip_app_kill=skip_app_kill,
+            show_server_logs=show_server_logs,
+            server_startup_timeout_ms=server_startup_timeout_ms,
+            new_command_timeout_seconds=new_command_timeout_seconds,
+            control=control,
+        )
+    except AutomationError as caught:
+        _redact_xcuitest_error(caught)
+        error = caught
+    raise error from None
 
 
 def _create_xcuitest_session(

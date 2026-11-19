@@ -21,6 +21,7 @@ from selenium.webdriver.common.actions.pointer_input import PointerInput
 from selenium.webdriver.remote.command import Command
 
 from ._models import (
+    CommandError,
     DeviceTime,
     DeviceWeekday,
     DisplaySize,
@@ -94,6 +95,75 @@ def _ios_display_size(
             driver.execute_script("mobile: deviceScreenInfo")
         )
     )
+    gateway.complete("display_size_read")
+    return result
+
+
+def _validate_macos_displays_map(response: object) -> Mapping[object, object]:
+    if not isinstance(response, Mapping) or isinstance(response, list) or not response:
+        raise ValueError("macos: listDisplays response must be a non-empty mapping")
+    for key, value in response.items():
+        if not isinstance(key, str) or not isinstance(value, Mapping):
+            raise ValueError("macos: listDisplays entry must be a string-keyed mapping")
+        display_id = value.get("id")
+        main = value.get("isMain")
+        rect = value.get("rect")
+        if (
+            type(display_id) is not int
+            or str(display_id) != key
+            or type(main) is not bool
+            or not isinstance(rect, Mapping)
+        ):
+            raise ValueError("macos: listDisplays entry metadata is invalid")
+        parts = tuple(rect.get(name) for name in ("x", "y", "width", "height"))
+        if any(type(part) is not int for part in parts):
+            raise ValueError("macos: listDisplays rect fields must be strict integers")
+        _, _, width, height = parts
+        assert type(width) is int and type(height) is int
+        if width <= 0 or height <= 0:
+            raise ValueError("macos: listDisplays dimensions must be positive")
+    return response
+
+
+def _parse_macos_display_size(response: object) -> DisplaySize:
+    displays = _validate_macos_displays_map(response)
+    if len(displays) != 1:
+        raise ValueError(
+            "macos: listDisplays requires a single display for pointer mapping"
+        )
+    entry = next(iter(displays.values()))
+    assert isinstance(entry, Mapping)
+    if entry.get("isMain") is not True:
+        raise ValueError("single macOS display must be the main display")
+    rect = entry.get("rect")
+    assert isinstance(rect, Mapping)
+    x = rect.get("x")
+    y = rect.get("y")
+    width = rect.get("width")
+    height = rect.get("height")
+    assert (
+        type(x) is int and type(y) is int and type(width) is int and type(height) is int
+    )
+    if x != 0 or y != 0:
+        raise ValueError("single macOS main display must start at (0, 0)")
+    if not 1 <= width <= _DISPLAY_SIZE_MAX or not 1 <= height <= _DISPLAY_SIZE_MAX:
+        raise ValueError("macOS display dimensions exceed pointer-space bounds")
+    return DisplaySize(width=width, height=height)
+
+
+def _macos_display_size(
+    driver: WebDriver, gateway: _SessionOperationGateway
+) -> DisplaySize:
+    def read_displays() -> DisplaySize:
+        raw = driver.execute_script("macos: listDisplays")
+        try:
+            return _parse_macos_display_size(raw)
+        except ValueError as cause:
+            raise gateway.failure(
+                CommandError, "command_failed", "response_received"
+            ) from cause
+
+    result = gateway.final_action(read_displays)
     gateway.complete("display_size_read")
     return result
 
@@ -195,6 +265,28 @@ def _device_time(driver: WebDriver, gateway: _SessionOperationGateway) -> Device
     result = gateway.final_action(
         lambda: _parse_device_time(driver.execute_script("mobile: getDeviceTime"))
     )
+    gateway.complete("device_time_read")
+    return result
+
+
+def _local_wall_clock_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _macos_device_time(
+    driver: WebDriver, gateway: _SessionOperationGateway
+) -> DeviceTime:
+    def read_local_time() -> DeviceTime:
+        raw_displays = driver.execute_script("macos: listDisplays")
+        try:
+            _validate_macos_displays_map(raw_displays)
+            return _parse_device_time(_local_wall_clock_iso())
+        except ValueError as cause:
+            raise gateway.failure(
+                CommandError, "command_failed", "response_received"
+            ) from cause
+
+    result = gateway.final_action(read_local_time)
     gateway.complete("device_time_read")
     return result
 

@@ -60,6 +60,8 @@ from ._system_actions import (
     _ios_display_size,
     _key_arguments,
     _label,
+    _macos_device_time,
+    _macos_display_size,
     _press_keycode,
     _query_app_state,
     _remove_app,
@@ -501,15 +503,20 @@ class Device:
     def display_size(self, *, control: OperationControl | None = None) -> DisplaySize:
         """Return the platform pointer-space extent."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        owner._reject_macos(operation_id)
-        action = _ios_display_size if owner.platform == "ios" else _display_size
+        action = (
+            _macos_display_size
+            if owner.platform == "macos"
+            else _ios_display_size
+            if owner.platform == "ios"
+            else _display_size
+        )
         return owner._run_operation(operation_id, control, deadline, action)
 
     def device_time(self, *, control: OperationControl | None = None) -> DeviceTime:
         """Return a read-only snapshot of the device's local wall clock and offset."""
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
-        owner._reject_macos(operation_id)
-        return owner._run_operation(operation_id, control, deadline, _device_time)
+        time_action = _macos_device_time if owner.platform == "macos" else _device_time
+        return owner._run_operation(operation_id, control, deadline, time_action)
 
     def take_screenshot(self, *, control: OperationControl | None = None) -> bytes:
         """Capture one bounded validated PNG screenshot in memory."""
@@ -537,10 +544,6 @@ class Device:
         ) = _validate_visual_inputs(
             prompt, provider, mode, region, max_candidates, operation_id
         )
-        if valid_mode == "locate" and owner.platform == "macos":
-            raise InvalidRequestError(
-                "pointer_mapping_unavailable", operation_id, "not_sent"
-            )
         return owner._run_operation(
             operation_id,
             control,
@@ -553,7 +556,7 @@ class Device:
                 mode=valid_mode,
                 region=valid_region,
                 max_candidates=valid_max_candidates,
-                ios=owner.platform == "ios",
+                platform=owner.platform,
             ),
         )
 

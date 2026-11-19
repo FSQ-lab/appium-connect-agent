@@ -649,23 +649,23 @@
 - 永久受控测试须使用锁定真实 `Appium-Python-Client==6.0.8` / `selenium==4.51.0` 和本地 HTTP 协议服务覆盖精确 HTTP 路由与载荷（含单 `touch` 指针无冗余设备，以及缺失 `"value"` 键与服务端非 `null` 拒绝）、合法 67 字节最小 1×1 PNG、57 字节空 IDAT/无 IDAT/坏 chunk CRC/尾随字节/Base64/32MiB±1 边界、坐标与 `duration_ms` 类型/值域边界、`duration_ms` 剩余预算门禁、共享 gate、取消/超时/unknown 隔离及异常零泄漏；另须通过全仓质量、发行物隔离安装、独立完整差异审查及获准无敏感页面（Calculator）真机内存截图与坐标触控闭环验收。
 
 
-## AIF-12 Mobile Pointer-Space Display Size
+## AIF-12 Cross-Platform Pointer-Space Display Size
 
-本节定义 Issue #46、FeatureID `AIF-12` 并由 Issue #53 扩展 iOS parity 的已确认契约增量；未列出的既有契约不变。
+本节定义 Issue #46、FeatureID `AIF-12` 并由 Issue #53（iOS）与 Issue #58（macOS 单显示器）扩展的已确认契约增量；未列出的既有契约不变。
 
 ### Public Interface And Coordinate Meaning
 
 `DisplaySize` 是 Automation 拥有的不可变纯值，`Device.display_size(*, control: OperationControl | None = None) -> DisplaySize` 成功时 `width`、`height` 均为严格排除 `bool` 的实际整数 `1..2_147_483_647`。
 
-- Android 返回默认 display 经 `Display.getRealSize(Point)` 得到的物理像素范围；iOS 返回全屏逻辑点范围，与 iOS `tap_at` / `swipe_between` pointer-space 1:1 对应。合法坐标为 `x=0..width-1`、`y=0..height-1`。`TreeObservation.viewport` 只陈述 page-source content viewport；SDK 不以其 fallback、缩放、clamp、推断 offset/rotation 或保证跨调用原子快照。
-- Android 在唯一 Session gate 的 `gateway.final_action` 中发送一次 `mobile: deviceInfo`，只读取 canonical ASCII `realDisplaySize="WxH"`；iOS 发送一次 `mobile: deviceScreenInfo`，只读取 mapping 形 `screenSize={"width": pos_int, "height": pos_int}`。两条链均零缓存、零 fallback、零第二请求。
-- iOS `screenSize.width/height` 必须 `type(value) is int` 且在 `1..2_147_483_647`；Android 保持无前导零的小写单 `x` canonical 规则。任一缺失、形状、类型、零、负数或越界错误统一 `CommandError/command_failed/response_received`，Session 保持 active，不记步骤；成功记唯一 `display_size_read`。Mac2 在 gate/网络前 `unsupported_operation/not_sent`。
-- `Device.swipe` 支持 Android 与 iOS。完整显式四坐标时不读尺寸；否则按方向读取平台 pointer-space，以 `ceil(20%)/floor(80%)` 纵向及 `ceil(18%)/floor(82%)` 横向安全区计算起终点，再复用 AIF-11 单 `touch` W3C actions。Mac2 保持 `unsupported_operation/not_sent`。
-- 上游 mapping 的其他字段可能敏感，不得日志化、缓存、返回、序列化或持久化。永久协议测试覆盖两平台精确 script、严格边界、方向/显式坐标、Mac2 零请求、取消/超时/known/unknown/no-replay；复用已批准依赖且依赖与 lockfile no-delta。
+- Android 返回默认 display 经 `Display.getRealSize(Point)` 得到的物理像素范围；iOS 返回全屏逻辑点范围；Mac2 在单显示器拓扑下返回主屏逻辑点范围，均与各自平台 `tap_at` / `swipe_between` pointer-space 1:1 对应。合法坐标为 `x=0..width-1`、`y=0..height-1`。`TreeObservation.viewport` 只陈述 page-source content viewport；SDK 不以其 fallback、缩放、clamp、推断 offset/rotation 或保证跨调用原子快照。
+- Android 在唯一 Session gate 的 `gateway.final_action` 中发送一次 `mobile: deviceInfo`，只读取 canonical ASCII `realDisplaySize="WxH"`；iOS 发送一次 `mobile: deviceScreenInfo`，只读取 mapping 形 `screenSize={"width": pos_int, "height": pos_int}`；Mac2 发送一次 `macos: listDisplays`，严格校验非空显示器映射恰好包含唯一一台显示器（`len(displays) == 1`）、`isMain is True`、`rect.x == 0`、`rect.y == 0` 且 `rect.width/height` 为 `1..2_147_483_647` 的有限整数值。三条链均零缓存、零 fallback、零第二请求。
+- iOS `screenSize.width/height` 必须 `type(value) is int` 且在 `1..2_147_483_647`；Mac2 拒绝多显示器、非 `(0, 0)` 原点、非整数或越界尺寸；Android 保持无前导零的小写单 `x` canonical 规则。任一缺失、形状、类型、零、负数、越界或多屏歧义错误统一 `CommandError/command_failed/response_received`，Session 保持 active，不记步骤；成功记唯一 `display_size_read`。
+- `Device.swipe` 支持 Android 与 iOS。完整显式四坐标时不读尺寸；否则按方向读取平台 pointer-space，以 `ceil(20%)/floor(80%)` 纵向及 `ceil(18%)/floor(82%)` 横向安全区计算起终点，再复用 AIF-11 单 `touch` W3C actions。Mac2 桌面窗口化交互不使用全屏手指盲拖安全区，`Device.swipe` 保持 gate/网络前 `unsupported_operation/not_sent`。
+- 上游 mapping 的其他字段可能敏感，不得日志化、缓存、返回、序列化或持久化。永久协议测试覆盖三平台精确 script、严格边界、多屏拒绝、方向/显式坐标、Mac2 `swipe` 零请求、取消/超时/known/unknown/no-replay；复用已批准依赖且依赖与 lockfile no-delta。
 
 ## AIF-13 Unified Visual Perception And Grounding (`Device.inspect_with_ai`)
 
-本节定义 Issue #47、FeatureID `AIF-13` 的已确认契约增量；对应详细设计为 [AIF-13 详细设计](../../docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。未列出的既有契约不变。
+本节定义 Issue #47、FeatureID `AIF-13` 并由 Issue #53（iOS）与 Issue #58（macOS 单显示器）扩展的已确认契约增量；对应详细设计为 [AIF-13 详细设计](../../docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。未列出的既有契约不变。
 
 ### Public Interface And Value Models
 
@@ -690,11 +690,11 @@
   3. `mode`：`str` 且属于 `("extract", "locate")`；
   4. `region`：`None` 或 `ImageRegion` 实例，四字段均为排除 `bool` 的实际 `int` 且 `0 <= left < right <= 2_147_483_647`、`0 <= top < bottom <= 2_147_483_647`；
   5. `max_candidates`：排除 `bool` 的实际 `int` 且 `1 <= max_candidates <= 20`。
-- 若 `mode == "locate"` 且所属 Session 平台为 `"macos"`，在获取 Session gate 与任何网络请求前抛 `InvalidRequestError("pointer_mapping_unavailable", operation_id, "not_sent")`。`mode == "locate"` 支持 Android 与 iOS；`mode == "extract"` 支持三平台。
+- `mode == "extract"` 与 `mode == "locate"` 均支持 Android、iOS 与单显示器 Mac2 三平台。
 - 进入 Session gate 后共享同一 `OperationControl` 总预算与取消检查点：
   1. 执行一次 `Command.SCREENSHOT`，在单次 PNG chunk 遍历中完成 AIF-11 容器校验、提取 `IHDR` `image_size = DisplaySize(image_width, image_height)`、计算 64 字符小写 hex `png_sha256`，并拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG（`CommandError("frame_not_single", operation_id, "response_received")`）；记 `screenshot_captured`。
   2. 若 `region is not None` 且 (`region.right > image_width` 或 `region.bottom > image_height`)，抛 `InvalidRequestError("invalid_argument", operation_id, "response_received")`，不调用 `display_size` 或 `provider`。
-  3. 若 `mode == "locate"`，Android 顺序执行一次 `mobile: deviceInfo` 取得物理像素 `pointer_size`；iOS 顺序执行一次 `mobile: deviceScreenInfo` 取得严格正整数逻辑点 `pointer_size`；均记 `display_size_read`。要求 PNG `image_size` 与 `pointer_size` 满足正整数倍轴对齐等比例关系（含 iOS Retina 2x/3x），否则在调用 provider 前 fail-closed 抛 `CommandError("pointer_mapping_unavailable", operation_id, "response_received")`。
+  3. 若 `mode == "locate"`，Android 顺序执行一次 `mobile: deviceInfo` 取得物理像素 `pointer_size`；iOS 顺序执行一次 `mobile: deviceScreenInfo` 取得严格正整数逻辑点 `pointer_size`；Mac2 顺序执行一次 `macos: listDisplays` 取得单显示器主屏逻辑点 `pointer_size`（多显示器或非零原点在调用 provider 前 fail-closed 抛 `CommandError("pointer_mapping_unavailable", operation_id, "response_received")`）；成功读取均记 `display_size_read`。要求 PNG `image_size` 与 `pointer_size` 满足正整数倍轴对齐等比例关系（含 Mac2 1x/2x Retina 与 iOS Retina 2x/3x），否则在调用 provider 前 fail-closed 抛 `CommandError("pointer_mapping_unavailable", operation_id, "response_received")`。
   4. 检查 checkpoint、计算当时 `remaining_timeout_seconds`（无 deadline 为 `None`），以完整未裁剪原图 `png_bytes` 调用一次 `provider.inspect(request)`。若 `provider.inspect` 抛出 `AutomationError` 直接传播；若调用期间/异常时取消或超时已触发，按取消优先抛 `OperationCancelledError` 或 `OperationTimeoutError`（`request_state="response_received"`，Session 保持 `active`）；若抛出其他普通 `Exception`，包装为 `CommandError("visual_provider_failed", operation_id, "response_received")`。
   5. 校验返回为 `VisualProviderResponse`：`summary` 为实际 `str`、无 NUL、strict UTF-8 `<= 32_768` bytes；`candidates` 为 `tuple` 且 `len(candidates) <= max_candidates`。`mode == "extract"` 时必须 `candidates == ()`；`mode == "locate"` 时每项必须为 `VisualImageMatch`（`label` strip 后非空、`1..1_024` chars、无 NUL、strict UTF-8；`confidence` 为 `None` 或排除 `bool` 的有限数值 `0.0..1.0`；`image_bounds` 为 `Bounds`，四字段为排除 `bool` 的实际 `int`，`width >= 1, height >= 1`，完整落在 `0..image_width` × `0..image_height` 且在指定 `region` 时完整落在 `region` 内）。任何返回校验失败抛 `CommandError("invalid_visual_response", operation_id, "response_received")`。
   6. `mode == "locate"` 时将每个 `image_bounds` 轴对齐映射到 `pointer_size`（`px0 = (x * pw) // iw`, `py0 = (y * ph) // ih`, `px1 = max(px0 + 1, ((x + w) * pw) // iw)`, `py1 = max(py0 + 1, ((y + h) * ph) // ih)`，`pointer_bounds = Bounds(px0, py0, px1 - px0, py1 - py0)`，`pointer_center = Point(px0 + (px1 - px0) // 2, py0 + (py1 - py0) // 2)`），记 `visual_inspected`。
@@ -703,11 +703,11 @@
 ### Boundaries, Privacy And Verification
 
 - 本能力不提供 `assert_with_ai`，不自动执行点击/滑动，不缓存帧或重试。`png_bytes` 仅传给当前调用的 `provider.inspect`，不进入 `VisualInspection`、JSON、日志或异常文本。
-- 受控测试须覆盖 `extract`（Android/Mac2）、`locate`（1:1 与正整数倍缩放、Mac2 零请求拒绝、失配比例 `pointer_mapping_unavailable`）、`region` 边界与包含检查、APNG `frame_not_single`、`provider` 异常与非法响应、65,536/65,537 JSON 边界、取消/超时/unknown 隔离及共享 Session gate。
+- 受控测试须覆盖 `extract`（三平台）、`locate`（Android/iOS/Mac2 1:1 与正整数倍 Retina 缩放、Mac2 多屏与比例失配 `pointer_mapping_unavailable` 拒绝）、`region` 边界与包含检查、APNG `frame_not_single`、`provider` 异常与非法响应、65,536/65,537 JSON 边界、取消/超时/unknown 隔离及共享 Session gate。
 
 ## AIF-14 Condition-Wait Transport Timeout Decoupling And Device Local Clock (`Device.device_time`)
 
-本节定义 Issue #49、FeatureID `AIF-14` 的已确认契约增量。未列出的既有契约不变。
+本节定义 Issue #49、FeatureID `AIF-14` 并由 Issue #53（iOS）与 Issue #58（macOS）扩展的已确认契约增量。未列出的既有契约不变。
 
 ### Condition-Wait Transport Timeout Decoupling
 
@@ -745,19 +745,19 @@ Device.device_time(*, control: OperationControl | None = None) -> DeviceTime
 ```
 
 - `DeviceWeekday` 与 `DeviceTime` 由 `appium_connect_agent.automation` 公开导出。
-- Android 与 iOS 均在唯一非阻塞 Session gate 的 `gateway.final_action` 中执行一次且仅一次 `driver.execute_script("mobile: getDeviceTime")`（wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script": "mobile: getDeviceTime", "args": []}`）。
-- 响应必须为实际 `str` 且精确匹配 ASCII ISO-8601 秒级时间戳 `YYYY-MM-DDTHH:MM:SS(?:Z|[+-]HH:MM)`（长度不超过 64 字符）。若末尾为 `"Z"`，归一化为 `"+00:00"`；使用 `datetime.fromisoformat` 校验日历与时分秒、偏移量合法性。
-- 解析成功后构造 `DeviceTime`，记唯一 `device_time_read` 并返回。响应非法统一抛 `CommandError("command_failed", operation_id, "response_received")`，Session 保持 active；Mac2 在 gate/网络前抛 `InvalidRequestError("unsupported_operation", operation_id, "not_sent")`。
+- Android 与 iOS 均在唯一非阻塞 Session gate 的 `gateway.final_action` 中执行一次且仅一次 `driver.execute_script("mobile: getDeviceTime")`（wire 为 `POST /session/{sessionId}/execute/sync` 与 `{"script": "mobile: getDeviceTime", "args": []}`）；Mac2（固定本机 `device_id="macos:local"`）在 `gateway.final_action` 中先执行一次只读 `driver.execute_script("macos: listDisplays")` 并校验合法非空显示器字典以确认远端会话活跃，随后采样本机 `datetime.now().astimezone()` 秒级墙钟生成本地时间戳。
+- 时间字符串必须为实际 `str` 且精确匹配 ASCII ISO-8601 秒级时间戳 `YYYY-MM-DDTHH:MM:SS(?:Z|[+-]HH:MM)`（长度不超过 64 字符）。若末尾为 `"Z"`，归一化为 `"+00:00"`；使用 `datetime.fromisoformat` 校验日历与时分秒、偏移量合法性。
+- 解析成功后构造 `DeviceTime`，记唯一 `device_time_read` 并返回。响应或显示器字典非法统一抛 `CommandError("command_failed", operation_id, "response_received")`，Session 保持 active。
 
 ## AUTO-MAC-01A Mac2 Session, Locators And XCUI Observation
 
 ### Platform And Session Interface
 
-- `AutomationPlatform` 为 `Literal["android", "macos"]`。`SessionInfo` 在既有六字段后追加默认 `platform="android"`；Android 调用与序列化语义不变。公开入口 `create_mac2_session(connection, *, bundle_id=None, app_path=None, arguments=None, no_reset=True, skip_app_kill=None, show_server_logs=False, server_startup_timeout_ms=None, new_command_timeout_seconds=300.0, control=None)` 创建本机 Mac2 Session。
-- Mac2 固定发送 `platformName=Mac`、`appium:automationName=Mac2`、`appium:systemHost=127.0.0.1`，使用独立 `10100..10199` 端口池与单宿主槽位 `macos:local`。它不占用 Android `8200..8299` 端口或设备槽；同进程重叠 Mac2 创建在请求前返回 `device_busy/not_sent`。Session 继续复用既有非阻塞 gate、Runtime usage lease、confirmed quit 释放与 retained uncertain Session 错误合同。
+- `AutomationPlatform` 在 `AUTO-MAC-01A` 引入 `"macos"` 并在 `AUTO-IOS-01A` 扩为 `Literal["android", "macos", "ios"]`。`SessionInfo` 在既有六字段后追加默认 `platform="android"`；Android 调用与序列化语义不变。公开入口 `create_mac2_session(connection, *, bundle_id=None, app_path=None, arguments=None, no_reset=True, skip_app_kill=None, show_server_logs=False, server_startup_timeout_ms=None, new_command_timeout_seconds=900.0, control=None)` 创建本机 Mac2 Session。
+- Mac2 固定发送 `platformName=Mac`、`appium:automationName=Mac2`、`appium:systemHost=127.0.0.1`，使用独立 `10100..10199` 端口池与单宿主槽位 `macos:local`。它不占用 Android `8200..8299` 或 iOS `8100..8199` 端口或设备槽；同进程重叠 Mac2 创建在请求前返回 `device_busy/not_sent`。Session 继续复用既有非阻塞 gate、Runtime usage lease、confirmed quit 释放与 retained uncertain Session 错误合同。
 - `bundle_id` 可省略，否则必须为 1..255 ASCII 且匹配 `[A-Za-z0-9][A-Za-z0-9.-]{0,254}`。`app_path` 只接受绝对 `Path` `.app` bundle；从文件系统根到 bundle、`Contents`、`Info.plist` 的每级 `lstat` 必须无 symlink，bundle/Contents 为目录，Info.plist 为可读普通文件。路径严格 UTF-8、最多 4096 bytes、无控制字符，并以原值发送为 `appium:appPath`。
-- `arguments` 可省略；提供时要求已有 bundle_id 或 app_path，必须为非 str/bytes 的 `Sequence[str]`，最多 64 项，每项严格 UTF-8、最多 4096 code points且无 NUL。布尔参数必须为实际 bool；startup timeout 为 `1000..600000` ms 的实际 int；new-command timeout 为 `0..86400` 的有限数值。全部纯值校验发生在 usage、reservation 与请求前，受控错误不回显路径、arguments 或上游异常原文。
-- `SessionInfo(platform="macos", device_id="macos:local")` 的 `target_app_id` 优先使用显式 bundle_id，否则按 `CFBundleIdentifier`、`appium:bundleId`、`bundleId` 顺序接受合法响应字符串。
+- `arguments` 可省略；提供时要求已有 bundle_id 或 app_path，必须为非 str/bytes 的 `Sequence[str]`，最多 64 项，每项严格 UTF-8、最多 4096 code points且无 NUL。布尔参数必须为实际 bool；startup timeout 为 `1000..600000` ms 的实际 int；new-command timeout 为 `0..86400` 的有限数值。全部纯值校验发生在 usage、reservation 与请求前，Mac2 创建与运行期受控错误统一执行与 iOS 相同的 cause/context/cleanup 脱敏，严禁回显路径、arguments、bundle_id、剪贴板、按键或上游异常原文。
+- `SessionInfo(platform="macos", device_id="macos:local")` 的 `target_app_id` 优先使用显式 bundle_id，否则按 `CFBundleIdentifier`、`appium:bundleId`、`bundleId` 顺序接受合法响应字符串。`Session` 保存 `show_server_logs`、`server_startup_timeout_ms`、`skip_app_kill` 与 `new_command_timeout_seconds`；`ensure_alive()` 使用只读 `macos: listDisplays` 探活，遭遇确定性死会话时以 `bundle_id=self._target_app_id, app_path=None, arguments=None, no_reset=True, skip_app_kill=(True if skip_app_kill is None else skip_app_kill)` 及原保留 `system_port`、日志与超时参数重建 `Mac2Options` 重连（运行中应用仅 `activate` 不重启，无 `target_app_id` 时附着桌面/Finder，不重传启动期 `app_path`/`arguments`；若目标应用已退出，WDA 按 `XCUIApplication` 语义重新拉起不带启动期自定义参数的包体）。
 
 ### Mac2 Element Locators
 

@@ -1981,6 +1981,7 @@ def test_mac2_capabilities_single_host_and_android_independence(
     }
     assert appium_caps(creates[1])["appium:systemPort"] == 8200
     assert appium_caps(creates[2])["appium:systemPort"] == 10100
+    assert appium_caps(creates[2])["appium:newCommandTimeout"] == 900.0
 
 
 @pytest.mark.parametrize(

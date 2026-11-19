@@ -21,8 +21,11 @@ from appium_connect_agent.automation import (
     MACOS_MODIFIER_FUNCTION,
     MACOS_MODIFIER_OPTION,
     MACOS_MODIFIER_SHIFT,
+    AutomationError,
     CommandError,
     Device,
+    DeviceTime,
+    DisplaySize,
     Element,
     ExecutionUnknownError,
     InvalidRequestError,
@@ -34,6 +37,8 @@ from appium_connect_agent.automation import (
     _macos_actions,
     _session,
     _session_client,
+    _system_actions,
+    create_mac2_session,
 )
 from appium_connect_agent.runtime import OperationControl
 from tests.automation._action_protocol import (
@@ -85,6 +90,16 @@ class MacActionService(ActionProtocolService):
             return {"value": False}
         if kind == "queryAppState":
             return {"value": 2}
+        if kind == "listDisplays":
+            return {
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+                    }
+                }
+            }
         if kind in {
             "click",
             "doubleClick",
@@ -430,16 +445,39 @@ def test_macos_only_device_actions_reject_android_without_io(
         session.quit()
 
 
-def test_android_display_size_and_device_time_reject_macos_without_io(
+def test_macos_display_size_device_time_and_swipe_rejection(
     service: MacActionService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        _system_actions,
+        "_local_wall_clock_iso",
+        lambda: "2026-11-19T14:25:36+08:00",
+    )
     with connected(service) as connection:
         session = mac_session_for(service, connection)
+        assert session.device.display_size() == DisplaySize(1512, 982)
+        assert session.device.device_time() == DeviceTime(
+            iso_local="2026-11-19T14:25:36+08:00",
+            date="2026-11-19",
+            time="14:25:36",
+            weekday="Thursday",
+            utc_offset="+08:00",
+        )
+        assert len(service.of_kind("listDisplays")) == 2
+
         before = service.snapshot()
-        for invoke in (
-            lambda: session.device.display_size(),
-            lambda: session.device.device_time(),
-        ):
+        invocations: tuple[Callable[[], None], ...] = (
+            lambda: session.device.swipe(direction="up"),
+            lambda: session.device.swipe(
+                direction="up",
+                start_x=100,
+                start_y=200,
+                end_x=100,
+                end_y=50,
+            ),
+        )
+        for invoke in invocations:
             with pytest.raises(InvalidRequestError) as caught:
                 invoke()
             assert_error(
@@ -449,31 +487,256 @@ def test_android_display_size_and_device_time_reject_macos_without_io(
         session.quit()
 
 
-def test_dead_mac_session_never_falls_through_to_android_reattach(
+@pytest.mark.parametrize(
+    "displays_payload",
+    [
+        {},
+        [],
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+            },
+            "2": {
+                "id": 2,
+                "isMain": False,
+                "rect": {"x": 1512, "y": 0, "width": 1920, "height": 1080},
+            },
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": False,
+                "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 10, "y": 0, "width": 1512, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1512.0, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1512, "height": 982.0},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": True, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 1512.5, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {"x": 0, "y": 0, "width": 10**400, "height": 982},
+            }
+        },
+        {
+            "1": {
+                "id": 1,
+                "isMain": True,
+                "rect": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 2_147_483_648,
+                    "height": 982,
+                    "secret": "PRIVATE-DISPLAY-CANARY",
+                },
+            }
+        },
+    ],
+)
+def test_macos_display_size_rejects_multi_or_malformed_displays_without_echo(
     service: MacActionService,
+    displays_payload: object,
 ) -> None:
+    service.queue("listDisplays", ResponsePlan(payload={"value": displays_payload}))
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        with pytest.raises(CommandError) as caught:
+            session.device.display_size()
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        assert caught.value.__cause__ is None
+        assert "PRIVATE-DISPLAY-CANARY" not in repr(caught.value)
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+def test_macos_device_time_accepts_multi_display_probe_and_rejects_invalid_displays(
+    service: MacActionService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        _system_actions,
+        "_local_wall_clock_iso",
+        lambda: "2026-11-19T06:25:36Z",
+    )
+    service.queue(
+        "listDisplays",
+        ResponsePlan(
+            payload={
+                "value": {
+                    "1": {
+                        "id": 1,
+                        "isMain": True,
+                        "rect": {"x": 0, "y": 0, "width": 1512, "height": 982},
+                    },
+                    "2": {
+                        "id": 2,
+                        "isMain": False,
+                        "rect": {"x": 1512, "y": 0, "width": 1920, "height": 1080},
+                    },
+                }
+            }
+        ),
+        ResponsePlan(payload={"value": {}}),
+    )
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        assert session.device.device_time().utc_offset == "+00:00"
+        with pytest.raises(CommandError) as caught:
+            session.device.device_time()
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        assert caught.value.__cause__ is None
+        session.quit()
+
+
+def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_and_redaction(
+    service: MacActionService,
+    tmp_path: Path,
+) -> None:
+    app = tmp_path.resolve() / "SecretApp.app"
+    contents = app / "Contents"
+    contents.mkdir(parents=True)
+    (contents / "Info.plist").write_text("plist")
+    secret_arg = "--secret-token=CANARY_ARG_123"
     dead = {
         "value": {
             "error": "invalid session id",
-            "message": "session is either terminated or not started",
+            "message": f"session died for {app} {secret_arg}",
             "stacktrace": "",
         }
     }
-    service.queue("listDisplays", ResponsePlan(status=404, payload=dead))
+    service.queue(
+        "listDisplays",
+        ResponsePlan(status=404, payload=dead),
+        ResponsePlan(),
+        ResponsePlan(status=404, payload=dead),
+        ResponsePlan(),
+    )
     with managed_connection(cast(Any, service)) as (connection, owner):
-        session = mac_session_for(service, connection)
-        with pytest.raises(InvalidSessionStateError) as caught:
-            session.ensure_alive()
-        assert_error(
-            caught.value,
-            InvalidSessionStateError,
-            "session_invalid",
-            "response_received",
+        session = create_mac2_session(
+            connection,
+            bundle_id="com.apple.calculator",
+            app_path=app,
+            arguments=[secret_arg],
+            no_reset=False,
+            skip_app_kill=None,
+            show_server_logs=True,
+            server_startup_timeout_ms=15_000,
+            new_command_timeout_seconds=720.0,
         )
-        assert len(service.of_kind("create")) == 1
+        initial_session_id = session.session_info().appium_session_id
+        assert session.ensure_alive() is True
+        reattached_id = session.session_info().appium_session_id
+        assert reattached_id != initial_session_id
+        assert session.ensure_alive() is False
+
+        # Read operation dead-session transparent reattach + single replay
+        assert session.device.display_size() == DisplaySize(1512, 982)
+        third_session_id = session.session_info().appium_session_id
+        assert third_session_id != reattached_id
+
+        creates = service.of_kind("create")
+        assert len(creates) == 3
+        reattach_caps = cast(dict[str, Any], creates[1].body)["capabilities"][
+            "alwaysMatch"
+        ]
+        assert reattach_caps == {
+            "platformName": "Mac",
+            "appium:automationName": "Mac2",
+            "appium:bundleId": "com.apple.calculator",
+            "appium:newCommandTimeout": 720.0,
+            "appium:noReset": True,
+            "appium:serverStartupTimeout": 15_000,
+            "appium:showServerLogs": True,
+            "appium:skipAppKill": True,
+            "appium:systemHost": "127.0.0.1",
+            "appium:systemPort": 10100,
+        }
+        assert "appium:appPath" not in reattach_caps
+        assert "appium:arguments" not in reattach_caps
+
+        not_created = {
+            "value": {
+                "error": "session not created",
+                "message": f"failed to start {app} {secret_arg}",
+                "stacktrace": "",
+            }
+        }
+        # Reattach failure redacts cause, context, and cleanup_errors
+        service.queue("listDisplays", ResponsePlan(status=404, payload=dead))
+        service.queue("create", ResponsePlan(status=500, payload=not_created))
+        with pytest.raises(CommandError) as failed_reattach:
+            session.ensure_alive()
+        err: AutomationError = failed_reattach.value
+        assert_error(err, CommandError, "command_failed", "response_received")
+        assert err.__cause__ is None and err.__context__ is None
+        assert str(app) not in f"{err!s}\n{err!r}"
+        assert secret_arg not in f"{err!s}\n{err!r}"
         assert session.session_info().state == "uncertain"
         session.dispose()
         assert owner.count == 0
+
+    # Create-time failure also redacts upstream message and cleanup errors
+    service.queue("create", ResponsePlan(status=500, payload=not_created))
+    with connected(service) as connection, pytest.raises(CommandError) as create_failed:
+        create_mac2_session(
+            connection,
+            bundle_id="com.apple.calculator",
+            app_path=app,
+            arguments=[secret_arg],
+        )
+    assert create_failed.value.__cause__ is None
+    assert str(app) not in repr(create_failed.value)
+    assert secret_arg not in repr(create_failed.value)
+
+    # Explicit skip_app_kill=False is also preserved across dead-session reattach
+    service.queue("listDisplays", ResponsePlan(status=404, payload=dead))
+    with connected(service) as connection:
+        explicit_session = create_mac2_session(
+            connection,
+            bundle_id="com.apple.calculator",
+            skip_app_kill=False,
+        )
+        assert explicit_session.ensure_alive() is True
+        explicit_reattach_caps = cast(
+            dict[str, Any], service.of_kind("create")[-1].body
+        )["capabilities"]["alwaysMatch"]
+        assert explicit_reattach_caps["appium:skipAppKill"] is False
+        explicit_session.quit()
 
 
 @pytest.mark.parametrize(

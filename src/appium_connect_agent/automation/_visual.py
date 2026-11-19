@@ -12,6 +12,7 @@ from selenium.webdriver.remote.command import Command
 
 from ._models import (
     AutomationError,
+    AutomationPlatform,
     Bounds,
     CommandError,
     DisplaySize,
@@ -33,6 +34,7 @@ from ._system_actions import (
     _decode_screenshot_base64,
     _parse_display_size,
     _parse_ios_display_size,
+    _parse_macos_display_size,
     _parse_png_container,
     _SingleFrameRequiredError,
 )
@@ -320,7 +322,7 @@ def _inspect_with_ai(
     mode: VisualMode,
     region: ImageRegion | None,
     max_candidates: int,
-    ios: bool = False,
+    platform: AutomationPlatform = "android",
 ) -> VisualInspection:
     def capture() -> bytes:
         response: object = driver.execute(Command.SCREENSHOT)
@@ -353,15 +355,28 @@ def _inspect_with_ai(
 
     pointer_size: DisplaySize | None = None
     if mode == "locate":
-        pointer_size = gateway.final_action(
-            lambda: (
-                _parse_ios_display_size(
-                    driver.execute_script("mobile: deviceScreenInfo")
-                )
-                if ios
-                else _parse_display_size(driver.execute_script("mobile: deviceInfo"))
+        if platform == "macos":
+            raw_displays = gateway.final_action(
+                lambda: driver.execute_script("macos: listDisplays")
             )
-        )
+            try:
+                pointer_size = _parse_macos_display_size(raw_displays)
+            except ValueError as cause:
+                raise gateway.failure(
+                    CommandError, "pointer_mapping_unavailable", "response_received"
+                ) from cause
+        else:
+            pointer_size = gateway.final_action(
+                lambda: (
+                    _parse_ios_display_size(
+                        driver.execute_script("mobile: deviceScreenInfo")
+                    )
+                    if platform == "ios"
+                    else _parse_display_size(
+                        driver.execute_script("mobile: deviceInfo")
+                    )
+                )
+            )
         gateway.complete("display_size_read")
         gateway.checkpoint(response_received=True)
         if not _is_proportional_axis_aligned(image_size, pointer_size):
