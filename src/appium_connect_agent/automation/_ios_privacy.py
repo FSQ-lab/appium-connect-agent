@@ -24,7 +24,7 @@ def _redact_ios_public_errors(
         except AutomationError as error:
             instance = args[0] if args else None
             owner = getattr(instance, "_owner", None)
-            if getattr(owner, "platform", None) == "ios":
+            if getattr(owner, "platform", None) in ("ios", "macos"):
                 from ._session import _redact_xcuitest_error
 
                 _redact_xcuitest_error(error)

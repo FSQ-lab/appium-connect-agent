@@ -2,10 +2,10 @@
 
 本页是 Runtime 的唯一当前进度来源。设计维护需求、方案及 feature 拆分，SPEC 维护已确认契约；代码、测试存在和历史聊天中的“完成”都不能单独替代验收证据。
 
-- 更新日期：2026-11-13。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
+- 更新日期：2026-11-19。维护负责人：Tech Lead；范围、版本和权限决策由用户确认。
 - 本轮验收恢复基线：`master` / `ff6acb6f99c915086c30f8994d12c8840d1c4bd3`，初始工作区干净；台账初建时的核对基线为 `4a3640eef5be3704874b22f0d1a1a91015258287`。
 - 需求依据：[上位设计](../superpowers/specs/2026-10-19-runtime-python-interface-design.md)、[近期拆分](../superpowers/specs/2026-10-20-runtime-local-implementation-design.md)、[Runtime SPEC](../../modules/runtime/SPEC.md)。
-- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03（03A+03B）、RT-LOCAL-04（Issue #10 @ `564384a`）与 RT-LOCAL-06（Issue #4，自有受管 Appium 显式 `stop_managed`/`restart_managed`）均已在各自限定范围完成验证、真实链验收与独立审查 Done；RT-LOCAL-05（Issue #13，05A 官方 driver ensure + 05B 显式官方 Driver Doctor）已完成实现、72 项受控矩阵及 Android `uiautomator2` 真实受管 `reused` + `run_driver_doctor`（7 checks `accepted`）验收（`mac2`/`xcuitest` 跨平台真实联网安装与 Doctor 未获授权、保持 #13 open / `status:blocked` 跨平台缺口）；Android 单平台 `Runtime/M01` 自管运行时整体验收（Issue #6）已完成正式 wheel 隔离环境、真实受管根、真实 Pixel 6 Session 创建/关闭、显式 restart/stop、external 服务零干扰及锁复用全链路验证。跨平台（iOS/macOS）、Automation 整体模块与项目整体仍不宣称 Done。**
+- 当前结论：**RT-LOCAL-01、RT-LOCAL-02、RT-LOCAL-03（03A+03B）、RT-LOCAL-04（Issue #10 @ `564384a`）与 RT-LOCAL-06（Issue #4，自有受管 Appium 显式 `stop_managed`/`restart_managed`）均已在各自限定范围完成验证、真实链验收与独立审查 Done；RT-LOCAL-05（Issue #13）及其跨平台增量 `RT-MAC-01`（Issue #31，`mac2@4.6.1`）与 `RT-IOS-01`（Issue #39，`xcuitest@12.22.8`）均已完成实现、独立审查及本机真实受管安装/复用与 `run_driver_doctor` 端到端验收并关闭 #13/#31/#39；Android 单平台 `Runtime/M01` 自管运行时整体验收（Issue #6）已完成正式 wheel 隔离环境、真实受管根、真实 Pixel 6 Session 创建/关闭、显式 restart/stop、external 服务零干扰及锁复用全链路验证。物理 iPhone 真机签名与项目级整体模块边界仍按 `SPEC.md` 诚实保留，不宣称全项目无条件 Done。**
 
 ## RT-LOCAL-03A 独立安装准备
 

@@ -1,6 +1,17 @@
 # Automation 需求交接台账
 
-当前进度更新：2026-11-14。下文保留2026-10-22需求交接TaskID `AUTO-DESIGN-HANDOFF-01`的历史记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+当前进度更新：2026-11-19。下文按时间倒序保留最新三平台 SDK 对齐及历史交付记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+
+## 当前三平台 SDK 对齐与 Integrations 22 工具同源矩阵进度（Issues #31–#58）
+
+- **macOS Desktop (`mac2@4.6.1`)**：
+  - `AUTO-MAC-01A`（#32）与 `AUTO-MAC-01B`（#34）交付 `create_mac2_session`、XCUI 结构观测、桌面指针/滚轮/组合键、剪贴板、弹窗及 `.app` 生命周期，并经 #35（`INT-MAC-01`）合入 22 工具三壳矩阵与真实 Calculator 三壳冒烟。
+  - `AUTO-MAC-02`（Issue #58，2026-11-19）：对齐单显示器 `Device.display_size()`（`macos: listDisplays` 严格校验 `len==1`、`isMain is True`、`rect.x==0`、`rect.y==0` 与严格 `int` 正宽高，多屏或畸形响应 fail-closed）、单显示器 `Device.inspect_with_ai(..., mode="locate")`（1x/2x Retina 正整数倍等比映射，多屏或比例失配于 provider 前 fail-closed `pointer_mapping_unavailable`）、`Device.device_time()`（`macos: listDisplays` 活跃门禁 + 本机带时区墙钟 ISO-8601）、`create_mac2_session` 默认 `900.0s` 与死会话 `Mac2Options` 无损重连及异常脱敏（`Device.swipe` 维持移动专属 `unsupported_operation/not_sent`）。全仓静态门禁、3,381+4 项未过滤/增量 pytest、`uv build` + 离线双隔离 venv 分发校验、本机受管 Appium `3.7.0` + `mac2@4.6.1` + `com.apple.calculator` 真实冒烟，以及独立 `spec-implementation-audit`（`AUTO-MAC02-FULL-AUDIT-01` -> `AUTO-MAC02-REPAIR-AUDIT-01` `pass`，`AUTO-MAC02-001` closed，0 open findings）全部通过。判定 **AUTO-MAC-02 限定范围 Done**。
+- **iOS Simulator & Real Device (`xcuitest@12.22.8`)**：
+  - `AUTO-IOS-01A`（#40）、`AUTO-IOS-01B`（#41）与 `INT-IOS-01`（#42）交付 `list_ios_devices`、`create_xcuitest_session`、XCUI 观测与动作、22 工具三壳矩阵、真实 FSQ OpenAI strict + Gemini 转换器门禁及 Booted Simulator 三壳端到端验收；`AUTO-IOS-02`（#53，PR #57）补齐 iOS `display_size`、安全区 `swipe`、`inspect_with_ai(locate)`、`device_time` 与 900s 无损 `XCUITestOptions` 重连（物理 iPhone 真机 WDA 签名链路保持 `device-validation-blocked`）。
+- **Android Native (`uiautomator2@8.7.0`)**：
+  - `AIF-12`（#46 `display_size`）、`AIF-13`（#47 `inspect_with_ai`）、`AIF-03`（#48 `"null"`/空属性归一化）、`AIF-14`（#49 `wait_request` 解耦与 `device_time`）及 #50（900s 默认超时、死会话无损重连、安全区 `swipe`）均已合入 `master`；#36（`uiautomator2_wait_for_idle_timeout_ms`）代码与独立审查已随 PR #38 合入 `master`，仅保留真实动态页面无评分验收项 `status:blocked`。
+- **模块与跨层边界保留**：三平台后续 5 项 SDK 增强是否同步扩展至 `Integrations` 22 工具目录已独立登记为 `status:backlog` 决策项 Issue #60（`INT-PARITY-01`）；各模块整体与未授权真机路径继续保持诚实边界，不越权宣称全模块无条件 Done。
 
 ## 当前 AIF-11 进度（Issue #27）
 
