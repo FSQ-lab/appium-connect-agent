@@ -1744,7 +1744,7 @@ def _observe_tree(
         source = gateway.request(lambda: driver.page_source, "source_captured")
         return _ios_tree_result(
             source,
-            SourceMetadata(False, True, None),
+            SourceMetadata(False, True, gateway.ios_snapshot_max_depth),
             viewport,
             parent,
             gateway,
@@ -1947,9 +1947,12 @@ def _inspect_structure(
 ) -> RawStructureObservation:
     if gateway.platform in ("macos", "ios"):
         source = gateway.request(lambda: driver.page_source, "source_captured")
+        max_depth = (
+            gateway.ios_snapshot_max_depth if gateway.platform == "ios" else None
+        )
         return _structure_result(
             source,
-            SourceMetadata(False, True, None),
+            SourceMetadata(False, True, max_depth),
             element,
             scope,
             gateway,

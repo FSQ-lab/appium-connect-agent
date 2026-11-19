@@ -550,6 +550,9 @@ def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
             updated_wda_bundle_id="com.example.private.wda",
             show_xcode_log=True,
             wda_launch_timeout_ms=60_000,
+            xcuitest_wait_for_idle_timeout_seconds=2.0,
+            xcuitest_snapshot_max_depth=25,
+            xcuitest_accessibility_deadline_seconds=10.0,
         )
         service.queue("action", ResponsePlan(status=404, payload=dead))
         assert session.ensure_alive() is True
@@ -576,6 +579,9 @@ def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
             "appium:xcodeSigningId": "Private Signing",
             "appium:updatedWDABundleId": "com.example.private.wda",
             "appium:wdaLaunchTimeout": 60_000,
+            "appium:waitForIdleTimeout": 2.0,
+            "appium:settings[snapshotMaxDepth]": 25,
+            "appium:settings[accessibilityDeadline]": 10.0,
         }
         assert "appium:bundleId" not in capabilities
         assert "appium:app" not in capabilities
