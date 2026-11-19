@@ -46,6 +46,7 @@ from tests.automation._action_protocol import (
     session_for,
     w3c_error,
 )
+from tests.automation.test_session_lifecycle import managed_connection
 
 
 def _chunk(kind: bytes, data: bytes = b"") -> bytes:
@@ -446,6 +447,33 @@ def test_android_display_size_and_device_time_reject_macos_without_io(
             )
         assert service.snapshot() == before
         session.quit()
+
+
+def test_dead_mac_session_never_falls_through_to_android_reattach(
+    service: MacActionService,
+) -> None:
+    dead = {
+        "value": {
+            "error": "invalid session id",
+            "message": "session is either terminated or not started",
+            "stacktrace": "",
+        }
+    }
+    service.queue("listDisplays", ResponsePlan(status=404, payload=dead))
+    with managed_connection(cast(Any, service)) as (connection, owner):
+        session = mac_session_for(service, connection)
+        with pytest.raises(InvalidSessionStateError) as caught:
+            session.ensure_alive()
+        assert_error(
+            caught.value,
+            InvalidSessionStateError,
+            "session_invalid",
+            "response_received",
+        )
+        assert len(service.of_kind("create")) == 1
+        assert session.session_info().state == "uncertain"
+        session.dispose()
+        assert owner.count == 0
 
 
 @pytest.mark.parametrize(

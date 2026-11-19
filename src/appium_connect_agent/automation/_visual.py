@@ -32,6 +32,7 @@ from ._observation import _canonical
 from ._system_actions import (
     _decode_screenshot_base64,
     _parse_display_size,
+    _parse_ios_display_size,
     _parse_png_container,
     _SingleFrameRequiredError,
 )
@@ -319,6 +320,7 @@ def _inspect_with_ai(
     mode: VisualMode,
     region: ImageRegion | None,
     max_candidates: int,
+    ios: bool = False,
 ) -> VisualInspection:
     def capture() -> bytes:
         response: object = driver.execute(Command.SCREENSHOT)
@@ -352,7 +354,13 @@ def _inspect_with_ai(
     pointer_size: DisplaySize | None = None
     if mode == "locate":
         pointer_size = gateway.final_action(
-            lambda: _parse_display_size(driver.execute_script("mobile: deviceInfo"))
+            lambda: (
+                _parse_ios_display_size(
+                    driver.execute_script("mobile: deviceScreenInfo")
+                )
+                if ios
+                else _parse_display_size(driver.execute_script("mobile: deviceInfo"))
+            )
         )
         gateway.complete("display_size_read")
         gateway.checkpoint(response_received=True)

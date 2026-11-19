@@ -68,6 +68,36 @@ def _parse_display_size(response: object) -> DisplaySize:
     return DisplaySize(width=width, height=height)
 
 
+def _parse_ios_display_size(response: object) -> DisplaySize:
+    if not isinstance(response, Mapping):
+        raise ValueError("deviceScreenInfo response must be a mapping")
+    screen_size = response.get("screenSize")
+    if not isinstance(screen_size, Mapping):
+        raise ValueError("screenSize must be a mapping")
+    width = screen_size.get("width")
+    height = screen_size.get("height")
+    if (
+        type(width) is not int
+        or type(height) is not int
+        or not 1 <= width <= _DISPLAY_SIZE_MAX
+        or not 1 <= height <= _DISPLAY_SIZE_MAX
+    ):
+        raise ValueError("screenSize dimensions must be strict positive integers")
+    return DisplaySize(width=width, height=height)
+
+
+def _ios_display_size(
+    driver: WebDriver, gateway: _SessionOperationGateway
+) -> DisplaySize:
+    result = gateway.final_action(
+        lambda: _parse_ios_display_size(
+            driver.execute_script("mobile: deviceScreenInfo")
+        )
+    )
+    gateway.complete("display_size_read")
+    return result
+
+
 def _display_size(driver: WebDriver, gateway: _SessionOperationGateway) -> DisplaySize:
     result = gateway.final_action(
         lambda: _parse_display_size(driver.execute_script("mobile: deviceInfo"))
@@ -653,6 +683,7 @@ def _swipe_directional(
     end_x: int | None,
     end_y: int | None,
     duration_ms: int,
+    ios: bool = False,
 ) -> None:
     if (
         start_x is not None
@@ -662,7 +693,11 @@ def _swipe_directional(
     ):
         sx, sy, ex, ey = start_x, start_y, end_x, end_y
     else:
-        size = _display_size(driver, gateway)
+        size = (
+            _ios_display_size(driver, gateway)
+            if ios
+            else _display_size(driver, gateway)
+        )
         sx, sy, ex, ey = _safe_swipe_coordinates(size, direction)
     _swipe_between(
         driver,

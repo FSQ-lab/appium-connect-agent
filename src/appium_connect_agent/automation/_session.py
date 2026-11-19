@@ -874,9 +874,7 @@ class _SessionOperationGateway:
                     assert condition_deadline is not None
                     self.wait_checkpoint(condition_deadline, response_received=True)
                     raise _PreActionStale from cause
-                if self._session._platform == "android" and _is_dead_session_exception(
-                    cause
-                ):
+                if _is_dead_session_exception(cause):
                     raise _DeadSessionError from cause
                 raise self.failure(
                     CommandError, "command_failed", "response_received"
@@ -967,10 +965,12 @@ class Session:
     _appium_session_id: str | None
     _client: _LifecycleConnection
     _device: Device
+    _derived_data_path: str | None
     _device_id: str
     _driver: webdriver.Remote | None
     _extras: dict[str, str]
     _new_command_timeout_seconds: float
+    _show_xcode_log: bool
     _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
@@ -981,10 +981,15 @@ class Session:
     _state_lock: Lock
     _target_app_id: str | None
     _uiautomator2_wait_for_idle_timeout_ms: int | None
+    _updated_wda_bundle_id: str | None
+    _wda_launch_timeout_ms: int | None
+    _xcode_org_id: str | None
+    _xcode_signing_id: str | None
 
     __slots__ = (
         "_appium_session_id",
         "_client",
+        "_derived_data_path",
         "_device",
         "_device_id",
         "_driver",
@@ -996,10 +1001,15 @@ class Session:
         "_reservation",
         "_runtime_connection",
         "_runtime_usage",
+        "_show_xcode_log",
         "_state",
         "_state_lock",
         "_target_app_id",
         "_uiautomator2_wait_for_idle_timeout_ms",
+        "_updated_wda_bundle_id",
+        "_wda_launch_timeout_ms",
+        "_xcode_org_id",
+        "_xcode_signing_id",
     )
 
     def __init__(self) -> None:
@@ -1027,6 +1037,12 @@ class Session:
         instance._new_command_timeout_seconds = _DEFAULT_NEW_COMMAND_TIMEOUT_SECONDS
         instance._uiautomator2_wait_for_idle_timeout_ms = None
         instance._extras = {}
+        instance._derived_data_path = None
+        instance._show_xcode_log = False
+        instance._updated_wda_bundle_id = None
+        instance._wda_launch_timeout_ms = None
+        instance._xcode_org_id = None
+        instance._xcode_signing_id = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
         return instance
@@ -1085,24 +1101,53 @@ class Session:
     ) -> webdriver.Remote:
         server_url = self._connection_is_active(operation_id)
         _checkpoint(control, deadline, operation_id)
+        if self._platform == "macos":
+            self._set_state("uncertain")
+            raise InvalidSessionStateError(
+                "session_invalid", operation_id, "response_received"
+            )
         old_client = getattr(self, "_client", None)
         if isinstance(old_client, _LifecycleConnection):
             _close_client(old_client)
         client = _new_connection(server_url)
-        options = _build_options(
-            self._device_id,
-            None,
-            None,
-            False,
-            False,
-            True,
-            False,
-            False,
-            self._new_command_timeout_seconds,
-            self._uiautomator2_wait_for_idle_timeout_ms,
-            self._reservation.system_port,
-            self._extras,
-        )
+        options: UiAutomator2Options | XCUITestOptions
+        if self._platform == "ios":
+            derived_data_path = self._derived_data_path
+            if derived_data_path is None:
+                raise RuntimeError("iOS Session has no derived data path")
+            options = _build_xcuitest_options(
+                udid=self._device_id,
+                bundle_id=None,
+                app_path=None,
+                arguments=None,
+                auto_launch=False,
+                force_app_launch=False,
+                should_terminate_app=False,
+                no_reset=True,
+                xcode_org_id=self._xcode_org_id,
+                xcode_signing_id=self._xcode_signing_id,
+                updated_wda_bundle_id=self._updated_wda_bundle_id,
+                show_xcode_log=self._show_xcode_log,
+                wda_launch_timeout_ms=self._wda_launch_timeout_ms,
+                new_command_timeout_seconds=self._new_command_timeout_seconds,
+                wda_local_port=self._reservation.system_port,
+                derived_data_path=derived_data_path,
+            )
+        else:
+            options = _build_options(
+                self._device_id,
+                None,
+                None,
+                False,
+                False,
+                True,
+                False,
+                False,
+                self._new_command_timeout_seconds,
+                self._uiautomator2_wait_for_idle_timeout_ms,
+                self._reservation.system_port,
+                self._extras,
+            )
         client.prepare_request(
             control.cancellation if control is not None else None, deadline
         )
@@ -1121,6 +1166,7 @@ class Session:
         except Exception as cause:
             cleanup_errors = _close_client(client)
             if client.terminal_not_created:
+                self._set_state("uncertain")
                 raise CommandError(
                     "command_failed",
                     operation_id,
@@ -1203,12 +1249,21 @@ class Session:
                         lambda: driver.execute_script("macos: listDisplays"),
                         "session_probed",
                     )
+                elif self._platform == "ios":
+                    gateway.request(
+                        lambda: driver.execute_script("mobile: deviceScreenInfo"),
+                        "session_probed",
+                    )
                 else:
                     gateway.request(driver.get_settings, "session_probed")
                 return False
             except _DeadSessionError:
                 self._reattach_locked(operation_id, control, deadline)
                 return True
+        except AutomationError as error:
+            if self._platform == "ios":
+                _redact_xcuitest_error(error)
+            raise
         finally:
             self._operation_gate.release()
 
@@ -2604,7 +2659,7 @@ def _create_xcuitest_session(
     updated_wda_bundle_id: str | None = None,
     show_xcode_log: bool = False,
     wda_launch_timeout_ms: int | None = None,
-    new_command_timeout_seconds: float = 300.0,
+    new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
     """Create one independently owned XCUITest Session."""
@@ -2667,6 +2722,13 @@ def _create_xcuitest_session(
         reservation.release()
         usage.release()
         raise
+    session._new_command_timeout_seconds = valid_timeout
+    session._derived_data_path = derived_data_path
+    session._xcode_org_id = valid_xcode_org_id
+    session._xcode_signing_id = valid_xcode_signing_id
+    session._updated_wda_bundle_id = valid_updated_wda_bundle_id
+    session._show_xcode_log = show_xcode_log
+    session._wda_launch_timeout_ms = wda_launch_timeout_ms
     try:
         client = _new_connection(server_url)
         session._client = client
@@ -2763,7 +2825,7 @@ def create_xcuitest_session(
     updated_wda_bundle_id: str | None = None,
     show_xcode_log: bool = False,
     wda_launch_timeout_ms: int | None = None,
-    new_command_timeout_seconds: float = 300.0,
+    new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
     """Create one independently owned XCUITest Session."""

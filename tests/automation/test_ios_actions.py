@@ -13,9 +13,12 @@ import pytest
 
 from appium_connect_agent.automation import (
     CommandError,
+    DeviceTime,
+    DisplaySize,
     ExecutionUnknownError,
     InvalidRequestError,
     OperationTimeoutError,
+    ResourceStateError,
     Session,
     SessionBusyError,
     TargetError,
@@ -60,6 +63,10 @@ class IosActionProtocolService(ActionProtocolService):
                 return {"value": 2}
             if script == "mobile: getClipboard":
                 return {"value": base64.b64encode("剪贴板".encode()).decode()}
+            if script == "mobile: deviceScreenInfo":
+                return {"value": {"screenSize": {"width": 390, "height": 844}}}
+            if script == "mobile: getDeviceTime":
+                return {"value": "2026-11-18T09:10:11+08:00"}
         return super()._default_payload(request, kind)
 
 
@@ -443,6 +450,187 @@ def test_device_exact_commands_and_application_management(
         assert type(timeout_ms) is int
         assert 1 <= timeout_ms <= 5_000
         session.quit()
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected"),
+    [
+        ("up", ((195, 675), (195, 169))),
+        ("down", ((195, 169), (195, 675))),
+        ("left", ((319, 422), (71, 422))),
+        ("right", ((71, 422), (319, 422))),
+    ],
+)
+def test_ios_display_size_directional_swipe_and_device_time(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+    expected: tuple[tuple[int, int], tuple[int, int]],
+) -> None:
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        assert session.device.display_size() == DisplaySize(390, 844)
+        assert session.device.device_time() == DeviceTime(
+            iso_local="2026-11-18T09:10:11+08:00",
+            date="2026-11-18",
+            time="09:10:11",
+            weekday="Wednesday",
+            utc_offset="+08:00",
+        )
+        session.device.swipe(direction=cast(Any, direction))
+
+        scripts = script_requests(service)
+        assert [request.body for request in scripts] == [
+            {"script": "mobile: deviceScreenInfo", "args": []},
+            {"script": "mobile: getDeviceTime", "args": []},
+            {"script": "mobile: deviceScreenInfo", "args": []},
+        ]
+        pointer = service.of_kind("pointer")[0]
+        assert pointer.body is not None
+        actions = cast(list[dict[str, Any]], pointer.body["actions"])[0]["actions"]
+        assert (actions[0]["x"], actions[0]["y"]) == expected[0]
+        assert (actions[2]["x"], actions[2]["y"]) == expected[1]
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    "screen_size",
+    [
+        None,
+        {},
+        {"width": True, "height": 844},
+        {"width": 390, "height": 0},
+        {"width": 2_147_483_648, "height": 844},
+    ],
+)
+def test_ios_display_size_rejects_invalid_screen_info_without_leaking_response(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    screen_size: object,
+) -> None:
+    canary = "private-screen-canary"
+    service.queue(
+        "action",
+        ResponsePlan(payload={"value": {"screenSize": screen_size, "secret": canary}}),
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        with pytest.raises(CommandError) as caught:
+            session.device.display_size()
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        _assert_no_canary(caught.value, canary)
+        session.quit()
+
+
+def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    dead = {
+        "value": {
+            "error": "invalid session id",
+            "message": "session is either terminated or not started",
+            "stacktrace": "",
+        }
+    }
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            "IOS-PRIVATE-UDID",
+            bundle_id="com.example.front",
+            app_path=None,
+            arguments=("private-argument",),
+            xcode_org_id="PRIVATE_ORG",
+            xcode_signing_id="Private Signing",
+            updated_wda_bundle_id="com.example.private.wda",
+            show_xcode_log=True,
+            wda_launch_timeout_ms=60_000,
+        )
+        service.queue("action", ResponsePlan(status=404, payload=dead))
+        assert session.ensure_alive() is True
+
+        creates = service.of_kind("create")
+        assert len(creates) == 2
+        reattach = creates[1].body
+        assert reattach is not None
+        capabilities = cast(dict[str, Any], reattach["capabilities"])["alwaysMatch"]
+        assert capabilities == {
+            "platformName": "iOS",
+            "appium:automationName": "XCUITest",
+            "appium:udid": "IOS-PRIVATE-UDID",
+            "appium:autoLaunch": False,
+            "appium:forceAppLaunch": False,
+            "appium:shouldTerminateApp": False,
+            "appium:noReset": True,
+            "appium:fullReset": False,
+            "appium:showXcodeLog": True,
+            "appium:newCommandTimeout": 900.0,
+            "appium:wdaLocalPort": 8100,
+            "appium:derivedDataPath": "/private/tmp/test-8100",
+            "appium:xcodeOrgId": "PRIVATE_ORG",
+            "appium:xcodeSigningId": "Private Signing",
+            "appium:updatedWDABundleId": "com.example.private.wda",
+            "appium:wdaLaunchTimeout": 60_000,
+        }
+        assert "appium:bundleId" not in capabilities
+        assert "appium:app" not in capabilities
+        assert "appium:processArguments" not in capabilities
+        session.quit()
+
+
+def test_ios_reattach_failure_redacts_sensitive_fields(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canaries = (
+        "IOS-SENSITIVE-UDID",
+        "SENSITIVE_ORG",
+        "Sensitive Signing",
+        "com.example.sensitive.wda",
+        "upstream-sensitive-canary",
+    )
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    dead = {
+        "value": {
+            "error": "invalid session id",
+            "message": "session is either terminated or not started",
+            "stacktrace": "",
+        }
+    }
+    with managed_connection(cast(Any, service)) as (connection, owner):
+        session = create_xcuitest_session(
+            connection,
+            canaries[0],
+            xcode_org_id=canaries[1],
+            xcode_signing_id=canaries[2],
+            updated_wda_bundle_id=canaries[3],
+        )
+        service.queue("action", ResponsePlan(status=404, payload=dead))
+        service.queue(
+            "create",
+            ResponsePlan(status=500, payload=w3c_error(canaries[4])),
+        )
+        with pytest.raises(ResourceStateError) as caught:
+            session.ensure_alive()
+        assert_error(
+            caught.value,
+            ResourceStateError,
+            "session_create_unknown",
+            "response_unknown",
+        )
+        _assert_no_canary(caught.value, *canaries)
+        assert session.session_info().state == "uncertain"
+        session.dispose()
+        assert owner.count == 0
 
 
 @pytest.mark.parametrize(
