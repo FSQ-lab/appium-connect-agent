@@ -3641,3 +3641,47 @@ def test_ios_tree_complete_document_524288_and_524289_boundaries(
         assert caught.value.code == "observation_too_large"
         assert session.session_info().state == "active"
         session.quit()
+
+
+def test_ios_source_metadata_reflects_configured_xcuitest_snapshot_max_depth(
+    service: ElementProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    service.source = (
+        "<AppiumAUT><XCUIElementTypeApplication "
+        'name="app" enabled="true" visible="true" '
+        'x="0" y="0" width="390" height="844" index="0">'
+        '<XCUIElementTypeButton name="btn" label="OK" enabled="true" '
+        'visible="true" x="10" y="20" width="80" height="40" index="0"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    with connected(service) as connection:
+        default_session = create_xcuitest_session(connection, "IOS-DEFAULT-DEPTH")
+        assert default_session.observe_tree().source.snapshot_max_depth is None
+        assert (
+            default_session.element("name", "btn")
+            .inspect_structure(scope="target")
+            .source.snapshot_max_depth
+            is None
+        )
+        default_session.quit()
+
+        tuned_session = create_xcuitest_session(
+            connection,
+            "IOS-TUNED-DEPTH",
+            xcuitest_snapshot_max_depth=25,
+        )
+        tree = tuned_session.observe_tree()
+        assert tree.source.snapshot_max_depth == 25
+        assert json.loads(tree.to_json())["source"]["snapshot_max_depth"] == 25
+        structure = tuned_session.element("name", "btn").inspect_structure(
+            scope="target"
+        )
+        assert structure.source.snapshot_max_depth == 25
+        assert json.loads(structure.to_json())["source"]["snapshot_max_depth"] == 25
+        tuned_session.quit()

@@ -555,6 +555,19 @@ def _validate_ios_app_path(value: object, operation_id: str) -> Path | None:
     return value
 
 
+def _validate_xcuitest_seconds_policy(value: object, operation_id: str) -> float | None:
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0.0 <= value <= 600.0
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    return float(value)
+
+
 def _validate_xcuitest_request(
     operation_id: str,
     udid: object,
@@ -570,6 +583,9 @@ def _validate_xcuitest_request(
     updated_wda_bundle_id: object,
     show_xcode_log: object,
     wda_launch_timeout_ms: object,
+    xcuitest_wait_for_idle_timeout_seconds: object,
+    xcuitest_snapshot_max_depth: object,
+    xcuitest_accessibility_deadline_seconds: object,
     new_command_timeout_seconds: object,
 ) -> tuple[
     str,
@@ -579,6 +595,9 @@ def _validate_xcuitest_request(
     str | None,
     str | None,
     str | None,
+    float | None,
+    int | None,
+    float | None,
     float,
 ]:
     if (
@@ -628,6 +647,17 @@ def _validate_xcuitest_request(
         or not 1_000 <= wda_launch_timeout_ms <= 600_000
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    valid_idle_timeout = _validate_xcuitest_seconds_policy(
+        xcuitest_wait_for_idle_timeout_seconds, operation_id
+    )
+    if xcuitest_snapshot_max_depth is not None and (
+        type(xcuitest_snapshot_max_depth) is not int
+        or not 1 <= xcuitest_snapshot_max_depth <= 500
+    ):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    valid_accessibility_deadline = _validate_xcuitest_seconds_policy(
+        xcuitest_accessibility_deadline_seconds, operation_id
+    )
     timeout = new_command_timeout_seconds
     if (
         isinstance(timeout, bool)
@@ -644,6 +674,9 @@ def _validate_xcuitest_request(
         xcode_org_id,
         xcode_signing_id,
         valid_updated_bundle,
+        valid_idle_timeout,
+        xcuitest_snapshot_max_depth,
+        valid_accessibility_deadline,
         float(timeout),
     )
 
@@ -663,6 +696,9 @@ def _build_xcuitest_options(
     updated_wda_bundle_id: str | None,
     show_xcode_log: bool,
     wda_launch_timeout_ms: int | None,
+    xcuitest_wait_for_idle_timeout_seconds: float | None,
+    xcuitest_snapshot_max_depth: int | None,
+    xcuitest_accessibility_deadline_seconds: float | None,
     new_command_timeout_seconds: float,
     wda_local_port: int,
     derived_data_path: str,
@@ -689,6 +725,11 @@ def _build_xcuitest_options(
         "appium:xcodeSigningId": xcode_signing_id,
         "appium:updatedWDABundleId": updated_wda_bundle_id,
         "appium:wdaLaunchTimeout": wda_launch_timeout_ms,
+        "appium:waitForIdleTimeout": xcuitest_wait_for_idle_timeout_seconds,
+        "appium:settings[snapshotMaxDepth]": xcuitest_snapshot_max_depth,
+        "appium:settings[accessibilityDeadline]": (
+            xcuitest_accessibility_deadline_seconds
+        ),
     }
     capabilities.update(
         {key: value for key, value in optional.items() if value is not None}
@@ -744,6 +785,10 @@ class _SessionOperationGateway:
     @property
     def platform(self) -> AutomationPlatform:
         return self._session._platform
+
+    @property
+    def ios_snapshot_max_depth(self) -> int | None:
+        return self._session._xcuitest_snapshot_max_depth
 
     @property
     def can_send(self) -> bool:
@@ -988,6 +1033,9 @@ class Session:
     _wda_launch_timeout_ms: int | None
     _xcode_org_id: str | None
     _xcode_signing_id: str | None
+    _xcuitest_accessibility_deadline_seconds: float | None
+    _xcuitest_snapshot_max_depth: int | None
+    _xcuitest_wait_for_idle_timeout_seconds: float | None
 
     __slots__ = (
         "_appium_session_id",
@@ -1016,6 +1064,9 @@ class Session:
         "_wda_launch_timeout_ms",
         "_xcode_org_id",
         "_xcode_signing_id",
+        "_xcuitest_accessibility_deadline_seconds",
+        "_xcuitest_snapshot_max_depth",
+        "_xcuitest_wait_for_idle_timeout_seconds",
     )
 
     def __init__(self) -> None:
@@ -1052,6 +1103,9 @@ class Session:
         instance._wda_launch_timeout_ms = None
         instance._xcode_org_id = None
         instance._xcode_signing_id = None
+        instance._xcuitest_wait_for_idle_timeout_seconds = None
+        instance._xcuitest_snapshot_max_depth = None
+        instance._xcuitest_accessibility_deadline_seconds = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
         return instance
@@ -1147,6 +1201,13 @@ class Session:
                 updated_wda_bundle_id=self._updated_wda_bundle_id,
                 show_xcode_log=self._show_xcode_log,
                 wda_launch_timeout_ms=self._wda_launch_timeout_ms,
+                xcuitest_wait_for_idle_timeout_seconds=(
+                    self._xcuitest_wait_for_idle_timeout_seconds
+                ),
+                xcuitest_snapshot_max_depth=self._xcuitest_snapshot_max_depth,
+                xcuitest_accessibility_deadline_seconds=(
+                    self._xcuitest_accessibility_deadline_seconds
+                ),
                 new_command_timeout_seconds=self._new_command_timeout_seconds,
                 wda_local_port=self._reservation.system_port,
                 derived_data_path=derived_data_path,
@@ -2723,6 +2784,9 @@ def _create_xcuitest_session(
     updated_wda_bundle_id: str | None = None,
     show_xcode_log: bool = False,
     wda_launch_timeout_ms: int | None = None,
+    xcuitest_wait_for_idle_timeout_seconds: float | None = None,
+    xcuitest_snapshot_max_depth: int | None = None,
+    xcuitest_accessibility_deadline_seconds: float | None = None,
     new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
@@ -2736,6 +2800,9 @@ def _create_xcuitest_session(
         valid_xcode_org_id,
         valid_xcode_signing_id,
         valid_updated_wda_bundle_id,
+        valid_idle_timeout,
+        valid_snapshot_max_depth,
+        valid_accessibility_deadline,
         valid_timeout,
     ) = _validate_xcuitest_request(
         operation_id,
@@ -2752,6 +2819,9 @@ def _create_xcuitest_session(
         updated_wda_bundle_id,
         show_xcode_log,
         wda_launch_timeout_ms,
+        xcuitest_wait_for_idle_timeout_seconds,
+        xcuitest_snapshot_max_depth,
+        xcuitest_accessibility_deadline_seconds,
         new_command_timeout_seconds,
     )
     server_url = _active_server_url(connection, operation_id)
@@ -2793,6 +2863,9 @@ def _create_xcuitest_session(
     session._updated_wda_bundle_id = valid_updated_wda_bundle_id
     session._show_xcode_log = show_xcode_log
     session._wda_launch_timeout_ms = wda_launch_timeout_ms
+    session._xcuitest_wait_for_idle_timeout_seconds = valid_idle_timeout
+    session._xcuitest_snapshot_max_depth = valid_snapshot_max_depth
+    session._xcuitest_accessibility_deadline_seconds = valid_accessibility_deadline
     try:
         client = _new_connection(server_url)
         session._client = client
@@ -2816,6 +2889,9 @@ def _create_xcuitest_session(
             updated_wda_bundle_id=valid_updated_wda_bundle_id,
             show_xcode_log=show_xcode_log,
             wda_launch_timeout_ms=wda_launch_timeout_ms,
+            xcuitest_wait_for_idle_timeout_seconds=valid_idle_timeout,
+            xcuitest_snapshot_max_depth=valid_snapshot_max_depth,
+            xcuitest_accessibility_deadline_seconds=valid_accessibility_deadline,
             new_command_timeout_seconds=valid_timeout,
             wda_local_port=reservation.system_port,
             derived_data_path=derived_data_path,
@@ -2889,6 +2965,9 @@ def create_xcuitest_session(
     updated_wda_bundle_id: str | None = None,
     show_xcode_log: bool = False,
     wda_launch_timeout_ms: int | None = None,
+    xcuitest_wait_for_idle_timeout_seconds: float | None = None,
+    xcuitest_snapshot_max_depth: int | None = None,
+    xcuitest_accessibility_deadline_seconds: float | None = None,
     new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
@@ -2910,6 +2989,13 @@ def create_xcuitest_session(
             updated_wda_bundle_id=updated_wda_bundle_id,
             show_xcode_log=show_xcode_log,
             wda_launch_timeout_ms=wda_launch_timeout_ms,
+            xcuitest_wait_for_idle_timeout_seconds=(
+                xcuitest_wait_for_idle_timeout_seconds
+            ),
+            xcuitest_snapshot_max_depth=xcuitest_snapshot_max_depth,
+            xcuitest_accessibility_deadline_seconds=(
+                xcuitest_accessibility_deadline_seconds
+            ),
             new_command_timeout_seconds=new_command_timeout_seconds,
             control=control,
         )

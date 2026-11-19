@@ -2456,6 +2456,121 @@ def test_xcuitest_accepts_parameter_boundaries(
     assert caps["appium:processArguments"] == {"args": kwargs["arguments"]}
 
 
+class _IntSubclass(int):
+    pass
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": cast(Any, True)},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": cast(Any, False)},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": cast(Any, "2.0")},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": float("nan")},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": float("inf")},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": -0.001},
+        {"udid": "DEVICE", "xcuitest_wait_for_idle_timeout_seconds": 600.001},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": cast(Any, True)},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": _IntSubclass(25)},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": cast(Any, 25.0)},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": cast(Any, "25")},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": 0},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": -1},
+        {"udid": "DEVICE", "xcuitest_snapshot_max_depth": 501},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": cast(Any, True)},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": cast(Any, "10")},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": float("nan")},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": float("-inf")},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": -0.001},
+        {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": 600.001},
+    ],
+)
+def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservation(
+    service: ProtocolService, kwargs: dict[str, Any]
+) -> None:
+    with (
+        managed_connection(service) as (connection, owner),
+        pytest.raises(InvalidRequestError) as caught,
+    ):
+        create_xcuitest_session(connection, **kwargs)
+    assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert owner.events == []
+    assert owner.count == 0
+    assert service.lifecycle_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("policy_kwargs", "expected_extra"),
+    [
+        (
+            {},
+            {},
+        ),
+        (
+            {
+                "xcuitest_wait_for_idle_timeout_seconds": 0,
+                "xcuitest_snapshot_max_depth": 1,
+                "xcuitest_accessibility_deadline_seconds": 0,
+            },
+            {
+                "appium:waitForIdleTimeout": 0.0,
+                "appium:settings[snapshotMaxDepth]": 1,
+                "appium:settings[accessibilityDeadline]": 0.0,
+            },
+        ),
+        (
+            {
+                "xcuitest_wait_for_idle_timeout_seconds": 2.0,
+                "xcuitest_snapshot_max_depth": 25,
+                "xcuitest_accessibility_deadline_seconds": 10.0,
+            },
+            {
+                "appium:waitForIdleTimeout": 2.0,
+                "appium:settings[snapshotMaxDepth]": 25,
+                "appium:settings[accessibilityDeadline]": 10.0,
+            },
+        ),
+        (
+            {
+                "xcuitest_wait_for_idle_timeout_seconds": 600,
+                "xcuitest_snapshot_max_depth": 500,
+                "xcuitest_accessibility_deadline_seconds": 600.0,
+            },
+            {
+                "appium:waitForIdleTimeout": 600.0,
+                "appium:settings[snapshotMaxDepth]": 500,
+                "appium:settings[accessibilityDeadline]": 600.0,
+            },
+        ),
+    ],
+    ids=("defaults_omitted", "zero_and_min", "typical_tuning", "maximums"),
+)
+def test_xcuitest_initial_policies_serialize_without_extra_settings_requests(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    policy_kwargs: dict[str, Any],
+    expected_extra: dict[str, Any],
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    with connected(service) as connection:
+        session = create_xcuitest_session(connection, "POLICY-DEVICE", **policy_kwargs)
+        session.quit()
+    requests = service.lifecycle_requests()
+    assert [req.method for req in requests] == ["POST", "DELETE"]
+    caps = appium_caps(requests[0])
+    if not expected_extra:
+        assert "appium:waitForIdleTimeout" not in caps
+        assert "appium:settings[snapshotMaxDepth]" not in caps
+        assert "appium:settings[accessibilityDeadline]" not in caps
+    else:
+        for key, expected in expected_extra.items():
+            assert caps[key] == expected
+            assert type(caps[key]) is type(expected)
+
+
 def test_xcuitest_acquires_usage_before_reserving_wda_port(
     service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
