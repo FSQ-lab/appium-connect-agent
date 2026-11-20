@@ -1151,6 +1151,7 @@ def _parse_xcui_source(
             y >= viewport_height,
         )
         if sum(outside) > 1:
+            node.visibility = "not_visible"
             continue
         if outside[0]:
             node.viewport_relation = "outside_left"

@@ -553,6 +553,8 @@ def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
             xcuitest_wait_for_idle_timeout_seconds=2.0,
             xcuitest_snapshot_max_depth=25,
             xcuitest_accessibility_deadline_seconds=10.0,
+            xcuitest_animation_cool_off_timeout_seconds=3.5,
+            xcuitest_page_source_excluded_attributes=("visible", "accessible"),
         )
         service.queue("action", ResponsePlan(status=404, payload=dead))
         assert session.ensure_alive() is True
@@ -582,6 +584,8 @@ def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
             "appium:waitForIdleTimeout": 2.0,
             "appium:settings[snapshotMaxDepth]": 25,
             "appium:settings[accessibilityDeadline]": 10.0,
+            "appium:settings[animationCoolOffTimeout]": 3.5,
+            "appium:settings[pageSourceExcludedAttributes]": "visible,accessible",
         }
         assert "appium:bundleId" not in capabilities
         assert "appium:app" not in capabilities

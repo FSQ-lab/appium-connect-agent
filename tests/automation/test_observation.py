@@ -3407,6 +3407,69 @@ def test_ios_predicate_attributes_and_appium_aut_tree(
         session.quit()
 
 
+def test_ios_tree_uses_geometry_when_visible_and_accessible_are_excluded(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" enabled="true" '
+        'x="0" y="0" width="402" height="874" index="0">'
+        '<XCUIElementTypeButton name="inside" enabled="true" '
+        'x="10" y="20" width="100" height="40" index="1"/>'
+        '<XCUIElementTypeButton name="offscreen" enabled="true" '
+        'x="500" y="20" width="100" height="40" index="2"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    monkeypatch.setattr(
+        session_module,
+        "_prepare_xcuitest_derived_data",
+        lambda port, operation_id: f"/private/tmp/test-{port}",
+    )
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            "IOS-EXCLUDED-ATTRIBUTES",
+            xcuitest_page_source_excluded_attributes=("visible", "accessible"),
+        )
+        result = session.observe_tree()
+        root = result.roots[0]
+        assert root.visibility == "visible"
+        assert root.viewport_relation == "inside"
+        assert [child.visibility for child in root.children] == [
+            "visible",
+            "not_visible",
+        ]
+        assert [child.viewport_relation for child in root.children] == [
+            "inside",
+            "outside_right",
+        ]
+        payload = document(result)["payload"]["roots"][0]
+        assert "accessible" not in payload
+        assert all("accessible" not in child for child in payload["children"])
+        session.quit()
+
+
+def test_ios_diagonal_offscreen_geometry_is_not_visible_without_direction(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.source = (
+        '<AppiumAUT><XCUIElementTypeApplication name="app" enabled="true" '
+        'x="0" y="0" width="402" height="874" index="0">'
+        '<XCUIElementTypeButton name="diagonal" enabled="true" '
+        'x="442" y="1278" width="200" height="270" index="1"/>'
+        "</XCUIElementTypeApplication></AppiumAUT>"
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        result = session.observe_tree()
+        observed = result.roots[0].children[0]
+        assert observed.viewport_relation == "unknown"
+        assert observed.visibility == "not_visible"
+        payload = document(result)["payload"]["roots"][0]["children"][0]
+        assert payload["viewport_relation"] == "unknown"
+        assert payload["visible"] == "not_visible"
+        session.quit()
+
+
 def test_ios_structure_local_name_and_invalid_viewport(
     service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
