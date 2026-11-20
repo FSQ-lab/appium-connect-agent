@@ -138,6 +138,31 @@ _Result = TypeVar("_Result")
 _ALLOWED_CAPABILITIES = frozenset({"appium:deviceName", "appium:platformVersion"})
 _MAC_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,254}")
 _MAX_JSON_SAFE_INTEGER = 9_007_199_254_740_991
+_XCUITEST_PAGE_SOURCE_ATTRIBUTES = frozenset(
+    {
+        "type",
+        "value",
+        "name",
+        "label",
+        "enabled",
+        "visible",
+        "accessible",
+        "nativeAccessibilityElement",
+        "focused",
+        "x",
+        "y",
+        "width",
+        "height",
+        "index",
+        "hittable",
+        "placeholderValue",
+        "traits",
+        "nativeFrame",
+        "minValue",
+        "maxValue",
+        "customActions",
+    }
+)
 
 _DEFAULT_NEW_COMMAND_TIMEOUT_SECONDS: float = 900.0
 _CAPABILITY_ALIASES: dict[str, str] = {
@@ -561,11 +586,46 @@ def _validate_xcuitest_seconds_policy(value: object, operation_id: str) -> float
     if (
         isinstance(value, bool)
         or not isinstance(value, (int, float))
-        or not math.isfinite(value)
         or not 0.0 <= value <= 600.0
+        or not math.isfinite(value)
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     return float(value)
+
+
+def _validate_xcuitest_page_source_excluded_attributes(
+    value: object, operation_id: str
+) -> tuple[str, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    try:
+        count = len(value)
+        if not 1 <= count <= 21:
+            raise ValueError
+        result: list[str] = []
+        seen: set[str] = set()
+        for index in range(count):
+            item = value[index]
+            if not isinstance(item, str):
+                raise ValueError
+            attribute = str(item)
+            if attribute not in _XCUITEST_PAGE_SOURCE_ATTRIBUTES or attribute in seen:
+                raise ValueError
+            seen.add(attribute)
+            result.append(attribute)
+        try:
+            value[count]
+        except IndexError:
+            pass
+        else:
+            raise ValueError
+    except Exception:
+        raise InvalidRequestError(
+            "invalid_argument", operation_id, "not_sent"
+        ) from None
+    return tuple(result)
 
 
 def _validate_xcuitest_request(
@@ -586,6 +646,8 @@ def _validate_xcuitest_request(
     xcuitest_wait_for_idle_timeout_seconds: object,
     xcuitest_snapshot_max_depth: object,
     xcuitest_accessibility_deadline_seconds: object,
+    xcuitest_animation_cool_off_timeout_seconds: object,
+    xcuitest_page_source_excluded_attributes: object,
     new_command_timeout_seconds: object,
 ) -> tuple[
     str,
@@ -598,6 +660,8 @@ def _validate_xcuitest_request(
     float | None,
     int | None,
     float | None,
+    float | None,
+    tuple[str, ...] | None,
     float,
 ]:
     if (
@@ -658,6 +722,14 @@ def _validate_xcuitest_request(
     valid_accessibility_deadline = _validate_xcuitest_seconds_policy(
         xcuitest_accessibility_deadline_seconds, operation_id
     )
+    valid_animation_cool_off_timeout = _validate_xcuitest_seconds_policy(
+        xcuitest_animation_cool_off_timeout_seconds, operation_id
+    )
+    valid_page_source_excluded_attributes = (
+        _validate_xcuitest_page_source_excluded_attributes(
+            xcuitest_page_source_excluded_attributes, operation_id
+        )
+    )
     timeout = new_command_timeout_seconds
     if (
         isinstance(timeout, bool)
@@ -677,6 +749,8 @@ def _validate_xcuitest_request(
         valid_idle_timeout,
         xcuitest_snapshot_max_depth,
         valid_accessibility_deadline,
+        valid_animation_cool_off_timeout,
+        valid_page_source_excluded_attributes,
         float(timeout),
     )
 
@@ -699,6 +773,8 @@ def _build_xcuitest_options(
     xcuitest_wait_for_idle_timeout_seconds: float | None,
     xcuitest_snapshot_max_depth: int | None,
     xcuitest_accessibility_deadline_seconds: float | None,
+    xcuitest_animation_cool_off_timeout_seconds: float | None,
+    xcuitest_page_source_excluded_attributes: tuple[str, ...] | None,
     new_command_timeout_seconds: float,
     wda_local_port: int,
     derived_data_path: str,
@@ -729,6 +805,14 @@ def _build_xcuitest_options(
         "appium:settings[snapshotMaxDepth]": xcuitest_snapshot_max_depth,
         "appium:settings[accessibilityDeadline]": (
             xcuitest_accessibility_deadline_seconds
+        ),
+        "appium:settings[animationCoolOffTimeout]": (
+            xcuitest_animation_cool_off_timeout_seconds
+        ),
+        "appium:settings[pageSourceExcludedAttributes]": (
+            None
+            if xcuitest_page_source_excluded_attributes is None
+            else ",".join(xcuitest_page_source_excluded_attributes)
         ),
     }
     capabilities.update(
@@ -1034,6 +1118,8 @@ class Session:
     _xcode_org_id: str | None
     _xcode_signing_id: str | None
     _xcuitest_accessibility_deadline_seconds: float | None
+    _xcuitest_animation_cool_off_timeout_seconds: float | None
+    _xcuitest_page_source_excluded_attributes: tuple[str, ...] | None
     _xcuitest_snapshot_max_depth: int | None
     _xcuitest_wait_for_idle_timeout_seconds: float | None
 
@@ -1065,6 +1151,8 @@ class Session:
         "_xcode_org_id",
         "_xcode_signing_id",
         "_xcuitest_accessibility_deadline_seconds",
+        "_xcuitest_animation_cool_off_timeout_seconds",
+        "_xcuitest_page_source_excluded_attributes",
         "_xcuitest_snapshot_max_depth",
         "_xcuitest_wait_for_idle_timeout_seconds",
     )
@@ -1106,6 +1194,8 @@ class Session:
         instance._xcuitest_wait_for_idle_timeout_seconds = None
         instance._xcuitest_snapshot_max_depth = None
         instance._xcuitest_accessibility_deadline_seconds = None
+        instance._xcuitest_animation_cool_off_timeout_seconds = None
+        instance._xcuitest_page_source_excluded_attributes = None
         instance._state_lock = Lock()
         instance._operation_gate = Lock()
         return instance
@@ -1207,6 +1297,12 @@ class Session:
                 xcuitest_snapshot_max_depth=self._xcuitest_snapshot_max_depth,
                 xcuitest_accessibility_deadline_seconds=(
                     self._xcuitest_accessibility_deadline_seconds
+                ),
+                xcuitest_animation_cool_off_timeout_seconds=(
+                    self._xcuitest_animation_cool_off_timeout_seconds
+                ),
+                xcuitest_page_source_excluded_attributes=(
+                    self._xcuitest_page_source_excluded_attributes
                 ),
                 new_command_timeout_seconds=self._new_command_timeout_seconds,
                 wda_local_port=self._reservation.system_port,
@@ -2787,6 +2883,8 @@ def _create_xcuitest_session(
     xcuitest_wait_for_idle_timeout_seconds: float | None = None,
     xcuitest_snapshot_max_depth: int | None = None,
     xcuitest_accessibility_deadline_seconds: float | None = None,
+    xcuitest_animation_cool_off_timeout_seconds: float | None = None,
+    xcuitest_page_source_excluded_attributes: Sequence[str] | None = None,
     new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
@@ -2803,6 +2901,8 @@ def _create_xcuitest_session(
         valid_idle_timeout,
         valid_snapshot_max_depth,
         valid_accessibility_deadline,
+        valid_animation_cool_off_timeout,
+        valid_page_source_excluded_attributes,
         valid_timeout,
     ) = _validate_xcuitest_request(
         operation_id,
@@ -2822,6 +2922,8 @@ def _create_xcuitest_session(
         xcuitest_wait_for_idle_timeout_seconds,
         xcuitest_snapshot_max_depth,
         xcuitest_accessibility_deadline_seconds,
+        xcuitest_animation_cool_off_timeout_seconds,
+        xcuitest_page_source_excluded_attributes,
         new_command_timeout_seconds,
     )
     server_url = _active_server_url(connection, operation_id)
@@ -2866,6 +2968,12 @@ def _create_xcuitest_session(
     session._xcuitest_wait_for_idle_timeout_seconds = valid_idle_timeout
     session._xcuitest_snapshot_max_depth = valid_snapshot_max_depth
     session._xcuitest_accessibility_deadline_seconds = valid_accessibility_deadline
+    session._xcuitest_animation_cool_off_timeout_seconds = (
+        valid_animation_cool_off_timeout
+    )
+    session._xcuitest_page_source_excluded_attributes = (
+        valid_page_source_excluded_attributes
+    )
     try:
         client = _new_connection(server_url)
         session._client = client
@@ -2892,6 +3000,12 @@ def _create_xcuitest_session(
             xcuitest_wait_for_idle_timeout_seconds=valid_idle_timeout,
             xcuitest_snapshot_max_depth=valid_snapshot_max_depth,
             xcuitest_accessibility_deadline_seconds=valid_accessibility_deadline,
+            xcuitest_animation_cool_off_timeout_seconds=(
+                valid_animation_cool_off_timeout
+            ),
+            xcuitest_page_source_excluded_attributes=(
+                valid_page_source_excluded_attributes
+            ),
             new_command_timeout_seconds=valid_timeout,
             wda_local_port=reservation.system_port,
             derived_data_path=derived_data_path,
@@ -2968,6 +3082,8 @@ def create_xcuitest_session(
     xcuitest_wait_for_idle_timeout_seconds: float | None = None,
     xcuitest_snapshot_max_depth: int | None = None,
     xcuitest_accessibility_deadline_seconds: float | None = None,
+    xcuitest_animation_cool_off_timeout_seconds: float | None = None,
+    xcuitest_page_source_excluded_attributes: Sequence[str] | None = None,
     new_command_timeout_seconds: float = 900.0,
     control: OperationControl | None = None,
 ) -> Session:
@@ -2995,6 +3111,12 @@ def create_xcuitest_session(
             xcuitest_snapshot_max_depth=xcuitest_snapshot_max_depth,
             xcuitest_accessibility_deadline_seconds=(
                 xcuitest_accessibility_deadline_seconds
+            ),
+            xcuitest_animation_cool_off_timeout_seconds=(
+                xcuitest_animation_cool_off_timeout_seconds
+            ),
+            xcuitest_page_source_excluded_attributes=(
+                xcuitest_page_source_excluded_attributes
             ),
             new_command_timeout_seconds=new_command_timeout_seconds,
             control=control,

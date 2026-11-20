@@ -7,7 +7,7 @@ import socketserver
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import FrozenInstanceError, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -2460,6 +2460,61 @@ class _IntSubclass(int):
     pass
 
 
+class _AttributeSequence:
+    def __init__(
+        self,
+        items: tuple[str, ...],
+        *,
+        declared_length: int | None = None,
+        length_error: Exception | None = None,
+        item_error_index: int | None = None,
+    ) -> None:
+        self._items = items
+        self._declared_length = (
+            len(items) if declared_length is None else declared_length
+        )
+        self._length_error = length_error
+        self._item_error_index = item_error_index
+
+    def __len__(self) -> int:
+        if self._length_error is not None:
+            raise self._length_error
+        return self._declared_length
+
+    def __getitem__(self, index: int) -> str:
+        if index == self._item_error_index:
+            raise RuntimeError("private-item-canary")
+        return self._items[index]
+
+
+Sequence.register(_AttributeSequence)
+
+
+_WDA_XML_ATTRIBUTES = (
+    "type",
+    "value",
+    "name",
+    "label",
+    "enabled",
+    "visible",
+    "accessible",
+    "nativeAccessibilityElement",
+    "focused",
+    "x",
+    "y",
+    "width",
+    "height",
+    "index",
+    "hittable",
+    "placeholderValue",
+    "traits",
+    "nativeFrame",
+    "minValue",
+    "maxValue",
+    "customActions",
+)
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -2483,11 +2538,132 @@ class _IntSubclass(int):
         {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": float("-inf")},
         {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": -0.001},
         {"udid": "DEVICE", "xcuitest_accessibility_deadline_seconds": 600.001},
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": cast(Any, True),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": cast(Any, "10"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": float("nan"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": float("-inf"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": -0.001,
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": 600.001,
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": 10**1000,
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_animation_cool_off_timeout_seconds": -(10**1000),
+        },
+        {"udid": "DEVICE", "xcuitest_page_source_excluded_attributes": []},
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(Any, "visible"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(Any, b"visible"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(Any, {"visible"}),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": ("visible", "visible"),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": ("",),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": ("Visible",),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": ("displayed",),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(Any, (1,)),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": (
+                *_WDA_XML_ATTRIBUTES,
+                "visible",
+            ),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(
+                Any,
+                _AttributeSequence(
+                    ("visible",), length_error=RuntimeError("private-length-canary")
+                ),
+            ),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(
+                Any, _AttributeSequence(("visible",), item_error_index=0)
+            ),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(
+                Any, _AttributeSequence((), declared_length=1)
+            ),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(
+                Any,
+                _AttributeSequence(("visible", "accessible"), declared_length=1),
+            ),
+        },
+        {
+            "udid": "DEVICE",
+            "xcuitest_page_source_excluded_attributes": cast(
+                Any,
+                _AttributeSequence(
+                    (*_WDA_XML_ATTRIBUTES, "visible"), declared_length=21
+                ),
+            ),
+        },
     ],
 )
 def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservation(
-    service: ProtocolService, kwargs: dict[str, Any]
+    service: ProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, Any],
 ) -> None:
+    monkeypatch.setattr(
+        session_module,
+        "_active_server_url",
+        lambda *args: pytest.fail("active URL read for invalid policy"),
+    )
+    monkeypatch.setattr(
+        session_module,
+        "_reserve_xcuitest",
+        lambda *args: pytest.fail("reservation for invalid policy"),
+    )
     with (
         managed_connection(service) as (connection, owner),
         pytest.raises(InvalidRequestError) as caught,
@@ -2496,6 +2672,8 @@ def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservat
     assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+    assert "private-" not in repr(caught.value)
+    assert "private-" not in str(caught.value)
     assert owner.events == []
     assert owner.count == 0
     assert service.lifecycle_requests() == []
@@ -2513,11 +2691,15 @@ def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservat
                 "xcuitest_wait_for_idle_timeout_seconds": 0,
                 "xcuitest_snapshot_max_depth": 1,
                 "xcuitest_accessibility_deadline_seconds": 0,
+                "xcuitest_animation_cool_off_timeout_seconds": 0,
+                "xcuitest_page_source_excluded_attributes": ("visible",),
             },
             {
                 "appium:waitForIdleTimeout": 0.0,
                 "appium:settings[snapshotMaxDepth]": 1,
                 "appium:settings[accessibilityDeadline]": 0.0,
+                "appium:settings[animationCoolOffTimeout]": 0.0,
+                "appium:settings[pageSourceExcludedAttributes]": "visible",
             },
         ),
         (
@@ -2525,11 +2707,18 @@ def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservat
                 "xcuitest_wait_for_idle_timeout_seconds": 2.0,
                 "xcuitest_snapshot_max_depth": 25,
                 "xcuitest_accessibility_deadline_seconds": 10.0,
+                "xcuitest_animation_cool_off_timeout_seconds": 3.5,
+                "xcuitest_page_source_excluded_attributes": (
+                    "visible",
+                    "accessible",
+                ),
             },
             {
                 "appium:waitForIdleTimeout": 2.0,
                 "appium:settings[snapshotMaxDepth]": 25,
                 "appium:settings[accessibilityDeadline]": 10.0,
+                "appium:settings[animationCoolOffTimeout]": 3.5,
+                "appium:settings[pageSourceExcludedAttributes]": ("visible,accessible"),
             },
         ),
         (
@@ -2537,11 +2726,17 @@ def test_xcuitest_initial_policy_invalid_values_reject_before_usage_and_reservat
                 "xcuitest_wait_for_idle_timeout_seconds": 600,
                 "xcuitest_snapshot_max_depth": 500,
                 "xcuitest_accessibility_deadline_seconds": 600.0,
+                "xcuitest_animation_cool_off_timeout_seconds": 600,
+                "xcuitest_page_source_excluded_attributes": _WDA_XML_ATTRIBUTES,
             },
             {
                 "appium:waitForIdleTimeout": 600.0,
                 "appium:settings[snapshotMaxDepth]": 500,
                 "appium:settings[accessibilityDeadline]": 600.0,
+                "appium:settings[animationCoolOffTimeout]": 600.0,
+                "appium:settings[pageSourceExcludedAttributes]": ",".join(
+                    _WDA_XML_ATTRIBUTES
+                ),
             },
         ),
     ],
@@ -2565,10 +2760,55 @@ def test_xcuitest_initial_policies_serialize_without_extra_settings_requests(
         assert "appium:waitForIdleTimeout" not in caps
         assert "appium:settings[snapshotMaxDepth]" not in caps
         assert "appium:settings[accessibilityDeadline]" not in caps
+        assert "appium:settings[animationCoolOffTimeout]" not in caps
+        assert "appium:settings[pageSourceExcludedAttributes]" not in caps
     else:
         for key, expected in expected_extra.items():
             assert caps[key] == expected
             assert type(caps[key]) is type(expected)
+
+
+@pytest.mark.parametrize("attribute", _WDA_XML_ATTRIBUTES)
+def test_xcuitest_accepts_each_wda_page_source_excluded_attribute(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attribute: str,
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            f"ATTRIBUTE-{attribute}",
+            xcuitest_page_source_excluded_attributes=(attribute,),
+        )
+        session.quit()
+    requests = service.lifecycle_requests()
+    assert [request.method for request in requests] == ["POST", "DELETE"]
+    assert (
+        appium_caps(requests[0])["appium:settings[pageSourceExcludedAttributes]"]
+        == attribute
+    )
+
+
+def test_xcuitest_preserves_well_behaved_custom_attribute_sequence_order(
+    service: ProtocolService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_private_tmp(tmp_path, monkeypatch)
+    attributes = cast(Any, _AttributeSequence(("accessible", "visible", "nativeFrame")))
+    with connected(service) as connection:
+        session = create_xcuitest_session(
+            connection,
+            "CUSTOM-SEQUENCE",
+            xcuitest_page_source_excluded_attributes=attributes,
+        )
+        session.quit()
+    caps = appium_caps(service.lifecycle_requests()[0])
+    assert caps["appium:settings[pageSourceExcludedAttributes]"] == (
+        "accessible,visible,nativeFrame"
+    )
 
 
 def test_xcuitest_acquires_usage_before_reserving_wda_port(
