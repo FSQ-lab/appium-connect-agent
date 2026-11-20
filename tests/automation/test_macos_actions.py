@@ -653,7 +653,6 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
             app_path=app,
             arguments=[secret_arg],
             no_reset=False,
-            skip_app_kill=None,
             show_server_logs=True,
             server_startup_timeout_ms=15_000,
             new_command_timeout_seconds=720.0,
@@ -671,6 +670,10 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
 
         creates = service.of_kind("create")
         assert len(creates) == 3
+        initial_caps = cast(dict[str, Any], creates[0].body)["capabilities"][
+            "alwaysMatch"
+        ]
+        assert initial_caps["appium:skipAppKill"] is True
         reattach_caps = cast(dict[str, Any], creates[1].body)["capabilities"][
             "alwaysMatch"
         ]
@@ -731,6 +734,10 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
             bundle_id="com.apple.calculator",
             skip_app_kill=False,
         )
+        explicit_initial_caps = cast(
+            dict[str, Any], service.of_kind("create")[-1].body
+        )["capabilities"]["alwaysMatch"]
+        assert explicit_initial_caps["appium:skipAppKill"] is False
         assert explicit_session.ensure_alive() is True
         explicit_reattach_caps = cast(
             dict[str, Any], service.of_kind("create")[-1].body

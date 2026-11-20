@@ -458,9 +458,11 @@ def _validate_mac2_request(
     valid_arguments = _validate_launch_arguments(arguments, operation_id)
     if valid_arguments is not None and bundle_id is None and valid_path is None:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    if type(no_reset) is not bool or type(show_server_logs) is not bool:
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    if skip_app_kill is not None and type(skip_app_kill) is not bool:
+    if (
+        type(no_reset) is not bool
+        or type(skip_app_kill) is not bool
+        or type(show_server_logs) is not bool
+    ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if server_startup_timeout_ms is not None and (
         type(server_startup_timeout_ms) is not int
@@ -484,7 +486,7 @@ def _build_mac2_options(
     app_path: str | None,
     arguments: list[str] | None,
     no_reset: bool,
-    skip_app_kill: bool | None,
+    skip_app_kill: bool,
     show_server_logs: bool,
     server_startup_timeout_ms: int | None,
     new_command_timeout_seconds: float,
@@ -496,6 +498,7 @@ def _build_mac2_options(
         "appium:systemHost": "127.0.0.1",
         "appium:systemPort": system_port,
         "appium:noReset": no_reset,
+        "appium:skipAppKill": skip_app_kill,
         "appium:showServerLogs": show_server_logs,
         "appium:newCommandTimeout": new_command_timeout_seconds,
     }
@@ -503,7 +506,6 @@ def _build_mac2_options(
         "appium:bundleId": bundle_id,
         "appium:appPath": app_path,
         "appium:arguments": arguments,
-        "appium:skipAppKill": skip_app_kill,
         "appium:serverStartupTimeout": server_startup_timeout_ms,
     }
     capabilities.update(
@@ -1102,7 +1104,7 @@ class Session:
     _server_startup_timeout_ms: int | None
     _show_server_logs: bool
     _show_xcode_log: bool
-    _skip_app_kill: bool | None
+    _skip_app_kill: bool
     _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
@@ -1186,7 +1188,7 @@ class Session:
         instance._server_startup_timeout_ms = None
         instance._show_server_logs = False
         instance._show_xcode_log = False
-        instance._skip_app_kill = None
+        instance._skip_app_kill = True
         instance._updated_wda_bundle_id = None
         instance._wda_launch_timeout_ms = None
         instance._xcode_org_id = None
@@ -1265,9 +1267,7 @@ class Session:
                 app_path=None,
                 arguments=None,
                 no_reset=True,
-                skip_app_kill=(
-                    True if self._skip_app_kill is None else self._skip_app_kill
-                ),
+                skip_app_kill=self._skip_app_kill,
                 show_server_logs=self._show_server_logs,
                 server_startup_timeout_ms=self._server_startup_timeout_ms,
                 new_command_timeout_seconds=self._new_command_timeout_seconds,
@@ -2706,7 +2706,7 @@ def _create_mac2_session(
     app_path: Path | None = None,
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
-    skip_app_kill: bool | None = None,
+    skip_app_kill: bool = True,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,
@@ -2837,7 +2837,7 @@ def create_mac2_session(
     app_path: Path | None = None,
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
-    skip_app_kill: bool | None = None,
+    skip_app_kill: bool = True,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,

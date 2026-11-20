@@ -1961,6 +1961,8 @@ def test_mac2_capabilities_single_host_and_android_independence(
         mac.quit()
         replacement = create_mac2_session(connection)
         replacement.quit()
+        explicit_kill = create_mac2_session(connection, skip_app_kill=False)
+        explicit_kill.quit()
         android.quit()
 
     creates = [
@@ -1980,8 +1982,26 @@ def test_mac2_capabilities_single_host_and_android_independence(
         "appium:systemPort": 10100,
     }
     assert appium_caps(creates[1])["appium:systemPort"] == 8200
-    assert appium_caps(creates[2])["appium:systemPort"] == 10100
-    assert appium_caps(creates[2])["appium:newCommandTimeout"] == 900.0
+    assert appium_caps(creates[2]) == {
+        "platformName": "Mac",
+        "appium:automationName": "Mac2",
+        "appium:newCommandTimeout": 900.0,
+        "appium:noReset": True,
+        "appium:showServerLogs": False,
+        "appium:skipAppKill": True,
+        "appium:systemHost": "127.0.0.1",
+        "appium:systemPort": 10100,
+    }
+    assert appium_caps(creates[3]) == {
+        "platformName": "Mac",
+        "appium:automationName": "Mac2",
+        "appium:newCommandTimeout": 900.0,
+        "appium:noReset": True,
+        "appium:showServerLogs": False,
+        "appium:skipAppKill": False,
+        "appium:systemHost": "127.0.0.1",
+        "appium:systemPort": 10100,
+    }
 
 
 @pytest.mark.parametrize(
@@ -2044,7 +2064,10 @@ def test_mac2_app_bundle_and_inputs_are_validated_before_request(
             {"arguments": []},
             {"arguments": ["x"], "bundle_id": None},
             {"no_reset": 1},
+            {"skip_app_kill": None},
             {"skip_app_kill": 0},
+            {"skip_app_kill": 1},
+            {"skip_app_kill": "true"},
             {"show_server_logs": 0},
             {"server_startup_timeout_ms": 999},
             {"new_command_timeout_seconds": True},

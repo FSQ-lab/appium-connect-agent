@@ -641,7 +641,7 @@ INT-MCP-01至INT-MCP-05均在各自feature限定范围Done且无开放finding；
 
 ### Multi-platform session and tools
 
-- `session.open` 是以显式 `platform=android|macos` 判别的 closed union。Android 分支调用公开 `create_session`；macOS 分支调用公开 `create_mac2_session`，接受已验证的 bundle ID、词法绝对 `.app` 路径、arguments、reset/kill 与 command-timeout 参数。Session entry、status、close 与 tombstone 全程保存并返回平台；Mac2 的设备 ID 固定为 `macos:local`。
+- `session.open` 是以显式 `platform=android|macos` 判别的 closed union。Android 分支调用公开 `create_session`；macOS 分支调用公开 `create_mac2_session`，接受已验证的 bundle ID、词法绝对 `.app` 路径、arguments、reset/kill（`skip_app_kill` 省略或为 `null` 时按 `True` 透传，显式 `false` 关闭保护）与 command-timeout 参数。Session entry、status、close 与 tombstone 全程保存并返回平台；Mac2 的设备 ID 固定为 `macos:local`。
 - Locator 支持 `id`、`accessibility_id`、`xpath`、`name`、`class_name`、`ios_predicate_string`、`ios_class_chain` 与可选 predicate，并原样交给 Automation 公开 Interface 权威校验。Android observation locator 文档继续省略 predicate 键；Mac2 文档保留显式 `predicate: null|string`。
 - click 固定五分支并支持 modifier flags；gesture 固定六分支；application lifecycle 固定 activate、terminate、query_state、launch 四分支。Android-only Device/package 工具在 Mac2 Session 上零下层 I/O 返回 `unsupported_operation/not_sent`，`macos.keys` 在 Android Session 上同样拒绝；observation、Element 通用操作、lifecycle、screenshot 与 pointer 可跨平台使用。
 - screenshot 只返回 Base64 PNG；原始 PNG 上限精确为 3,000,000 bytes，超限返回 `screenshot_too_large/response_received` 且 `completed_steps=[screenshot_captured]`。pointer 固定 tap、click、hover、scroll、drag 五分支且不回显坐标；macOS keys 固定 system/element 两分支、精确 46 个已确认 named key 与单字符 key，不回显按键或 locator。

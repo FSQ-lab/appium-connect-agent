@@ -1821,7 +1821,11 @@ class Application:
                         ),
                         arguments=request.arguments,
                         no_reset=request.no_reset,
-                        skip_app_kill=request.skip_app_kill,
+                        skip_app_kill=(
+                            True
+                            if request.skip_app_kill is None
+                            else request.skip_app_kill
+                        ),
                         show_server_logs=False,
                         server_startup_timeout_ms=None,
                         new_command_timeout_seconds=request.new_command_timeout_seconds,
