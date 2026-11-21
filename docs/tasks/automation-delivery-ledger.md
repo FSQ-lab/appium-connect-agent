@@ -1,12 +1,12 @@
 # Automation 需求交接台账
 
-当前进度更新：2026-11-21。下文按时间倒序保留最新三平台 SDK 对齐及历史交付记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
+当前进度更新：2026-11-19。下文按时间倒序保留最新三平台 SDK 对齐及历史交付记录；需求入口见[整理稿](../superpowers/specs/2026-10-22-automation-requirements-design.md)。
 
-## 当前三平台 SDK 对齐与 Integrations 22 工具同源矩阵进度（Issues #31–#66）
+## 当前三平台 SDK 对齐与 Integrations 22 工具同源矩阵进度（Issues #31–#58）
+
 - **macOS Desktop (`mac2@4.6.1`)**：
   - `AUTO-MAC-01A`（#32）与 `AUTO-MAC-01B`（#34）交付 `create_mac2_session`、XCUI 结构观测、桌面指针/滚轮/组合键、剪贴板、弹窗及 `.app` 生命周期，并经 #35（`INT-MAC-01`）合入 22 工具三壳矩阵与真实 Calculator 三壳冒烟。
   - `AUTO-MAC-02`（Issue #58，2026-11-19）：对齐单显示器 `Device.display_size()`（`macos: listDisplays` 严格校验 `len==1`、`isMain is True`、`rect.x==0`、`rect.y==0` 与严格 `int` 正宽高，多屏或畸形响应 fail-closed）、单显示器 `Device.inspect_with_ai(..., mode="locate")`（1x/2x Retina 正整数倍等比映射，多屏或比例失配于 provider 前 fail-closed `pointer_mapping_unavailable`）、`Device.device_time()`（`macos: listDisplays` 活跃门禁 + 本机带时区墙钟 ISO-8601）、`create_mac2_session` 默认 `900.0s` 与死会话 `Mac2Options` 无损重连及异常脱敏（`Device.swipe` 维持移动专属 `unsupported_operation/not_sent`）。全仓静态门禁、3,381+4 项未过滤/增量 pytest、`uv build` + 离线双隔离 venv 分发校验、本机受管 Appium `3.7.0` + `mac2@4.6.1` + `com.apple.calculator` 真实冒烟，以及独立 `spec-implementation-audit`（`AUTO-MAC02-FULL-AUDIT-01` -> `AUTO-MAC02-REPAIR-AUDIT-01` `pass`，`AUTO-MAC02-001` closed，0 open findings）全部通过。判定 **AUTO-MAC-02 限定范围 Done**。
-  - `AUTO-MAC-03` / `AUTO-MAC-04`（Issue #66，2026-11-21）：`create_mac2_session` 默认 `skip_app_kill=True` 保护宿主常驻桌面应用（`AUTO-MAC03-FULL-AUDIT-01` `pass`，0 open findings）；`create_mac2_session` 与 `Device.launch_app` 支持通过 `resolve(strict=True)` 解析合法符号链接 `.app`（Homebrew Cask / Nix 链接）并严格校验解析目标与非 symlink `Contents/Info.plist`；新增公开只读入口 `frontmost_macos_app`（有界 `/usr/bin/lsappinfo` 前台 Foreground 应用识别并排除系统锁屏/鉴权守护）与零子进程 `resolve_macos_app_bundle`（标准库 `plistlib` 解析显式 `.app` 路径或标准目录应用名，保留 FD 关闭故障 `cleanup_errors`）；三平台 `Session.ensure_alive()`/`ping()` 支持从已建立远端会话的 `uncertain` 状态通过公开 `webdriver.Remote` 绑定新鲜连接池（严格先确认旧连接池关闭）探活自愈或无损重连；Mac2 `observe_tree` 在可见/视口外过滤后仍超 `524,288` bytes 时执行自底向上逐层深度裁剪后再兜底 `observation_too_large`。全仓静态门禁、3,466 项未过滤 pytest、`uv build --offline` + 双隔离 venv 分发校验及独立 `spec-implementation-audit`（`AUTO-MAC04-FULL-AUDIT-01` -> `AUTO-MAC04-REPAIR-AUDIT-01` -> `AUTO-MAC04-REPAIR-AUDIT-02` `pass`，`AUTO-MAC04-001..004` 全部 closed，0 open findings）通过。
 - **iOS Simulator & Real Device (`xcuitest@12.22.8`)**：
   - `AUTO-IOS-01A`（#40）、`AUTO-IOS-01B`（#41）与 `INT-IOS-01`（#42）交付 `list_ios_devices`、`create_xcuitest_session`、XCUI 观测与动作、22 工具三壳矩阵、真实 FSQ OpenAI strict + Gemini 转换器门禁及 Booted Simulator 三壳端到端验收；`AUTO-IOS-02`（#53，PR #57）补齐 iOS `display_size`、安全区 `swipe`、`inspect_with_ai(locate)`、`device_time` 与 900s 无损 `XCUITestOptions` 重连（物理 iPhone 真机 WDA 签名链路保持 `device-validation-blocked`）。
 - **Android Native (`uiautomator2@8.7.0`)**：

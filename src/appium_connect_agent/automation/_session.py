@@ -86,13 +86,6 @@ from ._macos_actions import (
     _validate_velocity,
 )
 from ._macos_keyboard import MacKeyStroke
-from ._macos_native_ax import (
-    _DEFAULT_AX_MAX_DEPTH,
-    _DEFAULT_AX_MAX_NODES,
-    _DEFAULT_AX_TIMEOUT_SECONDS,
-    _observe_macos_ax_with_gateway,
-    _validate_ax_request_params,
-)
 from ._models import (
     AutomationError,
     AutomationPlatform,
@@ -116,7 +109,6 @@ from ._models import (
 from ._observation import (
     _inspect_element,
     _inspect_structure,
-    _mac2_viewport,
     _observe_tree,
     _validate_attributes,
     _validate_tree_parent,
@@ -454,7 +446,6 @@ def _validate_mac2_request(
     arguments: object,
     no_reset: object,
     skip_app_kill: object,
-    prefer_native_ax: object,
     show_server_logs: object,
     server_startup_timeout_ms: object,
     new_command_timeout_seconds: object,
@@ -467,12 +458,9 @@ def _validate_mac2_request(
     valid_arguments = _validate_launch_arguments(arguments, operation_id)
     if valid_arguments is not None and bundle_id is None and valid_path is None:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    if (
-        type(no_reset) is not bool
-        or type(skip_app_kill) is not bool
-        or type(prefer_native_ax) is not bool
-        or type(show_server_logs) is not bool
-    ):
+    if type(no_reset) is not bool or type(show_server_logs) is not bool:
+        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+    if skip_app_kill is not None and type(skip_app_kill) is not bool:
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
     if server_startup_timeout_ms is not None and (
         type(server_startup_timeout_ms) is not int
@@ -496,7 +484,7 @@ def _build_mac2_options(
     app_path: str | None,
     arguments: list[str] | None,
     no_reset: bool,
-    skip_app_kill: bool,
+    skip_app_kill: bool | None,
     show_server_logs: bool,
     server_startup_timeout_ms: int | None,
     new_command_timeout_seconds: float,
@@ -508,7 +496,6 @@ def _build_mac2_options(
         "appium:systemHost": "127.0.0.1",
         "appium:systemPort": system_port,
         "appium:noReset": no_reset,
-        "appium:skipAppKill": skip_app_kill,
         "appium:showServerLogs": show_server_logs,
         "appium:newCommandTimeout": new_command_timeout_seconds,
     }
@@ -516,6 +503,7 @@ def _build_mac2_options(
         "appium:bundleId": bundle_id,
         "appium:appPath": app_path,
         "appium:arguments": arguments,
+        "appium:skipAppKill": skip_app_kill,
         "appium:serverStartupTimeout": server_startup_timeout_ms,
     }
     capabilities.update(
@@ -855,31 +843,6 @@ class _SessionWebDriver(webdriver.Remote):
         self.error_handler = _CreateErrorHandler(connection)
 
 
-class _BoundSessionWebDriver(webdriver.Remote):
-    """Binds a fresh public Appium WebDriver instance to an existing remote Session ID."""
-
-    def __init__(
-        self,
-        *,
-        command_executor: _LifecycleConnection,
-        options: Mac2Options | UiAutomator2Options | XCUITestOptions,
-        existing_session_id: str,
-        existing_caps: Mapping[str, Any],
-    ) -> None:
-        self._prebound_session_id = existing_session_id
-        self._prebound_caps = dict(existing_caps)
-        super().__init__(command_executor=command_executor, options=options)
-
-    def start_session(
-        self,
-        capabilities: dict[str, Any] | Any,
-        browser_profile: str | None = None,
-    ) -> None:
-        del capabilities, browser_profile
-        self.session_id = self._prebound_session_id
-        self.caps = dict(self._prebound_caps)
-
-
 class _SessionOperationGateway:
     def __init__(
         self,
@@ -1139,8 +1102,7 @@ class Session:
     _server_startup_timeout_ms: int | None
     _show_server_logs: bool
     _show_xcode_log: bool
-    _prefer_native_ax: bool
-    _skip_app_kill: bool
+    _skip_app_kill: bool | None
     _platform: AutomationPlatform
     _id: str
     _operation_gate: Lock
@@ -1173,7 +1135,6 @@ class Session:
         "_new_command_timeout_seconds",
         "_operation_gate",
         "_platform",
-        "_prefer_native_ax",
         "_reservation",
         "_runtime_connection",
         "_runtime_usage",
@@ -1225,8 +1186,7 @@ class Session:
         instance._server_startup_timeout_ms = None
         instance._show_server_logs = False
         instance._show_xcode_log = False
-        instance._prefer_native_ax = False
-        instance._skip_app_kill = True
+        instance._skip_app_kill = None
         instance._updated_wda_bundle_id = None
         instance._wda_launch_timeout_ms = None
         instance._xcode_org_id = None
@@ -1295,21 +1255,8 @@ class Session:
         server_url = self._connection_is_active(operation_id)
         _checkpoint(control, deadline, operation_id)
         old_client = getattr(self, "_client", None)
-        if (
-            isinstance(old_client, _LifecycleConnection)
-            and not old_client.locally_closed
-        ):
-            cleanup_start = len(old_client.cleanup_errors)
-            old_client.force_close()
-            if not old_client.locally_closed:
-                cleanup_errors = old_client.cleanup_errors[cleanup_start:]
-                raise ResourceStateError(
-                    "cleanup_failed",
-                    operation_id,
-                    "not_sent",
-                    session=self,
-                    cleanup_errors=cleanup_errors,
-                )
+        if isinstance(old_client, _LifecycleConnection):
+            _close_client(old_client)
         client = _new_connection(server_url)
         options: Mac2Options | UiAutomator2Options | XCUITestOptions
         if self._platform == "macos":
@@ -1318,7 +1265,9 @@ class Session:
                 app_path=None,
                 arguments=None,
                 no_reset=True,
-                skip_app_kill=self._skip_app_kill,
+                skip_app_kill=(
+                    True if self._skip_app_kill is None else self._skip_app_kill
+                ),
                 show_server_logs=self._show_server_logs,
                 server_startup_timeout_ms=self._server_startup_timeout_ms,
                 new_command_timeout_seconds=self._new_command_timeout_seconds,
@@ -1449,11 +1398,10 @@ class Session:
         return driver
 
     def ensure_alive(self, *, control: OperationControl | None = None) -> bool:
-        """Probe this Session and non-destructively recover or re-attach if needed.
+        """Probe this Session and non-destructively re-attach if the remote Session died.
 
-        Returns True when an ``uncertain`` Session was restored to ``active`` or a
-        dead remote Session was re-attached, or False when an already ``active``
-        Session was healthy.
+        Returns True when a new Appium Session was re-attached, or False when the
+        existing Appium Session was already healthy.
         """
         operation_id, control, _, deadline = _new_operation(control)
         if not self._operation_gate.acquire(blocking=False):
@@ -1461,58 +1409,14 @@ class Session:
         try:
             with self._state_lock:
                 state = self._state
-                driver = self._driver
-                appium_session_id = self._appium_session_id
-            if state == "closed":
-                raise InvalidSessionStateError(
-                    "session_closed", operation_id, "not_sent"
-                )
-            if state not in ("active", "uncertain"):
-                raise InvalidSessionStateError(
-                    "session_invalid", operation_id, "not_sent"
-                )
-            was_uncertain = state == "uncertain"
-            if was_uncertain and (driver is None or appium_session_id is None):
-                raise InvalidSessionStateError(
-                    "session_invalid", operation_id, "not_sent"
-                )
-            server_url = self._connection_is_active(operation_id)
+            if state != "active":
+                code = "session_closed" if state == "closed" else "session_invalid"
+                raise InvalidSessionStateError(code, operation_id, "not_sent")
+            self._connection_is_active(operation_id)
             _checkpoint(control, deadline, operation_id)
+            driver = self._driver
             if driver is None:
                 raise RuntimeError("active Session has no Appium client")
-            if was_uncertain:
-                if appium_session_id is None:
-                    raise RuntimeError("uncertain Session recovery requires session ID")
-                old_client = self._client
-                if not old_client.locally_closed:
-                    cleanup_start = len(old_client.cleanup_errors)
-                    old_client.force_close()
-                    if not old_client.locally_closed:
-                        cleanup_errors = old_client.cleanup_errors[cleanup_start:]
-                        raise ResourceStateError(
-                            "cleanup_failed",
-                            operation_id,
-                            "not_sent",
-                            session=self,
-                            cleanup_errors=cleanup_errors,
-                        )
-                fresh_client = _new_connection(server_url)
-                rebind_options: Mac2Options | UiAutomator2Options | XCUITestOptions
-                if self._platform == "macos":
-                    rebind_options = Mac2Options()
-                elif self._platform == "ios":
-                    rebind_options = XCUITestOptions()
-                else:
-                    rebind_options = UiAutomator2Options()
-                driver = _BoundSessionWebDriver(
-                    command_executor=fresh_client,
-                    options=rebind_options,
-                    existing_session_id=appium_session_id,
-                    existing_caps=driver.caps,
-                )
-                with self._state_lock:
-                    self._client = fresh_client
-                    self._driver = driver
             gateway = _SessionOperationGateway(self, operation_id, control, deadline)
             try:
                 if self._platform == "macos":
@@ -1527,9 +1431,6 @@ class Session:
                     )
                 else:
                     gateway.request(driver.get_settings, "session_probed")
-                if was_uncertain:
-                    self._set_state("active")
-                    return True
                 return False
             except _DeadSessionError:
                 self._reattach_locked(operation_id, control, deadline)
@@ -1607,172 +1508,19 @@ class Session:
         self,
         *,
         parent: Element | None = None,
-        prefer_native_ax: bool | None = None,
-        bundle_id: str | None = None,
-        pid: int | None = None,
-        max_nodes: int | None = None,
-        max_depth: int | None = None,
         control: OperationControl | None = None,
     ) -> TreeObservation:
-        operation_id, control, started, deadline = _new_operation(control)
+        operation_id, control, _, deadline = _new_operation(control)
         valid_parent = (
             None
             if parent is None
             else _validate_tree_parent(parent, self, operation_id, self._platform)
         )
-        if prefer_native_ax is not None and type(prefer_native_ax) is not bool:
-            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-        resolved_max_nodes = _DEFAULT_AX_MAX_NODES if max_nodes is None else max_nodes
-        resolved_max_depth = _DEFAULT_AX_MAX_DEPTH if max_depth is None else max_depth
-        valid_bundle_id, valid_pid, valid_max_nodes, valid_max_depth, _ = (
-            _validate_ax_request_params(
-                operation_id,
-                bundle_id=bundle_id,
-                pid=pid,
-                max_nodes=resolved_max_nodes,
-                max_depth=resolved_max_depth,
-                timeout_seconds=None,
-            )
-        )
-        has_explicit_ax_args = (
-            prefer_native_ax is not None
-            or bundle_id is not None
-            or pid is not None
-            or max_nodes is not None
-            or max_depth is not None
-        )
-        if self._platform != "macos":
-            if has_explicit_ax_args:
-                raise InvalidRequestError(
-                    "unsupported_operation", operation_id, "not_sent"
-                )
-            return self._run_operation(
-                operation_id,
-                control,
-                deadline,
-                lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
-            )
-
-        has_ax_target_or_limits = (
-            valid_bundle_id is not None
-            or valid_pid is not None
-            or max_nodes is not None
-            or max_depth is not None
-        )
-        if prefer_native_ax is False and has_ax_target_or_limits:
-            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-
-        use_native_ax = (
-            True
-            if prefer_native_ax is True
-            else False
-            if prefer_native_ax is False
-            else (self._prefer_native_ax or has_ax_target_or_limits)
-        )
-        if use_native_ax:
-            effective_deadline = (
-                deadline
-                if deadline is not None
-                else started + _DEFAULT_AX_TIMEOUT_SECONDS
-            )
-
-            def _run_ax_tree(
-                driver: webdriver.Remote, gateway: _SessionOperationGateway
-            ) -> TreeObservation:
-                displays = gateway.request(
-                    lambda: driver.execute_script("macos: listDisplays"),
-                    "displays_read",
-                )
-                viewport = _mac2_viewport(displays, gateway)
-                return _observe_macos_ax_with_gateway(
-                    bundle_id=valid_bundle_id,
-                    pid=valid_pid,
-                    fallback_bundle_id=self._target_app_id,
-                    parent=valid_parent,
-                    max_nodes=valid_max_nodes,
-                    max_depth=valid_max_depth,
-                    control=control,
-                    deadline=effective_deadline,
-                    gateway=gateway,
-                    viewport=viewport,
-                )
-
-            return self._run_operation(
-                operation_id,
-                control,
-                effective_deadline,
-                _run_ax_tree,
-            )
-
         return self._run_operation(
             operation_id,
             control,
             deadline,
             lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
-        )
-
-    def observe_macos_ax_tree(
-        self,
-        *,
-        parent: Element | None = None,
-        bundle_id: str | None = None,
-        pid: int | None = None,
-        max_nodes: int = _DEFAULT_AX_MAX_NODES,
-        max_depth: int = _DEFAULT_AX_MAX_DEPTH,
-        timeout_seconds: float = _DEFAULT_AX_TIMEOUT_SECONDS,
-        control: OperationControl | None = None,
-    ) -> TreeObservation:
-        """Capture a zero-WDA-XML macOS Accessibility ``TreeObservation`` under this Session."""
-        operation_id, control, started, deadline = _new_operation(control)
-        valid_parent = (
-            None
-            if parent is None
-            else _validate_tree_parent(parent, self, operation_id, self._platform)
-        )
-        valid_bundle_id, valid_pid, valid_max_nodes, valid_max_depth, valid_timeout = (
-            _validate_ax_request_params(
-                operation_id,
-                bundle_id=bundle_id,
-                pid=pid,
-                max_nodes=max_nodes,
-                max_depth=max_depth,
-                timeout_seconds=timeout_seconds,
-            )
-        )
-        assert valid_timeout is not None
-        if self._platform != "macos":
-            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
-        ax_deadline = started + valid_timeout
-        effective_deadline = (
-            min(deadline, ax_deadline) if deadline is not None else ax_deadline
-        )
-
-        def _run_ax_tree(
-            driver: webdriver.Remote, gateway: _SessionOperationGateway
-        ) -> TreeObservation:
-            displays = gateway.request(
-                lambda: driver.execute_script("macos: listDisplays"),
-                "displays_read",
-            )
-            viewport = _mac2_viewport(displays, gateway)
-            return _observe_macos_ax_with_gateway(
-                bundle_id=valid_bundle_id,
-                pid=valid_pid,
-                fallback_bundle_id=self._target_app_id,
-                parent=valid_parent,
-                max_nodes=valid_max_nodes,
-                max_depth=valid_max_depth,
-                control=control,
-                deadline=effective_deadline,
-                gateway=gateway,
-                viewport=viewport,
-            )
-
-        return self._run_operation(
-            operation_id,
-            control,
-            effective_deadline,
-            _run_ax_tree,
         )
 
     def _inspect_structure(
@@ -2958,8 +2706,7 @@ def _create_mac2_session(
     app_path: Path | None = None,
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
-    skip_app_kill: bool = True,
-    prefer_native_ax: bool = False,
+    skip_app_kill: bool | None = None,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,
@@ -2975,7 +2722,6 @@ def _create_mac2_session(
             arguments,
             no_reset,
             skip_app_kill,
-            prefer_native_ax,
             show_server_logs,
             server_startup_timeout_ms,
             new_command_timeout_seconds,
@@ -3006,10 +2752,10 @@ def _create_mac2_session(
         raise
     session._reservation = reservation
     session._new_command_timeout_seconds = valid_timeout
-    session._prefer_native_ax = prefer_native_ax
     session._skip_app_kill = skip_app_kill
     session._show_server_logs = show_server_logs
     session._server_startup_timeout_ms = server_startup_timeout_ms
+
     try:
         client = _new_connection(server_url)
         session._client = client
@@ -3091,8 +2837,7 @@ def create_mac2_session(
     app_path: Path | None = None,
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
-    skip_app_kill: bool = True,
-    prefer_native_ax: bool = False,
+    skip_app_kill: bool | None = None,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,
@@ -3108,7 +2853,6 @@ def create_mac2_session(
             arguments=arguments,
             no_reset=no_reset,
             skip_app_kill=skip_app_kill,
-            prefer_native_ax=prefer_native_ax,
             show_server_logs=show_server_logs,
             server_startup_timeout_ms=server_startup_timeout_ms,
             new_command_timeout_seconds=new_command_timeout_seconds,
