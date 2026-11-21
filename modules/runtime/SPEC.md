@@ -272,8 +272,8 @@ RuntimeUsage.release() -> None
 
 ### Natural Cleanup And Crash Recovery
 
-- 零 usage 正常 exit、进入失败及显式 cleanup 共用 Runtime 清理：单一额外 30 秒 deadline；写 service state=`stopping`；仅对真实 pgid 发一次 TERM，温和最多 2 秒后必要 KILL；持续排空、wait、关闭管道/selector并 join drain thread。
-- 只有进程组 gone、proc.poll 非 None、selector 无注册、双管道关闭、thread 结束且 `service.json` 原子 state=`stopped` 后，连接失效并释放账号锁。正常停止不删除/修改 Appium、driver、installation.json、cache 或未知文件。
+- 零 usage 正常 exit、进入失败及显式 cleanup 共用 Runtime 清理：单一额外 30 秒 deadline；写 service state=`stopping`；在向自有 `pgid` 发送信号前，最佳努力通过固定受信 `/bin/ps`（`shell=False`、有界输出、`-A -o pid=,ppid=,pgid=,uid=,lstart=,comm=` 全进程快照与 `-p <pids>` 精确查询）快照当前内存持有 `self.process.process.pid` 在同一 `uid` 下的子孙进程树，按实际可执行文件名（`comm=` basename，不含 argv 参数）识别脱离 `self.group_id` 的自有 `WebDriverAgentRunner-Runner` / `xcodebuild` 子孙并记录不可复用的 `(pid, pgid, uid, lstart, basename, exclusive_pgid_leader)` 身份；后续状态检查与发信号前均重新通过 `/bin/ps` 校验同一 `uid`、`lstart` 与 allowlist `basename`（防止 PID 复用误杀，且仅当 `-A` 全表可见的目标 `pgid` 全部成员均满足同一 `uid`、allowlist `basename` 及已快照 `lstart` 时才执行 `killpg`，若存在任何跨 UID/非 allowlist 同组成员或 `-A` 查询超限/不可用则降级为仅向经 `-p` 身份复核的精确 `pid` 发信号）；对真实自有 `pgid`（及上述经身份复核的自有脱离组 WDA 子孙）发一次 TERM，温和最多 2 秒后必要 KILL；持续排空、wait、关闭管道/selector并 join drain thread。
+- 只有进程组 gone（且上述已快照的自有脱离组 WDA 子孙已退出）、proc.poll 非 None、selector 无注册、双管道关闭、thread 结束且 `service.json` 原子 state=`stopped` 后，连接失效并释放账号锁。正常停止不删除/修改 Appium、driver、installation.json、cache 或未知文件。
 - 无法证明完成时 service state=`cleanup_pending`，保留句柄/锁，只允许 cleanup_managed 重试。主错误保持，managed 清理错误另附 `runtime_managed_cleanup_error`；协调释放仍用独立 `runtime_cleanup_error`。
 - 父 Python 崩溃后句柄消失。下次看到非终态/非法 service 记录或未知根事实时 `managed_recovery_required`，不启动、删除、发信号或释放为 idle。磁盘 PID/PGID、端口、进程名、目录、EOF、status、空闲锁都不重新授予 ownership。
 - active child 意外退出使 connection 失效、新 usage 拒绝且不重启；已有 Session/unknown usage 不因服务死亡伪造为 closed，仍须归零后由 scope/显式 cleanup 完成终态。

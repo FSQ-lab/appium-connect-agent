@@ -21,12 +21,14 @@ from ._ios_actions import (
 )
 from ._ios_privacy import _redact_ios_public_methods
 from ._macos_actions import (
+    _activate_macos_app_native_impl,
     _macos_execute_bool,
     _macos_execute_none,
     _macos_pointer_action,
     _macos_query_app_state,
     _macos_send_keys,
     _modifier_payload,
+    _validate_activate_macos_app_native_params,
     _validate_bundle_id,
     _validate_launch_arguments,
     _validate_mac_app_bundle,
@@ -77,7 +79,7 @@ from ._system_actions import (
 from ._visual import _inspect_with_ai, _validate_visual_inputs
 
 if TYPE_CHECKING:
-    from ._session import Session
+    from ._session import Session, _SessionOperationGateway
 
 _MARKER = object()
 
@@ -224,6 +226,47 @@ class Device:
                 if owner.platform == "ios"
                 else _macos_execute_none(driver, gateway, "macos: launchApp", payload)
             ),
+        )
+
+    def activate_macos_app_native(
+        self,
+        bundle_id: str,
+        *,
+        launch_if_needed: bool = True,
+        wait_frontmost_seconds: float = 10.0,
+        control: OperationControl | None = None,
+    ) -> dict[str, str | int | bool]:
+        owner, (operation_id, control, started, deadline) = _bind_operation(
+            self, control
+        )
+        valid_bundle_id, valid_launch, valid_wait = (
+            _validate_activate_macos_app_native_params(
+                operation_id, bundle_id, launch_if_needed, wait_frontmost_seconds
+            )
+        )
+        if owner.platform != "macos":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+
+        def _run_native_activate(
+            _driver: object, gateway: _SessionOperationGateway
+        ) -> dict[str, str | int | bool]:
+            result = _activate_macos_app_native_impl(
+                valid_bundle_id=valid_bundle_id,
+                launch_if_needed=valid_launch,
+                wait_frontmost_seconds=valid_wait,
+                started=started,
+                control=control,
+                deadline=deadline,
+                operation_id=operation_id,
+            )
+            gateway.complete("action_completed")
+            return result
+
+        return owner._run_operation(
+            operation_id,
+            control,
+            deadline,
+            _run_native_activate,
         )
 
     def install_app(

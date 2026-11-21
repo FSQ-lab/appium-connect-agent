@@ -541,7 +541,11 @@ def test_flooded_streams_are_bounded_and_startup_subprocesses_are_allowlisted(
         stream is None or stream.closed
         for stream in (process.process.stdout, process.process.stderr)
     )
-    assert {argv[0] for argv, _ in calls} == {str(node), str(_managed._LSOF)}
+    assert {argv[0] for argv, _ in calls} == {
+        str(node),
+        str(_managed._LSOF),
+        str(_managed._PS),
+    }
     managed_call = next(
         (argv, kwargs) for argv, kwargs in calls if argv[0] == str(node)
     )
@@ -2143,10 +2147,14 @@ def test_restart_popen_failure_restores_stopped_without_retry(
     runtime = Runtime(LocalSettings(node_executable=node))
     scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
     connection = scope.__enter__()
+    original_popen = subprocess.Popen
     popen_calls = 0
 
-    def fail_popen(*args: object, **kwargs: object) -> Any:
+    def fail_popen(*args: Any, **kwargs: Any) -> Any:
         nonlocal popen_calls
+        argv = list(args[0])
+        if argv[0] == str(_managed._PS):
+            return original_popen(*args, **kwargs)
         popen_calls += 1
         raise OSError("spawn failed")
 
@@ -2198,3 +2206,264 @@ def test_restart_new_process_cleanup_failure_stays_pending_until_retry(
     assert owner.process is None
     assert _service_state(root) == "stopped"
     assert runtime._managed_scope is None
+
+
+def test_managed_cleanup_reclaims_detached_pgid_wda_runner_without_touching_unrelated_processes(
+    tmp_path: Path,
+) -> None:
+    root, node = _managed_root(tmp_path)
+    bin_dir = tmp_path / "wda-bin"
+    bin_dir.mkdir(mode=0o700)
+    runner_pid_file = tmp_path / "runner.pid"
+
+    # Use a symlink to real Mach-O /bin/sleep so macOS kernel p_comm / ps comm= reports
+    # exact executable basename "WebDriverAgentRunner-Runner" (not a Python wrapper).
+    wda_binary = bin_dir / "WebDriverAgentRunner-Runner"
+    wda_binary.symlink_to("/bin/sleep")
+
+    # Unrelated process outside managed Appium subtree (even with same binary basename!)
+    unrelated_proc = subprocess.Popen(
+        [str(wda_binary), "60"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        # Rewrite fake Appium node to spawn a detached-PGID WebDriverAgentRunner-Runner child
+        node.write_text(
+            f"""#!{sys.executable}
+import http.server, os, socket, socketserver, subprocess, sys
+args = sys.argv[2:]
+def option(name, default=None):
+    return args[args.index(name) + 1] if name in args else default
+host = option('--address')
+port = int(option('--port'))
+base = option('--base-path', '')
+child = subprocess.Popen(
+    [{str(wda_binary)!r}, '60'],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+)
+with open({str(runner_pid_file)!r}, 'w') as fp:
+    fp.write(str(child.pid))
+class Server(http.server.ThreadingHTTPServer):
+    address_family = socket.AF_INET
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != base + '/status':
+            self.send_error(404)
+            return
+        body = {READY!r}
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, format, *args):
+        pass
+Server((host, port), Handler).serve_forever()
+"""
+        )
+        node.chmod(0o755)
+
+        runtime = Runtime(LocalSettings(node_executable=node))
+        scope = runtime.start_managed(host="127.0.0.1", port=_unused_port("127.0.0.1"))
+        with scope:
+            deadline = time.monotonic() + 5.0
+            while not runner_pid_file.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert runner_pid_file.exists()
+            wda_pid = int(runner_pid_file.read_text().strip())
+            owner_proc = cast(Any, scope).process
+            assert os.getpgid(wda_pid) != owner_proc.group_id
+            os.kill(wda_pid, 0)
+
+        # After scope exit, both managed Appium PGID and detached WDA child must be reclaimed
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(wda_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.02)
+        with pytest.raises(ProcessLookupError):
+            os.kill(wda_pid, 0)
+        assert _service_state(root) == "stopped"
+        # Unrelated process outside Appium's process tree must remain completely untouched
+        assert unrelated_proc.poll() is None
+    finally:
+        if unrelated_proc.poll() is None:
+            os.killpg(unrelated_proc.pid, signal.SIGKILL)
+            unrelated_proc.wait(timeout=2)
+
+
+def test_snapshot_detached_wda_descendants_parses_multilevel_tree_and_rejects_wrapper_arg_spoofing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = os.getuid()
+    ps_output = (
+        f"  100     1   100 {uid:5d} Sat Nov 21 20:00:00 2026 /usr/local/bin/node\n"
+        f"  101   100   100 {uid:5d} Sat Nov 21 20:00:01 2026 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild\n"
+        f"  102   100   102 {uid:5d} Sat Nov 21 20:00:02 2026 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild\n"
+        f"  103   102   103 {uid:5d} Sat Nov 21 20:00:03 2026 /Users/test/Build/Products/Debug/WebDriverAgentRunner-Runner\n"
+        f"  104   100   104 {uid:5d} Sat Nov 21 20:00:04 2026 /Applications/Calculator.app/Contents/MacOS/Calculator\n"
+        # 105 is a Python wrapper script whose comm= is python3 (even if argv had xcodebuild, comm= is python3 -> rejected!)
+        f"  105   100   105 {uid:5d} Sat Nov 21 20:00:05 2026 /usr/bin/python3\n"
+        # 106 is an allowlist leader (pgid=106), while 107 is Keynote sharing pgid=106 -> exclusive_pgid_leader MUST be False!
+        f"  106   100   106 {uid:5d} Sat Nov 21 20:00:06 2026 /usr/bin/xcodebuild\n"
+        f"  107   106   106 {uid:5d} Sat Nov 21 20:00:07 2026 /Applications/Keynote.app/Contents/MacOS/Keynote\n"
+        # 200 is outside root_pid=100 subtree -> untouched!
+        f"  200     1   200 {uid:5d} Sat Nov 21 20:00:08 2026 /Users/other/WebDriverAgentRunner-Runner\n"
+    ).encode()
+
+    monkeypatch.setattr(
+        _managed,
+        "_bounded_command",
+        lambda operation, argv, timeout, limit=_managed._PROBE_LIMIT: (
+            0,
+            ps_output,
+            b"",
+            False,
+        ),
+    )
+    operation = _Operation(OperationControl(timeout_seconds=10.0), None)
+    detached = _managed._snapshot_detached_wda_descendants(
+        operation, root_pid=100, primary_pgid=100
+    )
+    by_pid = {item.pid: item for item in detached}
+    assert tuple(sorted(by_pid)) == (102, 103, 106)
+    assert by_pid[102].exclusive_pgid_leader is True
+    assert by_pid[103].exclusive_pgid_leader is True
+    # 106 shares PGID 106 with Keynote (107) -> must NOT be eligible for whole-group killpg!
+    assert by_pid[106].exclusive_pgid_leader is False
+
+
+def test_signal_detached_protects_against_pid_reuse_and_mixed_pgid_user_apps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    uid = os.getuid()
+    dummy = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.exit(0)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    managed_proc = _managed._ManagedProcess(dummy)
+    dummy.wait(timeout=5)
+    managed_proc._thread.join(timeout=5)
+    managed_proc._close_streams()
+
+    other_uid = 0 if uid != 0 else 502
+    # Pre-populate snapshot identities:
+    # - 301: exclusive WDA PGID leader (still matches uid + lstart + basename -> killpg(301))
+    # - 302: WDA leader sharing PGID 302 with same-UID Notes (303) -> os.kill(302) ONLY, NEVER killpg(302)
+    # - 304: PID reused by Calculator with newer lstart -> drop and send ZERO signal!
+    # - 305: PID reused by another WebDriverAgentRunner-Runner with newer lstart -> drop and send ZERO signal!
+    # - 306: WDA leader that WAS exclusive at snapshot time, but now shares PGID 306 with a cross-UID (other_uid)
+    #        process (307) -> observed via `/bin/ps -A`, so can_killpg MUST be False -> os.kill(306) ONLY, ZERO killpg(306)!
+    managed_proc._detached_descendants = {
+        301: _managed._DetachedDescendantIdentity(
+            pid=301,
+            pgid=301,
+            uid=uid,
+            lstart=("Sat", "Nov", "21", "20:01:01", "2026"),
+            basename="WebDriverAgentRunner-Runner",
+            exclusive_pgid_leader=True,
+        ),
+        302: _managed._DetachedDescendantIdentity(
+            pid=302,
+            pgid=302,
+            uid=uid,
+            lstart=("Sat", "Nov", "21", "20:01:02", "2026"),
+            basename="xcodebuild",
+            exclusive_pgid_leader=False,
+        ),
+        304: _managed._DetachedDescendantIdentity(
+            pid=304,
+            pgid=304,
+            uid=uid,
+            lstart=("Sat", "Nov", "21", "20:01:04", "2026"),
+            basename="WebDriverAgentRunner-Runner",
+            exclusive_pgid_leader=True,
+        ),
+        305: _managed._DetachedDescendantIdentity(
+            pid=305,
+            pgid=305,
+            uid=uid,
+            lstart=("Sat", "Nov", "21", "20:01:05", "2026"),
+            basename="WebDriverAgentRunner-Runner",
+            exclusive_pgid_leader=True,
+        ),
+        306: _managed._DetachedDescendantIdentity(
+            pid=306,
+            pgid=306,
+            uid=uid,
+            lstart=("Sat", "Nov", "21", "20:01:06", "2026"),
+            basename="WebDriverAgentRunner-Runner",
+            exclusive_pgid_leader=True,
+        ),
+    }
+
+    live_ps = (
+        f"  301     1   301 {uid:5d} Sat Nov 21 20:01:01 2026 /tmp/WebDriverAgentRunner-Runner\n"
+        f"  302     1   302 {uid:5d} Sat Nov 21 20:01:02 2026 /usr/bin/xcodebuild\n"
+        f"  303   302   302 {uid:5d} Sat Nov 21 20:01:03 2026 /System/Applications/Notes.app/Contents/MacOS/Notes\n"
+        f"  304     1   304 {uid:5d} Sat Nov 21 20:09:59 2026 /System/Applications/Calculator.app/Contents/MacOS/Calculator\n"
+        f"  305     1   305 {uid:5d} Sat Nov 21 20:09:59 2026 /tmp/WebDriverAgentRunner-Runner\n"
+        f"  306     1   306 {uid:5d} Sat Nov 21 20:01:06 2026 /tmp/WebDriverAgentRunner-Runner\n"
+        f"  307   306   306 {other_uid:5d} Sat Nov 21 20:01:07 2026 /tmp/WebDriverAgentRunner-Runner\n"
+    ).encode()
+
+    observed_ps_flags: list[str] = []
+
+    def fake_bounded_cmd(
+        operation: Any,
+        argv: list[str],
+        timeout: float,
+        limit: int = _managed._PROBE_LIMIT,
+    ) -> tuple[int, bytes, bytes, bool]:
+        observed_ps_flags.append(argv[1])
+        return (0, live_ps, b"", False)
+
+    monkeypatch.setattr(_managed, "_bounded_command", fake_bounded_cmd)
+    monkeypatch.setattr(_managed, "_pid_state", lambda pid: "alive")
+    killed_pids: list[tuple[int, int]] = []
+    killed_pgids: list[tuple[int, int]] = []
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed_pids.append((pid, sig)))
+    monkeypatch.setattr(
+        os, "killpg", lambda pgid, sig: killed_pgids.append((pgid, sig))
+    )
+
+    operation = _Operation(OperationControl(timeout_seconds=10.0), None)
+    assert managed_proc._detached_state(operation) == "alive"
+    # Reused PIDs 304 and 305 must have been evicted immediately on state check
+    assert set(managed_proc._detached_descendants) == {301, 302, 306}
+
+    managed_proc._signal_detached(operation, signal.SIGTERM)
+    assert "-A" in observed_ps_flags
+    assert killed_pgids == [(301, signal.SIGTERM)]
+    assert killed_pids == [(302, signal.SIGTERM), (306, signal.SIGTERM)]
+
+    # Also verify: if `-A` query truncates, `_signal_detached` degrades to `-p` exact PID signals with ZERO killpg!
+    killed_pids.clear()
+    killed_pgids.clear()
+    monkeypatch.setattr(
+        _managed,
+        "_bounded_command",
+        lambda operation, argv, timeout, limit=_managed._PROBE_LIMIT: (
+            (0, live_ps, b"", True) if argv[1] == "-A" else (0, live_ps, b"", False)
+        ),
+    )
+    managed_proc._signal_detached(operation, signal.SIGTERM)
+    assert killed_pgids == []
+    assert killed_pids == [
+        (301, signal.SIGTERM),
+        (302, signal.SIGTERM),
+        (306, signal.SIGTERM),
+    ]

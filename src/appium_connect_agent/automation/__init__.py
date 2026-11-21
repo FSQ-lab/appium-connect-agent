@@ -1,10 +1,13 @@
 """Synchronous device discovery, Sessions, bound Element and Device operations."""
 
 from ._device import Device as Device
+from ._discovery import frontmost_macos_app as frontmost_macos_app
 from ._discovery import list_devices as list_devices
 from ._discovery import list_ios_devices as list_ios_devices
 from ._element import Element as Element
 from ._element import ElementValidationError as ElementValidationError
+from ._macos_actions import activate_macos_app_native as activate_macos_app_native
+from ._macos_actions import resolve_macos_app_bundle as resolve_macos_app_bundle
 from ._macos_keyboard import MACOS_MODIFIER_CAPS_LOCK as MACOS_MODIFIER_CAPS_LOCK
 from ._macos_keyboard import MACOS_MODIFIER_COMMAND as MACOS_MODIFIER_COMMAND
 from ._macos_keyboard import MACOS_MODIFIER_CONTROL as MACOS_MODIFIER_CONTROL
@@ -12,6 +15,7 @@ from ._macos_keyboard import MACOS_MODIFIER_FUNCTION as MACOS_MODIFIER_FUNCTION
 from ._macos_keyboard import MACOS_MODIFIER_OPTION as MACOS_MODIFIER_OPTION
 from ._macos_keyboard import MACOS_MODIFIER_SHIFT as MACOS_MODIFIER_SHIFT
 from ._macos_keyboard import MacKeyStroke as MacKeyStroke
+from ._macos_native_ax import observe_macos_ax_tree as observe_macos_ax_tree
 from ._models import AttributeObservation as AttributeObservation
 from ._models import AutomationError as AutomationError
 from ._models import AutomationPlatform as AutomationPlatform

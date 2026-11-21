@@ -39,6 +39,7 @@ from appium_connect_agent.automation import (
     _session_client,
     _system_actions,
     create_mac2_session,
+    resolve_macos_app_bundle,
 )
 from appium_connect_agent.runtime import OperationControl
 from tests.automation._action_protocol import (
@@ -653,7 +654,6 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
             app_path=app,
             arguments=[secret_arg],
             no_reset=False,
-            skip_app_kill=None,
             show_server_logs=True,
             server_startup_timeout_ms=15_000,
             new_command_timeout_seconds=720.0,
@@ -671,6 +671,10 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
 
         creates = service.of_kind("create")
         assert len(creates) == 3
+        initial_caps = cast(dict[str, Any], creates[0].body)["capabilities"][
+            "alwaysMatch"
+        ]
+        assert initial_caps["appium:skipAppKill"] is True
         reattach_caps = cast(dict[str, Any], creates[1].body)["capabilities"][
             "alwaysMatch"
         ]
@@ -731,6 +735,10 @@ def test_mac_ensure_alive_and_read_replay_reattach_with_preserved_mac2_options_a
             bundle_id="com.apple.calculator",
             skip_app_kill=False,
         )
+        explicit_initial_caps = cast(
+            dict[str, Any], service.of_kind("create")[-1].body
+        )["capabilities"]["alwaysMatch"]
+        assert explicit_initial_caps["appium:skipAppKill"] is False
         assert explicit_session.ensure_alive() is True
         explicit_reattach_caps = cast(
             dict[str, Any], service.of_kind("create")[-1].body
@@ -1298,27 +1306,48 @@ def test_launch_symlinks_clipboard_boundaries_and_controlled_errors_hide_secrets
 ) -> None:
     root = tmp_path.resolve()
     real_parent = root / "real"
-    real_bundle = real_parent / "SecretBundle.app"
+    real_bundle = real_parent / "ValidLinkedBundle.app"
     contents = real_bundle / "Contents"
     contents.mkdir(parents=True)
     (contents / "Info.plist").write_text("plist")
-    parent_link = root / "secret-parent-link"
+    parent_link = root / "valid-parent-link"
     parent_link.symlink_to(real_parent, target_is_directory=True)
-    bundle_link = root / "secret-bundle-link.app"
+    bundle_link = root / "valid-bundle-link.app"
     bundle_link.symlink_to(real_bundle, target_is_directory=True)
-    path_secrets = (parent_link / real_bundle.name, bundle_link)
+
+    dangling_link = root / "secret-dangling-link.app"
+    dangling_link.symlink_to(root / "missing-target.app")
+    non_app_dir = root / "secret-non-app-target"
+    (non_app_dir / "Contents").mkdir(parents=True)
+    (non_app_dir / "Contents" / "Info.plist").write_text("plist")
+    non_app_link = root / "secret-non-app-link.app"
+    non_app_link.symlink_to(non_app_dir, target_is_directory=True)
+    symlink_plist_bundle = root / "secret-symlink-plist.app"
+    (symlink_plist_bundle / "Contents").mkdir(parents=True)
+    external_plist = root / "secret-external.plist"
+    external_plist.write_text("plist")
+    (symlink_plist_bundle / "Contents" / "Info.plist").symlink_to(external_plist)
+    path_secrets = (dangling_link, non_app_link, symlink_plist_bundle)
     key_secret = "secret-key-value"
     clipboard_secret = "s" * 65_537
     argument_secret = "secret-argument\0"
 
     with connected(service) as connection:
         session = mac_session_for(service, connection)
+        session.device.launch_app(app_path=parent_link / real_bundle.name)
+        session.device.launch_app(app_path=bundle_link)
+        launch_requests = service.of_kind("launchApp")
+        assert len(launch_requests) == 2
+        assert _args(launch_requests[0]) == {"path": str(real_bundle)}
+        assert _args(launch_requests[1]) == {"path": str(real_bundle)}
+
         session.device.set_clipboard_text("c" * 65_536)
         failures: list[tuple[InvalidRequestError, str]] = []
         for secret_path in path_secrets:
             with pytest.raises(InvalidRequestError) as caught:
                 session.device.launch_app(app_path=secret_path)
             failures.append((caught.value, str(secret_path)))
+            failures.append((caught.value, str(external_plist)))
         with pytest.raises(InvalidRequestError) as key_error:
             session.device.send_keys([key_secret])
         failures.append((key_error.value, key_secret))
@@ -1337,3 +1366,141 @@ def test_launch_symlinks_clipboard_boundaries_and_controlled_errors_hide_secrets
             assert_error(error, InvalidRequestError, "invalid_argument", "not_sent")
         assert len(service.of_kind("setClipboard")) == 1
         session.quit()
+
+
+def test_resolve_macos_app_bundle_supports_paths_symlinks_and_standard_dirs_with_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import plistlib
+
+    root = tmp_path.resolve()
+    apps_dir = root / "Applications"
+    user_apps_dir = root / "Home" / "Applications"
+    apps_dir.mkdir(parents=True)
+    user_apps_dir.mkdir(parents=True)
+
+    cask_target = root / "Caskroom" / "TestApp" / "1.0" / "TestApp.app"
+    (cask_target / "Contents" / "MacOS").mkdir(parents=True)
+    (cask_target / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleIdentifier": "com.example.testapp"})
+    )
+    executable_inside = cask_target / "Contents" / "MacOS" / "TestApp"
+    executable_inside.write_text("bin")
+    linked_app = apps_dir / "TestApp.app"
+    linked_app.symlink_to(cask_target, target_is_directory=True)
+
+    user_app = user_apps_dir / "MyTool.app"
+    (user_app / "Contents").mkdir(parents=True)
+    (user_app / "Contents" / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleIdentifier": "org.example.mytool"})
+    )
+
+    monkeypatch.setattr(
+        _macos_actions,
+        "_MACOS_STANDARD_APP_DIRS",
+        (str(apps_dir),),
+    )
+    monkeypatch.setenv("HOME", str(root / "Home"))
+
+    assert resolve_macos_app_bundle(linked_app) == (cask_target, "com.example.testapp")
+    assert resolve_macos_app_bundle(str(linked_app)) == (
+        cask_target,
+        "com.example.testapp",
+    )
+    assert resolve_macos_app_bundle("TestApp") == (cask_target, "com.example.testapp")
+    assert resolve_macos_app_bundle("testapp.app") == (
+        cask_target,
+        "com.example.testapp",
+    )
+    assert resolve_macos_app_bundle("MyTool") == (user_app, "org.example.mytool")
+    assert resolve_macos_app_bundle("~/Applications/MyTool.app") == (
+        user_app,
+        "org.example.mytool",
+    )
+
+    bad_plist_app = apps_dir / "SecretBroken.app"
+    (bad_plist_app / "Contents").mkdir(parents=True)
+    (bad_plist_app / "Contents" / "Info.plist").write_bytes(b"not-a-valid-plist")
+
+    oversized_app = apps_dir / "SecretHuge.app"
+    (oversized_app / "Contents").mkdir(parents=True)
+    (oversized_app / "Contents" / "Info.plist").write_bytes(b"x" * (1_048_576 + 1))
+
+    invalid_cases: tuple[tuple[object, str], ...] = (
+        (executable_inside, "TestApp"),
+        (str(executable_inside), "TestApp"),
+        (cask_target / "Contents", "TestApp"),
+        (bad_plist_app, "SecretBroken"),
+        (oversized_app, "SecretHuge"),
+        ("MissingSecretApp", "MissingSecretApp"),
+        (root / "MissingSecretPath.app", "MissingSecretPath"),
+        ("", "empty"),
+        (123, "123"),
+    )
+    for invalid_input, canary in invalid_cases:
+        with pytest.raises(InvalidRequestError) as caught:
+            resolve_macos_app_bundle(invalid_input)  # type: ignore[arg-type]
+        assert_error(caught.value, InvalidRequestError, "invalid_argument", "not_sent")
+        assert canary not in str(caught.value)
+        assert canary not in repr(caught.value)
+
+    # Fault-inject os.close failure on Info.plist descriptor: must never silently succeed or leak path.
+    real_open, real_close = os.open, os.close
+    leaked_fds: list[int] = []
+
+    def tracked_open(*args: Any, **kwargs: Any) -> int:
+        fd = real_open(*args, **kwargs)
+        leaked_fds.append(fd)
+        return fd
+
+    def failing_close(fd: int) -> None:
+        raise OSError("SECRET_PLIST_CLOSE_CANARY")
+
+    monkeypatch.setattr(os, "open", tracked_open)
+    monkeypatch.setattr(os, "close", failing_close)
+    try:
+        with pytest.raises(CommandError) as close_err:
+            resolve_macos_app_bundle(user_app)
+        assert_error(close_err.value, CommandError, "plist_close_failed", "not_sent")
+        assert [str(item) for item in close_err.value.cleanup_errors] == [
+            "descriptor_close_failed"
+        ]
+        assert "MyTool" not in repr(close_err.value)
+        assert "SECRET_PLIST_CLOSE_CANARY" not in repr(close_err.value)
+        assert "SECRET_PLIST_CLOSE_CANARY" not in repr(close_err.value.cleanup_errors)
+
+        with pytest.raises(InvalidRequestError) as both_err:
+            resolve_macos_app_bundle(oversized_app)
+        assert_error(
+            both_err.value, InvalidRequestError, "invalid_argument", "not_sent"
+        )
+        assert [str(item) for item in both_err.value.cleanup_errors] == [
+            "descriptor_close_failed"
+        ]
+        assert "SecretHuge" not in repr(both_err.value)
+        assert "SECRET_PLIST_CLOSE_CANARY" not in repr(both_err.value.cleanup_errors)
+
+        # Name search hitting oversized first candidate in /Applications + close failure must propagate
+        # cleanup_errors immediately and never fall through to a later valid candidate in ~/Applications.
+        shadowed_in_user = user_apps_dir / "SecretHuge.app"
+        (shadowed_in_user / "Contents").mkdir(parents=True)
+        (shadowed_in_user / "Contents" / "Info.plist").write_bytes(
+            plistlib.dumps({"CFBundleIdentifier": "org.example.shadowed"})
+        )
+        with pytest.raises(InvalidRequestError) as name_both_err:
+            resolve_macos_app_bundle("SecretHuge")
+        assert_error(
+            name_both_err.value, InvalidRequestError, "invalid_argument", "not_sent"
+        )
+        assert [str(item) for item in name_both_err.value.cleanup_errors] == [
+            "descriptor_close_failed"
+        ]
+        assert "SecretHuge" not in repr(name_both_err.value)
+        assert "SECRET_PLIST_CLOSE_CANARY" not in repr(
+            name_both_err.value.cleanup_errors
+        )
+    finally:
+        monkeypatch.setattr(os, "open", real_open)
+        monkeypatch.setattr(os, "close", real_close)
+        for fd in leaked_fds:
+            real_close(fd)
