@@ -7,8 +7,7 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 from xml.etree.ElementTree import Element as XmlElement
 from xml.etree.ElementTree import ParseError
 
@@ -54,25 +53,6 @@ from ._models import (
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
-
-
-class _ObservationGateway(Protocol):
-    @property
-    def operation_id(self) -> str: ...
-
-    @property
-    def completed_steps(self) -> tuple[str, ...]: ...
-
-    @property
-    def platform(self) -> Literal["android", "macos", "ios"]: ...
-
-    observed_at: datetime | None
-
-    def complete(self, step: str) -> None: ...
-
-    def checkpoint(self, *, response_received: bool = False) -> None: ...
-
-
 _Result = TypeVar("_Result")
 
 _MAX_JSON = 65_536
@@ -223,7 +203,7 @@ _UPSTREAM = {
 def _error(
     error_type: type[AutomationError],
     code: str,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     request_state: Literal["not_sent", "response_received"] = "response_received",
 ) -> AutomationError:
     return error_type(
@@ -323,7 +303,7 @@ def _json_value(value: object, *, macos: bool = False) -> object:
 
 def _canonical(
     value: object,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     *,
     maximum: int = _MAX_JSON,
 ) -> bytes | None:
@@ -345,7 +325,7 @@ def _canonical(
     return bytes(result)
 
 
-def _parse_boolean(value: object, gateway: _ObservationGateway) -> bool:
+def _parse_boolean(value: object, gateway: _SessionOperationGateway) -> bool:
     try:
         return _parse_boolean_value(value)
     except ValueError:
@@ -859,7 +839,7 @@ def _descendants(node: _ParsedNode) -> tuple[_ParsedNode, ...]:
 
 
 def _resolve_local(
-    root: _ParsedNode, element: Element, gateway: _ObservationGateway
+    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
 ) -> _ParsedNode:
     return _resolve_local_chain(root, element, gateway)[1]
 
@@ -946,20 +926,6 @@ def _visible_keep(roots: tuple[_ParsedNode, ...]) -> set[_ParsedNode]:
         if retained:
             keep.add(node)
     return keep
-
-
-def _node_depths(roots: tuple[_ParsedNode, ...]) -> tuple[dict[_ParsedNode, int], int]:
-    depths: dict[_ParsedNode, int] = {}
-    max_depth = 0
-    stack: list[tuple[_ParsedNode, int]] = [(root, 1) for root in reversed(roots)]
-    while stack:
-        node, depth = stack.pop()
-        depths[node] = depth
-        if depth > max_depth:
-            max_depth = depth
-        for child in reversed(node.children):
-            stack.append((child, depth + 1))
-    return depths, max_depth
 
 
 def _tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> object:
@@ -1066,7 +1032,7 @@ def _mac2_viewport(displays: object, gateway: _SessionOperationGateway) -> Viewp
 def _parse_xcui_source(
     source: object,
     viewport: Viewport,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
     *,
     ios: bool,
 ) -> tuple[_ParsedNode, ...]:
@@ -1217,7 +1183,7 @@ def _parse_xcui_source(
 
 
 def _parse_mac2_source(
-    source: object, viewport: Viewport, gateway: _ObservationGateway
+    source: object, viewport: Viewport, gateway: _SessionOperationGateway
 ) -> _ParsedNode:
     roots = _parse_xcui_source(source, viewport, gateway, ios=False)
     if len(roots) != 1:
@@ -1232,7 +1198,7 @@ def _parse_ios_source(
 
 
 def _mac2_xml_value(
-    node: _ParsedNode, name: str, gateway: _ObservationGateway
+    node: _ParsedNode, name: str, gateway: _SessionOperationGateway
 ) -> ObservedValue:
     if name == "type":
         return ObservedValue("value", node.tag)
@@ -1278,7 +1244,7 @@ def _mac2_xml_value(
 def _mac2_tree_node(
     node: _ParsedNode,
     children: tuple[TreeNode, ...],
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> TreeNode:
     na = ObservedValue("not_applicable")
     return TreeNode(
@@ -1307,7 +1273,7 @@ def _mac2_tree_node(
 def _project_mac2_tree(
     roots: tuple[_ParsedNode, ...],
     keep: set[_ParsedNode] | None,
-    gateway: _ObservationGateway,
+    gateway: _SessionOperationGateway,
 ) -> tuple[TreeNode, ...]:
     projected: dict[_ParsedNode, TreeNode] = {}
     for index, node in enumerate(reversed(_all_nodes(roots))):
@@ -1502,9 +1468,7 @@ def _mac2_tree_result(
     metadata: SourceMetadata,
     viewport: Viewport,
     parent: Element | None,
-    gateway: _ObservationGateway,
-    *,
-    truncated_by_capture: bool = False,
+    gateway: _SessionOperationGateway,
 ) -> TreeObservation:
     root = _parse_mac2_source(source_text, viewport, gateway)
     roots = (root,) if parent is None else (_resolve_local(root, parent, gateway),)
@@ -1535,10 +1499,9 @@ def _mac2_tree_result(
         }
         return projected, _canonical(document, gateway, maximum=_MAX_TREE_JSON)
 
-    initial_complete = not truncated_by_capture
-    projected, encoded = build(None, "requested_scope", initial_complete)
+    projected, encoded = build(None, "requested_scope", True)
     coverage: Coverage = "requested_scope"
-    complete = initial_complete
+    complete = True
     if encoded is None:
         keep = _visible_keep(roots)
         coverage = (
@@ -1548,23 +1511,6 @@ def _mac2_tree_result(
         )
         complete = False
         projected, encoded = build(keep, coverage, complete)
-        if encoded is None and keep:
-            depths, max_depth = _node_depths(roots)
-            max_kept_depth = max((depths[node] for node in keep), default=1)
-            for target_depth in range(min(max_depth, max_kept_depth) - 1, 0, -1):
-                pruned = {node for node in keep if depths[node] <= target_depth}
-                if not pruned:
-                    break
-                coverage = (
-                    "visible_with_ancestors_and_offscreen"
-                    if any(
-                        node.viewport_relation.startswith("outside_") for node in pruned
-                    )
-                    else "visible_with_ancestors"
-                )
-                projected, encoded = build(pruned, coverage, False)
-                if encoded is not None:
-                    break
     if encoded is None:
         raise _error(CommandError, "observation_too_large", gateway)
     gateway.checkpoint(response_received=True)
@@ -1814,7 +1760,7 @@ def _observe_tree(
 
 
 def _resolve_local_chain(
-    root: _ParsedNode, element: Element, gateway: _ObservationGateway
+    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
 ) -> tuple[tuple[_ParsedNode, ...], _ParsedNode]:
     current = root
     matched: list[_ParsedNode] = []

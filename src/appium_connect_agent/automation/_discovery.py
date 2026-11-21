@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import selectors
 import signal
 import stat
@@ -43,18 +42,6 @@ _XCODE_SELECT_LINK = Path("/var/db/xcode_select_link")
 _XCODE_FS_ROOT = Path("/")
 _TRUSTED_OWNER_UID = 0
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-_LSAPPINFO_EXECUTABLE = Path("/usr/bin/lsappinfo")
-_LSAPPINFO_ASN = re.compile(r"^ASN:0x[0-9a-fA-F]+-0x[0-9a-fA-F]+:?$")
-_LSAPPINFO_KV = re.compile(r'^\s*"([A-Za-z0-9_]+)"\s*=\s*"([^"\r\n]*)"\s*$')
-_MAC_BUNDLE_ID_DISCOVERY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$")
-_EXCLUDED_FRONTMOST_BUNDLES = frozenset(
-    {
-        "com.apple.loginwindow",
-        "com.apple.SecurityAgent",
-        "com.apple.ScreenSaver.Engine",
-        "com.apple.UserNotificationCenter",
-    }
-)
 
 ErrorType = type[AutomationError]
 
@@ -797,148 +784,3 @@ def list_ios_devices(
     if len(identities) != len(combined):
         raise CommandError("xcode_duplicate_device", operation_id, "response_received")
     return tuple(sorted(combined, key=lambda item: (item.id, item.kind)))
-
-
-def _validate_lsappinfo_executable(executable: Path, operation_id: str) -> Path:
-    if sys.platform != "darwin":
-        raise InvalidRequestError("unsupported_host", operation_id, "not_sent")
-    try:
-        metadata = os.lstat(executable)
-        runnable = os.access(executable, os.X_OK)
-    except (OSError, ValueError) as cause:
-        error = CommandError("lsappinfo_unavailable", operation_id, "not_sent")
-        raise error from cause
-    if (
-        stat.S_ISLNK(metadata.st_mode)
-        or not stat.S_ISREG(metadata.st_mode)
-        or not runnable
-    ):
-        raise CommandError("lsappinfo_unavailable", operation_id, "not_sent")
-    return executable
-
-
-def _run_lsappinfo_command(
-    argv: list[str],
-    control: OperationControl | None,
-    deadline: float | None,
-    operation_id: str,
-) -> str:
-    try:
-        process = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            close_fds=True,
-            start_new_session=True,
-        )
-    except OSError as cause:
-        error = CommandError("lsappinfo_launch_failed", operation_id, "not_sent")
-        raise error from cause
-    cleanup_errors: list[BaseException] = []
-    failure: _KnownFailure | None = None
-    unknown: BaseException | None = None
-    text: str | None = None
-    response_received = False
-    try:
-        _checkpoint(control, deadline)
-        stdout, stderr, returncode = _collect_output(
-            process,
-            control,
-            deadline,
-            cleanup_errors,
-            maximum=_MAX_OUTPUT_BYTES,
-            too_large_code="lsappinfo_output_too_large",
-        )
-        response_received = True
-        if returncode != 0:
-            raise _fail(CommandError, "lsappinfo_command_failed", "response_received")
-        try:
-            text = stdout.decode("utf-8", errors="strict")
-            stderr.decode("utf-8", errors="strict")
-        except UnicodeDecodeError as cause:
-            raise _fail(
-                CommandError, "lsappinfo_output_not_utf8", "response_received", cause
-            ) from cause
-    except _KnownFailure as known:
-        failure = known
-    except BaseException as error:
-        unknown = error
-    finally:
-        _reclaim_process(
-            process, force=not response_received, cleanup_errors=cleanup_errors
-        )
-    if unknown is not None:
-        raise unknown
-    if failure is not None:
-        if sys.platform == "darwin":
-            failure.cause = None
-        _raise_failure(failure, operation_id, cleanup_errors)
-    if cleanup_errors:
-        _raise_failure(
-            _fail(
-                CommandError,
-                "cleanup_failed",
-                "response_received" if response_received else "response_unknown",
-            ),
-            operation_id,
-            cleanup_errors,
-        )
-    if text is None:
-        raise RuntimeError("lsappinfo command completed without output")
-    return text
-
-
-def frontmost_macos_app(*, control: OperationControl | None = None) -> str | None:
-    """Return the frontmost foreground macOS application bundle ID, or ``None``."""
-    started = time.monotonic()
-    operation_id = uuid4().hex
-    if control is not None and not isinstance(control, OperationControl):
-        raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
-    executable = _validate_lsappinfo_executable(_LSAPPINFO_EXECUTABLE, operation_id)
-    deadline = started + control.timeout_seconds if control is not None else None
-    try:
-        _checkpoint(control, deadline)
-    except _KnownFailure as preflight_failure:
-        preflight_failure.request_state = "not_sent"
-        _raise_failure(preflight_failure, operation_id, [])
-
-    front_raw = _run_lsappinfo_command(
-        [str(executable), "front"], control, deadline, operation_id
-    ).strip()
-    if not front_raw or front_raw in {"-", "(null)", "NULL"}:
-        return None
-    if _LSAPPINFO_ASN.fullmatch(front_raw) is None:
-        return None
-
-    info_raw = _run_lsappinfo_command(
-        [
-            str(executable),
-            "info",
-            "-only",
-            "bundleid",
-            "-only",
-            "ApplicationType",
-            front_raw,
-        ],
-        control,
-        deadline,
-        operation_id,
-    )
-    fields: dict[str, str] = {}
-    for line in info_raw.splitlines():
-        match = _LSAPPINFO_KV.match(line)
-        if match is not None:
-            fields[match.group(1)] = match.group(2)
-    app_type = fields.get("ApplicationType")
-    bundle_id = fields.get("CFBundleIdentifier")
-    if (
-        app_type != "Foreground"
-        or not bundle_id
-        or bundle_id in _EXCLUDED_FRONTMOST_BUNDLES
-        or not bundle_id.isascii()
-        or _MAC_BUNDLE_ID_DISCOVERY.fullmatch(bundle_id) is None
-    ):
-        return None
-    return bundle_id
