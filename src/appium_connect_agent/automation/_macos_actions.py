@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import math
 import os
+import plistlib
 import re
 import stat
+import sys
 import time
 import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from uuid import uuid4
 
 from appium.webdriver.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
@@ -30,6 +33,13 @@ _DIRECTIONS = frozenset({"up", "down", "left", "right"})
 _JAVA_INT_MIN = -(2**31)
 _JAVA_INT_MAX = 2**31 - 1
 _MAC_BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,254}")
+_MAX_MACOS_INFO_PLIST_BYTES = 1_048_576
+_MACOS_STANDARD_APP_DIRS: tuple[str, ...] = (
+    "/Applications",
+    "/System/Applications",
+    "/System/Applications/Utilities",
+    "/System/Library/CoreServices",
+)
 _NAMED_KEYS = frozenset(
     {
         "XCUIKeyboardKeyDelete",
@@ -194,34 +204,177 @@ def _validate_mac_app_path_syntax(app_path: object, operation_id: str) -> Path:
 
 def _validate_mac_app_bundle(app_path: object, operation_id: str) -> str:
     valid_path = _validate_mac_app_path_syntax(app_path, operation_id)
-    prefixes = [Path(valid_path.anchor)]
-    current = prefixes[0]
-    for part in valid_path.parts[1:]:
-        current /= part
-        prefixes.append(current)
-    contents = valid_path / "Contents"
-    plist = contents / "Info.plist"
-    metadata: list[tuple[Path, os.stat_result]] = []
     try:
-        for path in (*prefixes, contents, plist):
-            item = os.lstat(path)
-            if stat.S_ISLNK(item.st_mode):
-                raise _invalid(operation_id)
-            metadata.append((path, item))
+        resolved = valid_path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        raise _invalid(operation_id) from None
+    _validate_mac_app_path_syntax(resolved, operation_id)
+    contents = resolved / "Contents"
+    plist = contents / "Info.plist"
+    try:
+        bundle_meta = os.lstat(resolved)
+        contents_meta = os.lstat(contents)
+        plist_meta = os.lstat(plist)
         readable = os.access(plist, os.R_OK)
-    except InvalidRequestError:
-        raise
     except (OSError, ValueError):
         raise _invalid(operation_id) from None
-    modes = {path: item.st_mode for path, item in metadata}
     if (
-        not stat.S_ISDIR(modes[valid_path])
-        or not stat.S_ISDIR(modes[contents])
-        or not stat.S_ISREG(modes[plist])
+        stat.S_ISLNK(bundle_meta.st_mode)
+        or not stat.S_ISDIR(bundle_meta.st_mode)
+        or stat.S_ISLNK(contents_meta.st_mode)
+        or not stat.S_ISDIR(contents_meta.st_mode)
+        or stat.S_ISLNK(plist_meta.st_mode)
+        or not stat.S_ISREG(plist_meta.st_mode)
         or not readable
     ):
         raise _invalid(operation_id)
-    return str(valid_path)
+    return str(resolved)
+
+
+def _read_bundle_id_from_plist(plist_path: Path, operation_id: str) -> str:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(plist_path, flags)
+    except OSError:
+        raise _invalid(operation_id) from None
+    primary_error: InvalidRequestError | None = None
+    chunks = bytearray()
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size > _MAX_MACOS_INFO_PLIST_BYTES
+        ):
+            raise _invalid(operation_id)
+        while True:
+            chunk = os.read(descriptor, 65_536)
+            if not chunk:
+                break
+            chunks.extend(chunk)
+            if len(chunks) > _MAX_MACOS_INFO_PLIST_BYTES:
+                raise _invalid(operation_id)
+    except InvalidRequestError as caught:
+        primary_error = caught
+    except OSError:
+        primary_error = _invalid(operation_id)
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            close_failure = OSError("descriptor_close_failed")
+            if primary_error is not None:
+                primary_error.cleanup_errors = (close_failure,)
+                raise primary_error from None
+            raise CommandError(
+                "plist_close_failed",
+                operation_id,
+                "not_sent",
+                cleanup_errors=(close_failure,),
+            ) from None
+    if primary_error is not None:
+        raise primary_error
+    try:
+        payload = plistlib.loads(bytes(chunks))
+    except Exception:
+        raise _invalid(operation_id) from None
+    if not isinstance(payload, Mapping):
+        raise _invalid(operation_id)
+    bundle_id = payload.get("CFBundleIdentifier")
+    return _validate_bundle_id(bundle_id, operation_id)
+
+
+def resolve_macos_app_bundle(app: Path | str) -> tuple[Path, str]:
+    """Resolve a macOS ``.app`` bundle path or application name to ``(resolved_path, bundle_id)``."""
+    operation_id = uuid4().hex
+    if sys.platform != "darwin":
+        raise InvalidRequestError("unsupported_host", operation_id, "not_sent")
+    if isinstance(app, Path):
+        try:
+            raw_text = str(app)
+            encoded = raw_text.encode("utf-8", errors="strict")
+        except (UnicodeEncodeError, ValueError):
+            raise _invalid(operation_id) from None
+        if not 1 <= len(encoded) <= 4_096 or any(
+            unicodedata.category(char) == "Cc" for char in raw_text
+        ):
+            raise _invalid(operation_id)
+        is_explicit_path = app.is_absolute() or len(app.parts) > 1 or "/" in raw_text
+        raw_name = raw_text
+    elif isinstance(app, str):
+        try:
+            encoded = app.encode("utf-8", errors="strict")
+        except UnicodeEncodeError:
+            raise _invalid(operation_id) from None
+        stripped = app.strip()
+        if (
+            not stripped
+            or not 1 <= len(encoded) <= 4_096
+            or any(unicodedata.category(char) == "Cc" for char in app)
+        ):
+            raise _invalid(operation_id)
+        is_explicit_path = stripped.startswith(("/", "~")) or "/" in stripped
+        raw_name = stripped
+    else:
+        raise _invalid(operation_id)
+
+    if is_explicit_path:
+        try:
+            candidate = (
+                Path(raw_name).expanduser()
+                if isinstance(app, str) and raw_name.startswith("~")
+                else Path(raw_name)
+            )
+        except (OSError, RuntimeError, ValueError):
+            raise _invalid(operation_id) from None
+        if not candidate.is_absolute():
+            raise _invalid(operation_id)
+        validated = Path(_validate_mac_app_bundle(candidate, operation_id))
+        bundle_id = _read_bundle_id_from_plist(
+            validated / "Contents" / "Info.plist", operation_id
+        )
+        return validated, bundle_id
+
+    if raw_name in {".", ".."} or "/" in raw_name or "\\" in raw_name:
+        raise _invalid(operation_id)
+    bundle_filename = (
+        raw_name if raw_name.casefold().endswith(".app") else f"{raw_name}.app"
+    )
+    stem = bundle_filename[:-4]
+    if not stem or stem in {".", ".."}:
+        raise _invalid(operation_id)
+    search_dirs: list[Path] = [
+        Path(directory) for directory in _MACOS_STANDARD_APP_DIRS
+    ]
+    try:
+        home_apps = Path.home() / "Applications"
+        if home_apps.is_absolute():
+            search_dirs.append(home_apps)
+    except (OSError, RuntimeError):
+        pass
+
+    for directory in search_dirs:
+        direct = directory / bundle_filename
+        candidates: list[Path] = [direct]
+        try:
+            if not direct.exists() and directory.is_dir():
+                target_cf = bundle_filename.casefold()
+                for entry in sorted(directory.iterdir(), key=lambda item: item.name):
+                    if entry.name.casefold() == target_cf and entry != direct:
+                        candidates.append(entry)
+        except OSError:
+            pass
+        for candidate in candidates:
+            try:
+                validated = Path(_validate_mac_app_bundle(candidate, operation_id))
+                bundle_id = _read_bundle_id_from_plist(
+                    validated / "Contents" / "Info.plist", operation_id
+                )
+                return validated, bundle_id
+            except InvalidRequestError as caught:
+                if caught.cleanup_errors:
+                    raise
+                continue
+    raise _invalid(operation_id)
 
 
 def _none(value: object) -> None:

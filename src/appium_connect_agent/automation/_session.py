@@ -845,6 +845,31 @@ class _SessionWebDriver(webdriver.Remote):
         self.error_handler = _CreateErrorHandler(connection)
 
 
+class _BoundSessionWebDriver(webdriver.Remote):
+    """Binds a fresh public Appium WebDriver instance to an existing remote Session ID."""
+
+    def __init__(
+        self,
+        *,
+        command_executor: _LifecycleConnection,
+        options: Mac2Options | UiAutomator2Options | XCUITestOptions,
+        existing_session_id: str,
+        existing_caps: Mapping[str, Any],
+    ) -> None:
+        self._prebound_session_id = existing_session_id
+        self._prebound_caps = dict(existing_caps)
+        super().__init__(command_executor=command_executor, options=options)
+
+    def start_session(
+        self,
+        capabilities: dict[str, Any] | Any,
+        browser_profile: str | None = None,
+    ) -> None:
+        del capabilities, browser_profile
+        self.session_id = self._prebound_session_id
+        self.caps = dict(self._prebound_caps)
+
+
 class _SessionOperationGateway:
     def __init__(
         self,
@@ -1257,8 +1282,21 @@ class Session:
         server_url = self._connection_is_active(operation_id)
         _checkpoint(control, deadline, operation_id)
         old_client = getattr(self, "_client", None)
-        if isinstance(old_client, _LifecycleConnection):
-            _close_client(old_client)
+        if (
+            isinstance(old_client, _LifecycleConnection)
+            and not old_client.locally_closed
+        ):
+            cleanup_start = len(old_client.cleanup_errors)
+            old_client.force_close()
+            if not old_client.locally_closed:
+                cleanup_errors = old_client.cleanup_errors[cleanup_start:]
+                raise ResourceStateError(
+                    "cleanup_failed",
+                    operation_id,
+                    "not_sent",
+                    session=self,
+                    cleanup_errors=cleanup_errors,
+                )
         client = _new_connection(server_url)
         options: Mac2Options | UiAutomator2Options | XCUITestOptions
         if self._platform == "macos":
@@ -1398,10 +1436,11 @@ class Session:
         return driver
 
     def ensure_alive(self, *, control: OperationControl | None = None) -> bool:
-        """Probe this Session and non-destructively re-attach if the remote Session died.
+        """Probe this Session and non-destructively recover or re-attach if needed.
 
-        Returns True when a new Appium Session was re-attached, or False when the
-        existing Appium Session was already healthy.
+        Returns True when an ``uncertain`` Session was restored to ``active`` or a
+        dead remote Session was re-attached, or False when an already ``active``
+        Session was healthy.
         """
         operation_id, control, _, deadline = _new_operation(control)
         if not self._operation_gate.acquire(blocking=False):
@@ -1409,14 +1448,58 @@ class Session:
         try:
             with self._state_lock:
                 state = self._state
-            if state != "active":
-                code = "session_closed" if state == "closed" else "session_invalid"
-                raise InvalidSessionStateError(code, operation_id, "not_sent")
-            self._connection_is_active(operation_id)
+                driver = self._driver
+                appium_session_id = self._appium_session_id
+            if state == "closed":
+                raise InvalidSessionStateError(
+                    "session_closed", operation_id, "not_sent"
+                )
+            if state not in ("active", "uncertain"):
+                raise InvalidSessionStateError(
+                    "session_invalid", operation_id, "not_sent"
+                )
+            was_uncertain = state == "uncertain"
+            if was_uncertain and (driver is None or appium_session_id is None):
+                raise InvalidSessionStateError(
+                    "session_invalid", operation_id, "not_sent"
+                )
+            server_url = self._connection_is_active(operation_id)
             _checkpoint(control, deadline, operation_id)
-            driver = self._driver
             if driver is None:
                 raise RuntimeError("active Session has no Appium client")
+            if was_uncertain:
+                if appium_session_id is None:
+                    raise RuntimeError("uncertain Session recovery requires session ID")
+                old_client = self._client
+                if not old_client.locally_closed:
+                    cleanup_start = len(old_client.cleanup_errors)
+                    old_client.force_close()
+                    if not old_client.locally_closed:
+                        cleanup_errors = old_client.cleanup_errors[cleanup_start:]
+                        raise ResourceStateError(
+                            "cleanup_failed",
+                            operation_id,
+                            "not_sent",
+                            session=self,
+                            cleanup_errors=cleanup_errors,
+                        )
+                fresh_client = _new_connection(server_url)
+                rebind_options: Mac2Options | UiAutomator2Options | XCUITestOptions
+                if self._platform == "macos":
+                    rebind_options = Mac2Options()
+                elif self._platform == "ios":
+                    rebind_options = XCUITestOptions()
+                else:
+                    rebind_options = UiAutomator2Options()
+                driver = _BoundSessionWebDriver(
+                    command_executor=fresh_client,
+                    options=rebind_options,
+                    existing_session_id=appium_session_id,
+                    existing_caps=driver.caps,
+                )
+                with self._state_lock:
+                    self._client = fresh_client
+                    self._driver = driver
             gateway = _SessionOperationGateway(self, operation_id, control, deadline)
             try:
                 if self._platform == "macos":
@@ -1431,6 +1514,9 @@ class Session:
                     )
                 else:
                     gateway.request(driver.get_settings, "session_probed")
+                if was_uncertain:
+                    self._set_state("active")
+                    return True
                 return False
             except _DeadSessionError:
                 self._reattach_locked(operation_id, control, deadline)

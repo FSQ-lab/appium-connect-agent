@@ -88,7 +88,13 @@ if sys.platform == 'darwin':
         ServiceLifecycleError,
         supported_combinations,
     )
-    from appium_connect_agent.automation import Device, Element, Session
+    from appium_connect_agent.automation import (
+        Device,
+        Element,
+        Session,
+        frontmost_macos_app,
+        resolve_macos_app_bundle,
+    )
     assert RuntimeSettings is LocalSettings
     assert callable(Runtime) and hasattr(Runtime, 'start_managed') and hasattr(Runtime, 'cleanup_managed')
     assert hasattr(Runtime, 'stop_managed') and hasattr(Runtime, 'restart_managed')
@@ -107,6 +113,7 @@ if sys.platform == 'darwin':
     assert hasattr(Device, 'install_app') and hasattr(Device, 'remove_app')
     assert hasattr(Device, 'take_screenshot') and hasattr(Device, 'tap_at') and hasattr(Device, 'swipe_between')
     assert hasattr(Element, 'inspect') and hasattr(Session, 'quit')
+    assert callable(frontmost_macos_app) and callable(resolve_macos_app_bundle)
 else:
     from appium_connect_agent.integrations import TOOL_CATALOG
     assert len(TOOL_CATALOG.specs) == 22

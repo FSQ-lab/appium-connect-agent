@@ -928,6 +928,20 @@ def _visible_keep(roots: tuple[_ParsedNode, ...]) -> set[_ParsedNode]:
     return keep
 
 
+def _node_depths(roots: tuple[_ParsedNode, ...]) -> tuple[dict[_ParsedNode, int], int]:
+    depths: dict[_ParsedNode, int] = {}
+    max_depth = 0
+    stack: list[tuple[_ParsedNode, int]] = [(root, 1) for root in reversed(roots)]
+    while stack:
+        node, depth = stack.pop()
+        depths[node] = depth
+        if depth > max_depth:
+            max_depth = depth
+        for child in reversed(node.children):
+            stack.append((child, depth + 1))
+    return depths, max_depth
+
+
 def _tree_json(node: TreeNode, parent_bounds: Bounds | None = None) -> object:
     result: dict[str, object] = {
         "children": [],
@@ -1511,6 +1525,23 @@ def _mac2_tree_result(
         )
         complete = False
         projected, encoded = build(keep, coverage, complete)
+        if encoded is None and keep:
+            depths, max_depth = _node_depths(roots)
+            max_kept_depth = max((depths[node] for node in keep), default=1)
+            for target_depth in range(min(max_depth, max_kept_depth) - 1, 0, -1):
+                pruned = {node for node in keep if depths[node] <= target_depth}
+                if not pruned:
+                    break
+                coverage = (
+                    "visible_with_ancestors_and_offscreen"
+                    if any(
+                        node.viewport_relation.startswith("outside_") for node in pruned
+                    )
+                    else "visible_with_ancestors"
+                )
+                projected, encoded = build(pruned, coverage, False)
+                if encoded is not None:
+                    break
     if encoded is None:
         raise _error(CommandError, "observation_too_large", gateway)
     gateway.checkpoint(response_received=True)

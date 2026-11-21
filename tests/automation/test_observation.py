@@ -3806,3 +3806,49 @@ def test_ios_source_metadata_reflects_configured_xcuitest_snapshot_max_depth(
         assert structure.source.snapshot_max_depth == 25
         assert json.loads(structure.to_json())["source"]["snapshot_max_depth"] == 25
         tuned_session.quit()
+
+
+def test_mac2_tree_adaptive_bottom_up_depth_pruning_before_observation_too_large(
+    service: ElementProtocolService,
+) -> None:
+    leaf_label = "L" * 4_500
+    groups = []
+    for group_idx in range(10):
+        leaves = "".join(
+            f'<XCUIElementTypeStaticText identifier="leaf-{group_idx}-{leaf_idx}" '
+            f'label="{leaf_label}" enabled="true" selected="false" '
+            f'x="10" y="10" width="100" height="20"/>'
+            for leaf_idx in range(13)
+        )
+        groups.append(
+            f'<XCUIElementTypeGroup identifier="group-{group_idx}" '
+            f'label="Group {group_idx}" enabled="true" selected="false" '
+            f'x="0" y="0" width="800" height="600">{leaves}</XCUIElementTypeGroup>'
+        )
+    service.source = (
+        '<XCUIElementTypeApplication identifier="com.example.dense" '
+        'label="DenseApp" enabled="true" selected="false" '
+        f'x="0" y="0" width="1440" height="900">{"".join(groups)}'
+        "</XCUIElementTypeApplication>"
+    )
+    with connected(service) as connection:
+        session = mac_session_for(service, connection)
+        pruned = session.observe_tree()
+        assert pruned.complete_for_requested_scope is False
+        assert pruned.coverage == "visible_with_ancestors"
+        assert len(pruned.to_json()) <= 524_288
+        assert len(pruned.roots) == 1
+        assert len(pruned.roots[0].children) == 10
+        assert all(child.children == () for child in pruned.roots[0].children)
+
+        huge_root_label = "R" * 530_000
+        service.source = (
+            '<XCUIElementTypeApplication identifier="com.example.huge" '
+            f'label="{huge_root_label}" enabled="true" selected="false" '
+            'x="0" y="0" width="1440" height="900"/>'
+        )
+        with pytest.raises(CommandError) as too_large:
+            session.observe_tree()
+        assert too_large.value.code == "observation_too_large"
+        assert session.session_info().state == "active"
+        session.quit()

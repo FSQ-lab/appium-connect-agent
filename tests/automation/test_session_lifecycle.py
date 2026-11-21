@@ -78,6 +78,8 @@ class ProtocolService:
         self.base_path = base_path
         self.requests: list[Request] = []
         self.create_plans: deque[ResponsePlan] = deque()
+        self.execute_plans: deque[ResponsePlan] = deque()
+        self.get_plans: deque[ResponsePlan] = deque()
         self.quit_plans: deque[ResponsePlan] = deque()
         self._lock = threading.Lock()
         self._session_number = 0
@@ -154,6 +156,8 @@ class ProtocolService:
         with self._lock:
             if method == "POST" and self.create_plans:
                 return self.create_plans.popleft()
+            if method == "GET" and self.get_plans:
+                return self.get_plans.popleft()
             if method == "DELETE" and self.quit_plans:
                 return self.quit_plans.popleft()
             if method == "POST":
@@ -182,6 +186,15 @@ class ProtocolService:
                     }
                 ),
             )
+            return
+        if handler.command == "POST" and handler.path.endswith("/execute/sync"):
+            with self._lock:
+                plan = (
+                    self.execute_plans.popleft()
+                    if self.execute_plans
+                    else ResponsePlan(payload={"value": None})
+                )
+            self._send(handler, plan)
             return
         if handler.command == "POST" and handler.path != f"{self.base_path}/session":
             self._send(handler, ResponsePlan(status=404))
@@ -2085,21 +2098,56 @@ def test_mac2_app_bundle_and_inputs_are_validated_before_request(
     assert appium_caps(create)["appium:appPath"] == str(app)
 
 
-def test_mac2_rejects_symlinked_app_ancestor_without_echo(
+def test_mac2_resolves_symlinked_app_bundle_and_rejects_broken_or_symlinked_plist_without_echo(
     service: ProtocolService, tmp_path: Path
 ) -> None:
-    real = tmp_path.resolve() / "real"
-    contents = real / "Sample.app" / "Contents"
+    root = tmp_path.resolve()
+    real = root / "real"
+    real_app = real / "Sample.app"
+    contents = real_app / "Contents"
     contents.mkdir(parents=True)
     (contents / "Info.plist").write_bytes(b"plist")
-    link = tmp_path.resolve() / "linked"
-    link.symlink_to(real, target_is_directory=True)
-    app = link / "Sample.app"
-    with connected(service) as connection, pytest.raises(InvalidRequestError) as caught:
-        create_mac2_session(connection, app_path=app)
-    assert caught.value.code == "invalid_argument"
-    assert str(app) not in str(caught.value)
-    assert service.lifecycle_requests() == []
+    parent_link = root / "linked"
+    parent_link.symlink_to(real, target_is_directory=True)
+    bundle_link = root / "CaskLinked.app"
+    bundle_link.symlink_to(real_app, target_is_directory=True)
+
+    broken_link = root / "secret-broken.app"
+    broken_link.symlink_to(root / "nonexistent.app")
+    loop_a = root / "secret-loop-a.app"
+    loop_b = root / "secret-loop-b.app"
+    loop_a.symlink_to(loop_b)
+    loop_b.symlink_to(loop_a)
+    symlink_plist_app = root / "secret-plist-link.app"
+    (symlink_plist_app / "Contents").mkdir(parents=True)
+    ext_plist = root / "secret.plist"
+    ext_plist.write_bytes(b"plist")
+    (symlink_plist_app / "Contents" / "Info.plist").symlink_to(ext_plist)
+
+    with connected(service) as connection:
+        via_parent = create_mac2_session(
+            connection, app_path=parent_link / "Sample.app"
+        )
+        via_parent.quit()
+        via_bundle = create_mac2_session(connection, app_path=bundle_link)
+        via_bundle.quit()
+        creates = [
+            req
+            for req in service.lifecycle_requests()
+            if req.method == "POST" and req.path.endswith("/session")
+        ]
+        assert len(creates) == 2
+        assert appium_caps(creates[0])["appium:appPath"] == str(real_app)
+        assert appium_caps(creates[1])["appium:appPath"] == str(real_app)
+
+        before = list(service.lifecycle_requests())
+        for bad_path in (broken_link, loop_a, symlink_plist_app):
+            with pytest.raises(InvalidRequestError) as caught:
+                create_mac2_session(connection, app_path=bad_path)
+            assert caught.value.code == "invalid_argument"
+            assert str(bad_path) not in str(caught.value)
+            assert str(ext_plist) not in str(caught.value)
+        assert service.lifecycle_requests() == before
 
 
 def test_mac2_locator_rules_and_android_only_device_action_are_zero_request(
@@ -3122,3 +3170,176 @@ def test_xcuitest_unknown_create_redacts_chain_and_disposes_retained_session(
         retained.dispose()
         assert retained.session_info().state == "disposed"
         assert owner.count == 0
+
+
+def test_ensure_alive_recovers_uncertain_session_on_healthy_or_dead_remote_and_rejects_uncreated(
+    service: ProtocolService,
+) -> None:
+    service.create_plans.append(ResponsePlan(disconnect=True))
+    with managed_connection(service) as (connection, owner):
+        with pytest.raises(ResourceStateError) as create_unknown:
+            create_mac2_session(connection, bundle_id="com.apple.calculator")
+        uncreated = create_unknown.value.session
+        assert uncreated is not None
+        assert uncreated.session_info().state == "uncertain"
+        assert uncreated.session_info().appium_session_id is None
+        with pytest.raises(InvalidSessionStateError) as rejected:
+            uncreated.ensure_alive()
+        assert_error(
+            rejected.value, InvalidSessionStateError, "session_invalid", "not_sent"
+        )
+        assert uncreated.session_info().state == "uncertain"
+        uncreated.dispose()
+        assert owner.count == 0
+    with connected(service) as connection:
+        android = create_session(connection, "uncertain-recover-android")
+        initial_id = android.session_info().appium_session_id
+        assert initial_id is not None
+
+        # Inject old-client close failure while uncertain: ensure_alive() must refuse to publish
+        # a fresh client or restore active, keeping old_client reachable for retry with redacted cleanup.
+        old_client = android._client
+        android._set_state("uncertain")
+        close_attempts = 0
+        real_clear = old_client._conn.clear
+
+        def flaky_clear() -> None:
+            nonlocal close_attempts
+            close_attempts += 1
+            if close_attempts == 1:
+                raise OSError("SECRET_POOL_CLOSE_FAILURE")
+            real_clear()
+
+        old_client._conn.clear = flaky_clear
+        with pytest.raises(ResourceStateError) as cleanup_err:
+            android.ensure_alive()
+        assert_error(
+            cleanup_err.value,
+            ResourceStateError,
+            "cleanup_failed",
+            "not_sent",
+            retains_session=True,
+        )
+        assert cleanup_err.value.session is android
+        assert len(cleanup_err.value.cleanup_errors) == 1
+        assert android.session_info().state == "uncertain"
+        assert android._client is old_client
+        assert old_client.locally_closed is False
+
+        # Retry succeeds once old_client closes cleanly: fresh public WebDriver binds without POST /session.
+        posts_before = [
+            r
+            for r in service.lifecycle_requests()
+            if r.method == "POST" and r.path.endswith("/session")
+        ]
+        assert android.ensure_alive() is True
+        posts_after = [
+            r
+            for r in service.lifecycle_requests()
+            if r.method == "POST" and r.path.endswith("/session")
+        ]
+        assert len(posts_after) == len(posts_before)
+        assert old_client.locally_closed is True
+        assert android._client is not old_client
+        assert android.session_info().state == "active"
+        assert android.session_info().appium_session_id == initial_id
+        assert android.ensure_alive() is False
+
+        # Mac2 uncertain close failure must redact cleanup_errors with zero secret echo, then recover cleanly.
+        mac = create_mac2_session(connection, bundle_id="com.apple.calculator")
+        mac_initial_id = mac.session_info().appium_session_id
+        assert mac_initial_id is not None
+        mac_old_client = mac._client
+        mac._set_state("uncertain")
+        mac_close_attempts = 0
+        mac_real_clear = mac_old_client._conn.clear
+
+        def mac_flaky_clear() -> None:
+            nonlocal mac_close_attempts
+            mac_close_attempts += 1
+            if mac_close_attempts == 1:
+                raise OSError("SECRET_MAC_POOL_CLOSE_CANARY")
+            mac_real_clear()
+
+        mac_old_client._conn.clear = mac_flaky_clear
+        with pytest.raises(ResourceStateError) as mac_cleanup_err:
+            mac.ensure_alive()
+        assert_error(
+            mac_cleanup_err.value,
+            ResourceStateError,
+            "cleanup_failed",
+            "not_sent",
+            retains_session=True,
+        )
+        assert "SECRET_MAC_POOL_CLOSE_CANARY" not in repr(mac_cleanup_err.value)
+        assert "SECRET_MAC_POOL_CLOSE_CANARY" not in repr(
+            mac_cleanup_err.value.cleanup_errors
+        )
+        assert mac.session_info().state == "uncertain"
+        assert mac._client is mac_old_client
+        service.execute_plans.append(
+            ResponsePlan(
+                payload={
+                    "value": [
+                        {
+                            "id": 1,
+                            "isMain": True,
+                            "rect": {"x": 0, "y": 0, "width": 1440, "height": 900},
+                        }
+                    ]
+                }
+            )
+        )
+        assert mac.ensure_alive() is True
+        assert mac_old_client.locally_closed is True
+        assert mac._client is not mac_old_client
+        assert mac.session_info().state == "active"
+        assert mac.session_info().appium_session_id == mac_initial_id
+        mac.quit()
+
+        # Active + deterministically dead remote session with close failure inside _reattach_locked ->
+        # refuses to abandon old client, then succeeds on retry.
+        reattach_old_client = android._client
+        reattach_close_attempts = 0
+        reattach_real_clear = reattach_old_client._conn.clear
+
+        def reattach_flaky_clear() -> None:
+            nonlocal reattach_close_attempts
+            reattach_close_attempts += 1
+            if reattach_close_attempts == 1:
+                raise OSError("SECRET_REATTACH_CLOSE_FAILURE")
+            reattach_real_clear()
+
+        reattach_old_client._conn.clear = reattach_flaky_clear
+        dead_404 = ResponsePlan(
+            status=404,
+            payload={
+                "value": {
+                    "error": "invalid session id",
+                    "message": "session is either terminated or not started",
+                    "stacktrace": "",
+                }
+            },
+        )
+        service.get_plans.append(dead_404)
+        with pytest.raises(ResourceStateError) as reattach_cleanup_err:
+            android.ensure_alive()
+        assert_error(
+            reattach_cleanup_err.value,
+            ResourceStateError,
+            "cleanup_failed",
+            "not_sent",
+            retains_session=True,
+        )
+        assert android._client is reattach_old_client
+        assert reattach_old_client.locally_closed is False
+
+        # Uncertain + deterministically dead remote session -> ensure_alive() re-attaches non-destructively and returns True.
+        android._set_state("uncertain")
+        android._client.force_close()
+        assert reattach_old_client.locally_closed is True
+        service.get_plans.append(dead_404)
+        assert android.ping() is True
+        assert android.session_info().state == "active"
+        assert android.session_info().appium_session_id != initial_id
+        android.quit()
