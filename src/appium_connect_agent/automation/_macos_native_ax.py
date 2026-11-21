@@ -1383,8 +1383,7 @@ def _observe_macos_ax_with_gateway(
         request_state="response_received" if gateway.completed_steps else "not_sent",
         backend=ax,
     )
-    if hasattr(gateway, "observed_at"):
-        gateway.observed_at = datetime.now(UTC)  # type: ignore[misc]
+    gateway.observed_at = datetime.now(UTC)
     gateway.complete("ax_tree_captured")
     return _mac2_tree_result(
         xml_text,

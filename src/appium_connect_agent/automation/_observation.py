@@ -66,8 +66,7 @@ class _ObservationGateway(Protocol):
     @property
     def platform(self) -> Literal["android", "macos", "ios"]: ...
 
-    @property
-    def observed_at(self) -> datetime | None: ...
+    observed_at: datetime | None
 
     def complete(self, step: str) -> None: ...
 
