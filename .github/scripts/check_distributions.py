@@ -92,7 +92,9 @@ if sys.platform == 'darwin':
         Device,
         Element,
         Session,
+        activate_macos_app_native,
         frontmost_macos_app,
+        observe_macos_ax_tree,
         resolve_macos_app_bundle,
     )
     assert RuntimeSettings is LocalSettings
@@ -112,8 +114,10 @@ if sys.platform == 'darwin':
     assert combinations[0].driver_version == '8.7.0'
     assert hasattr(Device, 'install_app') and hasattr(Device, 'remove_app')
     assert hasattr(Device, 'take_screenshot') and hasattr(Device, 'tap_at') and hasattr(Device, 'swipe_between')
+    assert hasattr(Device, 'activate_macos_app_native') and hasattr(Session, 'observe_macos_ax_tree')
     assert hasattr(Element, 'inspect') and hasattr(Session, 'quit')
     assert callable(frontmost_macos_app) and callable(resolve_macos_app_bundle)
+    assert callable(observe_macos_ax_tree) and callable(activate_macos_app_native)
 else:
     from appium_connect_agent.integrations import TOOL_CATALOG
     assert len(TOOL_CATALOG.specs) == 22

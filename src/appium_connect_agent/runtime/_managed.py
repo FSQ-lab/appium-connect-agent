@@ -13,6 +13,7 @@ import stat
 import subprocess
 import time
 from contextlib import AbstractContextManager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, Thread, get_ident
 from types import TracebackType
@@ -55,9 +56,12 @@ if TYPE_CHECKING:
     from ._diagnostics import Runtime
 
 _LSOF = Path("/usr/sbin/lsof")
+_PS = Path("/bin/ps")
 _STREAM_LIMIT = 64 * 1024
 _PROBE_LIMIT = 16 * 1024
+_PS_SNAPSHOT_LIMIT = 1024 * 1024
 _SERVICE_RECORD = "service.json"
+_ORPHAN_WDA_BASENAMES = frozenset({"WebDriverAgentRunner-Runner", "xcodebuild"})
 
 
 def _managed_url(
@@ -87,7 +91,11 @@ def _sleep(operation: _Operation) -> None:
 
 
 def _bounded_command(
-    operation: _Operation, argv: list[str], timeout: float
+    operation: _Operation,
+    argv: list[str],
+    timeout: float,
+    *,
+    limit: int = _PROBE_LIMIT,
 ) -> tuple[int, bytes, bytes, bool]:
     process = subprocess.Popen(
         argv,
@@ -121,7 +129,7 @@ def _bounded_command(
                         selector.unregister(key.fd)
                         break
                     target = buffers[key.data]
-                    available = _PROBE_LIMIT - len(target)
+                    available = limit - len(target)
                     if available:
                         target.extend(block[:available])
                     if len(block) > available:
@@ -148,6 +156,180 @@ def _bounded_command(
             process.stderr.close()
 
 
+@dataclass(frozen=True, slots=True)
+class _DetachedDescendantIdentity:
+    pid: int
+    pgid: int
+    uid: int
+    lstart: tuple[str, str, str, str, str]
+    basename: str
+    exclusive_pgid_leader: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _PsProcessRow:
+    pid: int
+    ppid: int
+    pgid: int
+    uid: int
+    lstart: tuple[str, str, str, str, str]
+    basename: str
+
+
+def _parse_ps_identity_rows(text: str) -> dict[int, _PsProcessRow]:
+    rows: dict[int, _PsProcessRow] = {}
+    for raw_line in text.splitlines():
+        parts = raw_line.strip().split(None, 9)
+        if len(parts) < 10:
+            continue
+        pid_s, ppid_s, pgid_s, uid_s = parts[0], parts[1], parts[2], parts[3]
+        if not (
+            pid_s.isdigit()
+            and ppid_s.isdigit()
+            and pgid_s.isdigit()
+            and uid_s.isdigit()
+        ):
+            continue
+        pid = int(pid_s)
+        ppid = int(ppid_s)
+        pgid = int(pgid_s)
+        uid = int(uid_s)
+        if pid <= 1:
+            continue
+        lstart = (parts[4], parts[5], parts[6], parts[7], parts[8])
+        comm_text = parts[9].strip()
+        if not comm_text:
+            continue
+        rows[pid] = _PsProcessRow(
+            pid=pid,
+            ppid=ppid,
+            pgid=pgid,
+            uid=uid,
+            lstart=lstart,
+            basename=os.path.basename(comm_text),
+        )
+    return rows
+
+
+def _query_ps_identity_rows(
+    operation: _Operation, *, pids: tuple[int, ...] | None = None
+) -> dict[int, _PsProcessRow] | None:
+    try:
+        meta = os.lstat(_PS)
+        if (
+            stat.S_ISLNK(meta.st_mode)
+            or not stat.S_ISREG(meta.st_mode)
+            or not os.access(_PS, os.X_OK)
+        ):
+            return None
+        if pids is None:
+            argv = [
+                str(_PS),
+                "-A",
+                "-o",
+                "pid=,ppid=,pgid=,uid=,lstart=,comm=",
+            ]
+            limit = _PS_SNAPSHOT_LIMIT
+        else:
+            if not pids:
+                return {}
+            argv = [
+                str(_PS),
+                "-p",
+                ",".join(str(pid) for pid in pids),
+                "-o",
+                "pid=,ppid=,pgid=,uid=,lstart=,comm=",
+            ]
+            limit = _PROBE_LIMIT
+        code, stdout, _, truncated = _bounded_command(
+            operation,
+            argv,
+            timeout=2.0,
+            limit=limit,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if truncated:
+        return None
+    if code != 0:
+        # Single/list -p returns exit code 1 on macOS when none of the target PIDs exist anymore
+        if pids is not None and code == 1 and not stdout.strip():
+            return {}
+        return None
+    return _parse_ps_identity_rows(stdout.decode("utf-8", errors="replace"))
+
+
+def _snapshot_detached_wda_descendants(
+    operation: _Operation, root_pid: int, primary_pgid: int
+) -> tuple[_DetachedDescendantIdentity, ...]:
+    """Snapshot current-UID separate-PGID WDA/xcodebuild descendants with unforgeable start identities."""
+    if root_pid <= 0:
+        return ()
+    uid = os.getuid()
+    rows = _query_ps_identity_rows(operation)
+    if not rows:
+        return ()
+    children_by_ppid: dict[int, list[int]] = {}
+    members_by_pgid: dict[int, list[_PsProcessRow]] = {}
+    for row in rows.values():
+        children_by_ppid.setdefault(row.ppid, []).append(row.pid)
+        members_by_pgid.setdefault(row.pgid, []).append(row)
+
+    descendants: set[int] = set()
+    visited: set[int] = {root_pid}
+    stack = list(children_by_ppid.get(root_pid, ()))
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        descendants.add(current)
+        stack.extend(children_by_ppid.get(current, ()))
+
+    detached_wda: list[_DetachedDescendantIdentity] = []
+    for pid in sorted(descendants):
+        candidate = rows.get(pid)
+        if candidate is None or candidate.uid != uid:
+            continue
+        if (
+            candidate.pgid == primary_pgid
+            or candidate.basename not in _ORPHAN_WDA_BASENAMES
+        ):
+            continue
+        group_members = members_by_pgid.get(candidate.pgid, ())
+        exclusive_leader = (
+            candidate.pgid == candidate.pid
+            and bool(group_members)
+            and all(
+                member.uid == uid
+                and member.pid in descendants
+                and member.basename in _ORPHAN_WDA_BASENAMES
+                for member in group_members
+            )
+        )
+        detached_wda.append(
+            _DetachedDescendantIdentity(
+                pid=candidate.pid,
+                pgid=candidate.pgid,
+                uid=candidate.uid,
+                lstart=candidate.lstart,
+                basename=candidate.basename,
+                exclusive_pgid_leader=exclusive_leader,
+            )
+        )
+    return tuple(detached_wda)
+
+
+def _pid_state(pid: int) -> Literal["alive", "gone", "unknown"]:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "gone"
+    except OSError:
+        return "unknown"
+    return "alive"
+
+
 class _ManagedProcess:
     """One owned process group with continuously drained bounded streams."""
 
@@ -162,6 +344,7 @@ class _ManagedProcess:
         self._selector_closed = False
         self._closed = False
         self._group_gone = False
+        self._detached_descendants: dict[int, _DetachedDescendantIdentity] = {}
         for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             assert stream is not None
             os.set_blocking(stream.fileno(), False)
@@ -237,23 +420,162 @@ class _ManagedProcess:
     def alive(self) -> bool:
         return self.process.poll() is None and self.group_state() == "alive"
 
+    def _detached_state(
+        self, operation: _Operation
+    ) -> Literal["alive", "gone", "unknown"]:
+        if not self._detached_descendants:
+            return "gone"
+        alive_candidates: list[int] = []
+        for pid in list(self._detached_descendants):
+            state = _pid_state(pid)
+            if state == "gone":
+                self._detached_descendants.pop(pid, None)
+            elif state == "unknown":
+                return "unknown"
+            else:
+                alive_candidates.append(pid)
+        if not alive_candidates:
+            return "gone"
+        live_rows = _query_ps_identity_rows(operation, pids=tuple(alive_candidates))
+        if live_rows is None:
+            return "unknown"
+        has_alive = False
+        for pid in alive_candidates:
+            expected = self._detached_descendants.get(pid)
+            if expected is None:
+                continue
+            live = live_rows.get(pid)
+            if live is None:
+                if _pid_state(pid) == "gone":
+                    self._detached_descendants.pop(pid, None)
+                else:
+                    # PID exists under a different UID (PID reused by another user)
+                    self._detached_descendants.pop(pid, None)
+                continue
+            if (
+                live.uid != expected.uid
+                or live.lstart != expected.lstart
+                or live.basename != expected.basename
+                or live.basename not in _ORPHAN_WDA_BASENAMES
+            ):
+                # PID exited and was reused by an unrelated process — drop without touching!
+                self._detached_descendants.pop(pid, None)
+                continue
+            has_alive = True
+        return "alive" if has_alive else "gone"
+
+    def _signal_detached(self, operation: _Operation, sig: int) -> None:
+        if not self._detached_descendants:
+            return
+        uid = os.getuid()
+        all_rows = _query_ps_identity_rows(operation)
+        if all_rows is None:
+            # If full-system process table query fails or truncates, fall back to per-PID query
+            # and NEVER execute killpg (exact PID signals only after identity match).
+            pid_rows = _query_ps_identity_rows(
+                operation, pids=tuple(self._detached_descendants)
+            )
+            if pid_rows is None:
+                return
+            for pid, expected in list(self._detached_descendants.items()):
+                live = pid_rows.get(pid)
+                if live is None:
+                    if _pid_state(pid) == "gone":
+                        self._detached_descendants.pop(pid, None)
+                    continue
+                if (
+                    live.uid != expected.uid
+                    or live.lstart != expected.lstart
+                    or live.basename != expected.basename
+                    or live.basename not in _ORPHAN_WDA_BASENAMES
+                ):
+                    self._detached_descendants.pop(pid, None)
+                    continue
+                with suppress(ProcessLookupError):
+                    os.kill(pid, sig)
+            return
+
+        members_by_pgid: dict[int, list[_PsProcessRow]] = {}
+        for row in all_rows.values():
+            members_by_pgid.setdefault(row.pgid, []).append(row)
+
+        signaled_groups: set[int] = set()
+        for pid, expected in list(self._detached_descendants.items()):
+            live = all_rows.get(pid)
+            if live is None:
+                if _pid_state(pid) == "gone":
+                    self._detached_descendants.pop(pid, None)
+                continue
+            if (
+                live.uid != expected.uid
+                or live.lstart != expected.lstart
+                or live.basename != expected.basename
+                or live.basename not in _ORPHAN_WDA_BASENAMES
+            ):
+                self._detached_descendants.pop(pid, None)
+                continue
+            pgid_members = members_by_pgid.get(live.pgid, ())
+            can_killpg = (
+                expected.exclusive_pgid_leader
+                and live.pgid == expected.pgid
+                and live.pgid == pid
+                and live.pgid != self.group_id
+                and bool(pgid_members)
+                and all(
+                    member.uid == uid
+                    and member.basename in _ORPHAN_WDA_BASENAMES
+                    and (
+                        member.pid in self._detached_descendants
+                        and self._detached_descendants[member.pid].lstart
+                        == member.lstart
+                    )
+                    for member in pgid_members
+                )
+            )
+            if can_killpg:
+                if live.pgid not in signaled_groups:
+                    signaled_groups.add(live.pgid)
+                    with suppress(ProcessLookupError):
+                        os.killpg(live.pgid, sig)
+            else:
+                with suppress(ProcessLookupError):
+                    os.kill(pid, sig)
+
     def cleanup(self, operation: _Operation) -> bool:
         operation.checkpoint()
         state = self.group_state()
         if state == "unknown":
             return False
-        if state == "alive":
-            with suppress(ProcessLookupError):
-                os.killpg(self.group_id, signal.SIGTERM)
+        if state == "alive" and self.process.poll() is None:
+            for ident in _snapshot_detached_wda_descendants(
+                operation, self.process.pid, self.group_id
+            ):
+                self._detached_descendants.setdefault(ident.pid, ident)
+        detached = self._detached_state(operation)
+        if detached == "unknown":
+            return False
+        if state == "alive" or detached == "alive":
+            if state == "alive":
+                with suppress(ProcessLookupError):
+                    os.killpg(self.group_id, signal.SIGTERM)
+            if detached == "alive":
+                self._signal_detached(operation, signal.SIGTERM)
             gentle = min(operation.deadline, time.monotonic() + 2.0)
-            while self.group_state() == "alive" and time.monotonic() < gentle:
+            while (
+                self.group_state() == "alive"
+                or self._detached_state(operation) == "alive"
+            ) and time.monotonic() < gentle:
                 operation.checkpoint()
                 time.sleep(min(0.05, max(0.0, gentle - time.monotonic())))
             operation.checkpoint()
             if self.group_state() == "alive":
                 with suppress(ProcessLookupError):
                     os.killpg(self.group_id, signal.SIGKILL)
-        while self.group_state() == "alive":
+            if self._detached_state(operation) == "alive":
+                self._signal_detached(operation, signal.SIGKILL)
+        while (
+            self.group_state() == "alive" or self._detached_state(operation) == "alive"
+        ):
             operation.checkpoint()
             time.sleep(min(0.05, max(0.0, operation.deadline - time.monotonic())))
         if self.process.poll() is None:
@@ -272,6 +594,7 @@ class _ManagedProcess:
             self._close_streams()
         complete = (
             self.group_state() == "gone"
+            and self._detached_state(operation) == "gone"
             and self.process.poll() is not None
             and not self._thread.is_alive()
             and self._selector_closed

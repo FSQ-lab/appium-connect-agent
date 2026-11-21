@@ -7,7 +7,8 @@ import math
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, TypeVar, cast
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
 from xml.etree.ElementTree import Element as XmlElement
 from xml.etree.ElementTree import ParseError
 
@@ -53,6 +54,26 @@ from ._models import (
 
 if TYPE_CHECKING:
     from ._session import _SessionOperationGateway
+
+
+class _ObservationGateway(Protocol):
+    @property
+    def operation_id(self) -> str: ...
+
+    @property
+    def completed_steps(self) -> tuple[str, ...]: ...
+
+    @property
+    def platform(self) -> Literal["android", "macos", "ios"]: ...
+
+    @property
+    def observed_at(self) -> datetime | None: ...
+
+    def complete(self, step: str) -> None: ...
+
+    def checkpoint(self, *, response_received: bool = False) -> None: ...
+
+
 _Result = TypeVar("_Result")
 
 _MAX_JSON = 65_536
@@ -203,7 +224,7 @@ _UPSTREAM = {
 def _error(
     error_type: type[AutomationError],
     code: str,
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
     request_state: Literal["not_sent", "response_received"] = "response_received",
 ) -> AutomationError:
     return error_type(
@@ -303,7 +324,7 @@ def _json_value(value: object, *, macos: bool = False) -> object:
 
 def _canonical(
     value: object,
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
     *,
     maximum: int = _MAX_JSON,
 ) -> bytes | None:
@@ -325,7 +346,7 @@ def _canonical(
     return bytes(result)
 
 
-def _parse_boolean(value: object, gateway: _SessionOperationGateway) -> bool:
+def _parse_boolean(value: object, gateway: _ObservationGateway) -> bool:
     try:
         return _parse_boolean_value(value)
     except ValueError:
@@ -839,7 +860,7 @@ def _descendants(node: _ParsedNode) -> tuple[_ParsedNode, ...]:
 
 
 def _resolve_local(
-    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
+    root: _ParsedNode, element: Element, gateway: _ObservationGateway
 ) -> _ParsedNode:
     return _resolve_local_chain(root, element, gateway)[1]
 
@@ -1046,7 +1067,7 @@ def _mac2_viewport(displays: object, gateway: _SessionOperationGateway) -> Viewp
 def _parse_xcui_source(
     source: object,
     viewport: Viewport,
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
     *,
     ios: bool,
 ) -> tuple[_ParsedNode, ...]:
@@ -1197,7 +1218,7 @@ def _parse_xcui_source(
 
 
 def _parse_mac2_source(
-    source: object, viewport: Viewport, gateway: _SessionOperationGateway
+    source: object, viewport: Viewport, gateway: _ObservationGateway
 ) -> _ParsedNode:
     roots = _parse_xcui_source(source, viewport, gateway, ios=False)
     if len(roots) != 1:
@@ -1212,7 +1233,7 @@ def _parse_ios_source(
 
 
 def _mac2_xml_value(
-    node: _ParsedNode, name: str, gateway: _SessionOperationGateway
+    node: _ParsedNode, name: str, gateway: _ObservationGateway
 ) -> ObservedValue:
     if name == "type":
         return ObservedValue("value", node.tag)
@@ -1258,7 +1279,7 @@ def _mac2_xml_value(
 def _mac2_tree_node(
     node: _ParsedNode,
     children: tuple[TreeNode, ...],
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
 ) -> TreeNode:
     na = ObservedValue("not_applicable")
     return TreeNode(
@@ -1287,7 +1308,7 @@ def _mac2_tree_node(
 def _project_mac2_tree(
     roots: tuple[_ParsedNode, ...],
     keep: set[_ParsedNode] | None,
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
 ) -> tuple[TreeNode, ...]:
     projected: dict[_ParsedNode, TreeNode] = {}
     for index, node in enumerate(reversed(_all_nodes(roots))):
@@ -1482,7 +1503,9 @@ def _mac2_tree_result(
     metadata: SourceMetadata,
     viewport: Viewport,
     parent: Element | None,
-    gateway: _SessionOperationGateway,
+    gateway: _ObservationGateway,
+    *,
+    truncated_by_capture: bool = False,
 ) -> TreeObservation:
     root = _parse_mac2_source(source_text, viewport, gateway)
     roots = (root,) if parent is None else (_resolve_local(root, parent, gateway),)
@@ -1513,9 +1536,10 @@ def _mac2_tree_result(
         }
         return projected, _canonical(document, gateway, maximum=_MAX_TREE_JSON)
 
-    projected, encoded = build(None, "requested_scope", True)
+    initial_complete = not truncated_by_capture
+    projected, encoded = build(None, "requested_scope", initial_complete)
     coverage: Coverage = "requested_scope"
-    complete = True
+    complete = initial_complete
     if encoded is None:
         keep = _visible_keep(roots)
         coverage = (
@@ -1791,7 +1815,7 @@ def _observe_tree(
 
 
 def _resolve_local_chain(
-    root: _ParsedNode, element: Element, gateway: _SessionOperationGateway
+    root: _ParsedNode, element: Element, gateway: _ObservationGateway
 ) -> tuple[tuple[_ParsedNode, ...], _ParsedNode]:
     current = root
     matched: list[_ParsedNode] = []

@@ -86,6 +86,13 @@ from ._macos_actions import (
     _validate_velocity,
 )
 from ._macos_keyboard import MacKeyStroke
+from ._macos_native_ax import (
+    _DEFAULT_AX_MAX_DEPTH,
+    _DEFAULT_AX_MAX_NODES,
+    _DEFAULT_AX_TIMEOUT_SECONDS,
+    _observe_macos_ax_with_gateway,
+    _validate_ax_request_params,
+)
 from ._models import (
     AutomationError,
     AutomationPlatform,
@@ -109,6 +116,7 @@ from ._models import (
 from ._observation import (
     _inspect_element,
     _inspect_structure,
+    _mac2_viewport,
     _observe_tree,
     _validate_attributes,
     _validate_tree_parent,
@@ -446,6 +454,7 @@ def _validate_mac2_request(
     arguments: object,
     no_reset: object,
     skip_app_kill: object,
+    prefer_native_ax: object,
     show_server_logs: object,
     server_startup_timeout_ms: object,
     new_command_timeout_seconds: object,
@@ -461,6 +470,7 @@ def _validate_mac2_request(
     if (
         type(no_reset) is not bool
         or type(skip_app_kill) is not bool
+        or type(prefer_native_ax) is not bool
         or type(show_server_logs) is not bool
     ):
         raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
@@ -1129,6 +1139,7 @@ class Session:
     _server_startup_timeout_ms: int | None
     _show_server_logs: bool
     _show_xcode_log: bool
+    _prefer_native_ax: bool
     _skip_app_kill: bool
     _platform: AutomationPlatform
     _id: str
@@ -1162,6 +1173,7 @@ class Session:
         "_new_command_timeout_seconds",
         "_operation_gate",
         "_platform",
+        "_prefer_native_ax",
         "_reservation",
         "_runtime_connection",
         "_runtime_usage",
@@ -1213,6 +1225,7 @@ class Session:
         instance._server_startup_timeout_ms = None
         instance._show_server_logs = False
         instance._show_xcode_log = False
+        instance._prefer_native_ax = False
         instance._skip_app_kill = True
         instance._updated_wda_bundle_id = None
         instance._wda_launch_timeout_ms = None
@@ -1594,19 +1607,172 @@ class Session:
         self,
         *,
         parent: Element | None = None,
+        prefer_native_ax: bool | None = None,
+        bundle_id: str | None = None,
+        pid: int | None = None,
+        max_nodes: int | None = None,
+        max_depth: int | None = None,
         control: OperationControl | None = None,
     ) -> TreeObservation:
-        operation_id, control, _, deadline = _new_operation(control)
+        operation_id, control, started, deadline = _new_operation(control)
         valid_parent = (
             None
             if parent is None
             else _validate_tree_parent(parent, self, operation_id, self._platform)
         )
+        if prefer_native_ax is not None and type(prefer_native_ax) is not bool:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+        resolved_max_nodes = _DEFAULT_AX_MAX_NODES if max_nodes is None else max_nodes
+        resolved_max_depth = _DEFAULT_AX_MAX_DEPTH if max_depth is None else max_depth
+        valid_bundle_id, valid_pid, valid_max_nodes, valid_max_depth, _ = (
+            _validate_ax_request_params(
+                operation_id,
+                bundle_id=bundle_id,
+                pid=pid,
+                max_nodes=resolved_max_nodes,
+                max_depth=resolved_max_depth,
+                timeout_seconds=None,
+            )
+        )
+        has_explicit_ax_args = (
+            prefer_native_ax is not None
+            or bundle_id is not None
+            or pid is not None
+            or max_nodes is not None
+            or max_depth is not None
+        )
+        if self._platform != "macos":
+            if has_explicit_ax_args:
+                raise InvalidRequestError(
+                    "unsupported_operation", operation_id, "not_sent"
+                )
+            return self._run_operation(
+                operation_id,
+                control,
+                deadline,
+                lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
+            )
+
+        has_ax_target_or_limits = (
+            valid_bundle_id is not None
+            or valid_pid is not None
+            or max_nodes is not None
+            or max_depth is not None
+        )
+        if prefer_native_ax is False and has_ax_target_or_limits:
+            raise InvalidRequestError("invalid_argument", operation_id, "not_sent")
+
+        use_native_ax = (
+            True
+            if prefer_native_ax is True
+            else False
+            if prefer_native_ax is False
+            else (self._prefer_native_ax or has_ax_target_or_limits)
+        )
+        if use_native_ax:
+            effective_deadline = (
+                deadline
+                if deadline is not None
+                else started + _DEFAULT_AX_TIMEOUT_SECONDS
+            )
+
+            def _run_ax_tree(
+                driver: webdriver.Remote, gateway: _SessionOperationGateway
+            ) -> TreeObservation:
+                displays = gateway.request(
+                    lambda: driver.execute_script("macos: listDisplays"),
+                    "displays_read",
+                )
+                viewport = _mac2_viewport(displays, gateway)
+                return _observe_macos_ax_with_gateway(
+                    bundle_id=valid_bundle_id,
+                    pid=valid_pid,
+                    fallback_bundle_id=self._target_app_id,
+                    parent=valid_parent,
+                    max_nodes=valid_max_nodes,
+                    max_depth=valid_max_depth,
+                    control=control,
+                    deadline=effective_deadline,
+                    gateway=gateway,
+                    viewport=viewport,
+                )
+
+            return self._run_operation(
+                operation_id,
+                control,
+                effective_deadline,
+                _run_ax_tree,
+            )
+
         return self._run_operation(
             operation_id,
             control,
             deadline,
             lambda driver, gateway: _observe_tree(driver, valid_parent, gateway),
+        )
+
+    def observe_macos_ax_tree(
+        self,
+        *,
+        parent: Element | None = None,
+        bundle_id: str | None = None,
+        pid: int | None = None,
+        max_nodes: int = _DEFAULT_AX_MAX_NODES,
+        max_depth: int = _DEFAULT_AX_MAX_DEPTH,
+        timeout_seconds: float = _DEFAULT_AX_TIMEOUT_SECONDS,
+        control: OperationControl | None = None,
+    ) -> TreeObservation:
+        """Capture a zero-WDA-XML macOS Accessibility ``TreeObservation`` under this Session."""
+        operation_id, control, started, deadline = _new_operation(control)
+        valid_parent = (
+            None
+            if parent is None
+            else _validate_tree_parent(parent, self, operation_id, self._platform)
+        )
+        valid_bundle_id, valid_pid, valid_max_nodes, valid_max_depth, valid_timeout = (
+            _validate_ax_request_params(
+                operation_id,
+                bundle_id=bundle_id,
+                pid=pid,
+                max_nodes=max_nodes,
+                max_depth=max_depth,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        assert valid_timeout is not None
+        if self._platform != "macos":
+            raise InvalidRequestError("unsupported_operation", operation_id, "not_sent")
+        ax_deadline = started + valid_timeout
+        effective_deadline = (
+            min(deadline, ax_deadline) if deadline is not None else ax_deadline
+        )
+
+        def _run_ax_tree(
+            driver: webdriver.Remote, gateway: _SessionOperationGateway
+        ) -> TreeObservation:
+            displays = gateway.request(
+                lambda: driver.execute_script("macos: listDisplays"),
+                "displays_read",
+            )
+            viewport = _mac2_viewport(displays, gateway)
+            return _observe_macos_ax_with_gateway(
+                bundle_id=valid_bundle_id,
+                pid=valid_pid,
+                fallback_bundle_id=self._target_app_id,
+                parent=valid_parent,
+                max_nodes=valid_max_nodes,
+                max_depth=valid_max_depth,
+                control=control,
+                deadline=effective_deadline,
+                gateway=gateway,
+                viewport=viewport,
+            )
+
+        return self._run_operation(
+            operation_id,
+            control,
+            effective_deadline,
+            _run_ax_tree,
         )
 
     def _inspect_structure(
@@ -2793,6 +2959,7 @@ def _create_mac2_session(
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
     skip_app_kill: bool = True,
+    prefer_native_ax: bool = False,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,
@@ -2808,6 +2975,7 @@ def _create_mac2_session(
             arguments,
             no_reset,
             skip_app_kill,
+            prefer_native_ax,
             show_server_logs,
             server_startup_timeout_ms,
             new_command_timeout_seconds,
@@ -2838,10 +3006,10 @@ def _create_mac2_session(
         raise
     session._reservation = reservation
     session._new_command_timeout_seconds = valid_timeout
+    session._prefer_native_ax = prefer_native_ax
     session._skip_app_kill = skip_app_kill
     session._show_server_logs = show_server_logs
     session._server_startup_timeout_ms = server_startup_timeout_ms
-
     try:
         client = _new_connection(server_url)
         session._client = client
@@ -2924,6 +3092,7 @@ def create_mac2_session(
     arguments: Sequence[str] | None = None,
     no_reset: bool = True,
     skip_app_kill: bool = True,
+    prefer_native_ax: bool = False,
     show_server_logs: bool = False,
     server_startup_timeout_ms: int | None = None,
     new_command_timeout_seconds: float = 900.0,
@@ -2939,6 +3108,7 @@ def create_mac2_session(
             arguments=arguments,
             no_reset=no_reset,
             skip_app_kill=skip_app_kill,
+            prefer_native_ax=prefer_native_ax,
             show_server_logs=show_server_logs,
             server_startup_timeout_ms=server_startup_timeout_ms,
             new_command_timeout_seconds=new_command_timeout_seconds,
