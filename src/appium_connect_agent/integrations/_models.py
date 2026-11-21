@@ -668,6 +668,7 @@ _ELEMENT_ATTRIBUTE: TypeAlias = Literal[
     "accessible",
     "index",
     "traits",
+    "uid",
 ]
 _TREE_VALUE_NAME: TypeAlias = Literal[
     "type",

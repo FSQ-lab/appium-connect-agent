@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from appium.webdriver.webdriver import WebDriver
+from selenium.common.exceptions import InvalidElementStateException, WebDriverException
 from selenium.webdriver.remote.webelement import WebElement
 
 from ._element import Element
@@ -31,6 +32,24 @@ _IOS_SCROLL_BY = frozenset(
 )
 _JAVA_INT_MIN = -(2**31)
 _JAVA_INT_MAX = 2**31 - 1
+
+_HIDE_KEYBOARD_KEYS = (
+    "done",
+    "Done",
+    "return",
+    "Return",
+    "go",
+    "Go",
+    "search",
+    "Search",
+    "send",
+    "Send",
+    "next",
+    "Next",
+    "hide",
+    "Hide keyboard",
+)
+_KEYBOARD_NOT_DISMISSED = "did not know how to dismiss the keyboard"
 
 
 def _none(value: object) -> None:
@@ -362,8 +381,32 @@ def _ios_install_app(
     gateway.complete("action_completed")
 
 
+def _keyboard_cannot_be_dismissed(error: CommandError) -> bool:
+    cause = error.__cause__
+    if type(cause) is InvalidElementStateException:
+        return True
+    if not isinstance(cause, WebDriverException):
+        return False
+    message = getattr(cause, "msg", None)
+    return isinstance(message, str) and _KEYBOARD_NOT_DISMISSED in message.casefold()
+
+
 def _ios_hide_keyboard(driver: WebDriver, gateway: _SessionOperationGateway) -> bool:
-    _ios_execute_none(driver, gateway, "mobile: hideKeyboard", {})
+    try:
+        _ios_execute_none(
+            driver,
+            gateway,
+            "mobile: hideKeyboard",
+            {"keys": _HIDE_KEYBOARD_KEYS},
+        )
+    except CommandError as error:
+        if (
+            error.code == "command_failed"
+            and error.request_state == "response_received"
+            and _keyboard_cannot_be_dismissed(error)
+        ):
+            return False
+        raise
     return True
 
 

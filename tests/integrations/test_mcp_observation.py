@@ -70,6 +70,7 @@ _ATTRIBUTES = (
     "accessible",
     "index",
     "traits",
+    "uid",
 )
 
 

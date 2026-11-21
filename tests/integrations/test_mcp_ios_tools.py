@@ -182,6 +182,7 @@ class _IntegrationIosProtocolService(IosActionProtocolService):
                 ("target", "displayed"): True,
                 ("target", "index"): "3",
                 ("target", "traits"): "StaticText",
+                ("target", "UID"): "wda-uid-target",
             }
         )
 
@@ -607,7 +608,7 @@ def test_real_ios_protocol_exercises_complete_integration_matrix(
                     **common,
                     mode="attributes",
                     locator=_locator(),
-                    attributes=["accessible", "index", "traits"],
+                    attributes=["accessible", "index", "traits", "uid"],
                 ),
             )
             observed = attributes.model_dump(mode="json")["data"]["document"][
@@ -617,6 +618,7 @@ def test_real_ios_protocol_exercises_complete_integration_matrix(
                 ("accessible", True),
                 ("index", 3),
                 ("traits", "StaticText"),
+                ("uid", "wda-uid-target"),
             ]
             structure = await application.dispatch(
                 "appium_ui_observe",

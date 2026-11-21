@@ -3348,6 +3348,7 @@ def test_ios_predicate_attributes_and_appium_aut_tree(
             ("target", "displayed"): True,
             ("target", "index"): "3",
             ("target", "traits"): "StaticText",
+            ("target", "UID"): "wda-uid-target",
         }
     )
     service.source = (
@@ -3374,6 +3375,7 @@ def test_ios_predicate_attributes_and_appium_aut_tree(
         "bounds",
         "index",
         "traits",
+        "uid",
     )
     with connected(service) as connection:
         session = ios_session_for(service, connection, monkeypatch)
@@ -3388,6 +3390,11 @@ def test_ios_predicate_attributes_and_appium_aut_tree(
             "value": "result",
         }
         assert inspection["payload"]["attributes"][13]["value"] == 3
+        assert inspection["payload"]["attributes"][15] == {
+            "name": "uid",
+            "state": "value",
+            "value": "wda-uid-target",
+        }
         class_element = session.element(
             "class name", "XCUIElementTypeStaticText", predicate="label == 'Result'"
         )
@@ -3405,6 +3412,57 @@ def test_ios_predicate_attributes_and_appium_aut_tree(
         assert root["children"][0]["visible"] == "not_visible"
         assert root["children"][0]["viewport_relation"] == "inside"
         session.quit()
+
+
+def test_ios_uid_missing_and_invalid_response_states(
+    service: ElementProtocolService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service.attributes[("target", "UID")] = None
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        element = session.element("id", "target")
+        missing = element.inspect(attributes=("uid",))
+        assert missing.attributes[0].name == "uid"
+        assert missing.attributes[0].state == "missing"
+
+        session.quit()
+
+    class _Element:
+        def get_attribute(self, name: str) -> object:
+            assert name == "UID"
+            return 7
+
+    class _Gateway:
+        operation_id = "uid-invalid"
+        completed_steps: tuple[str, ...] = ()
+
+        def request(self, action: Callable[[], object]) -> object:
+            return action()
+
+    with pytest.raises(CommandError) as caught:
+        observation_module._read_ios_attribute(
+            cast(Any, _Element()), "uid", cast(Any, _Gateway())
+        )
+    assert caught.value.code == "source_invalid"
+    assert caught.value.request_state == "response_received"
+
+
+def test_uid_attribute_rejects_android_and_mac2_without_send(
+    service: ElementProtocolService,
+) -> None:
+    with connected(service) as connection:
+        sessions = (
+            session_for(service, connection, "android-uid-reject"),
+            mac_session_for(service, connection),
+        )
+        for session in sessions:
+            before = service.snapshot()
+            with pytest.raises(InvalidRequestError) as caught:
+                session.element("id", "target").inspect(attributes=("uid",))
+            assert caught.value.code == "unsupported_operation"
+            assert caught.value.request_state == "not_sent"
+            assert service.snapshot() == before
+            session.quit()
 
 
 def test_ios_tree_uses_geometry_when_visible_and_accessible_are_excluded(

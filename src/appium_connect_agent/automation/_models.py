@@ -58,6 +58,7 @@ ElementAttribute: TypeAlias = Literal[
     "accessible",
     "index",
     "traits",
+    "uid",
 ]
 ValueState: TypeAlias = Literal["value", "missing", "unknown", "not_applicable"]
 Coverage: TypeAlias = Literal[
