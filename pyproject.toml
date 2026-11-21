@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "appium-connect-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local Appium readiness and automation for AI agent integrations."
 readme = "README.md"
 license = "MIT"
