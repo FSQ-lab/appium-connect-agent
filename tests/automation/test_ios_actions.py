@@ -421,7 +421,27 @@ def test_device_exact_commands_and_application_management(
             ("mobile: pressButton", {"name": "home"}),
             ("mobile: tap", {"x": 1, "y": 2}),
             ("mobile: keys", {"keys": ["a"]}),
-            ("mobile: hideKeyboard", {}),
+            (
+                "mobile: hideKeyboard",
+                {
+                    "keys": [
+                        "done",
+                        "Done",
+                        "return",
+                        "Return",
+                        "go",
+                        "Go",
+                        "search",
+                        "Search",
+                        "send",
+                        "Send",
+                        "next",
+                        "Next",
+                        "hide",
+                        "Hide keyboard",
+                    ]
+                },
+            ),
             ("mobile: getClipboard", {"contentType": "plaintext"}),
             (
                 "mobile: setClipboard",
@@ -449,6 +469,102 @@ def test_device_exact_commands_and_application_management(
         timeout_ms = install_payload["timeoutMs"]
         assert type(timeout_ms) is int
         assert 1 <= timeout_ms <= 5_000
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("error_name", "message"),
+    [
+        ("invalid element state", "keyboard remains visible"),
+        ("unknown error", "Did not know how to dismiss the keyboard"),
+    ],
+)
+def test_ios_hide_keyboard_returns_false_for_deterministic_wda_rejection(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    error_name: str,
+    message: str,
+) -> None:
+    service.queue(
+        "action",
+        ResponsePlan(
+            status=400,
+            payload={
+                "value": {
+                    "error": error_name,
+                    "message": message,
+                    "stacktrace": "",
+                }
+            },
+        ),
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        assert session.device.hide_keyboard() is False
+        assert script_and_payload(script_requests(service)[0]) == (
+            "mobile: hideKeyboard",
+            {
+                "keys": [
+                    "done",
+                    "Done",
+                    "return",
+                    "Return",
+                    "go",
+                    "Go",
+                    "search",
+                    "Search",
+                    "send",
+                    "Send",
+                    "next",
+                    "Next",
+                    "hide",
+                    "Hide keyboard",
+                ]
+            },
+        )
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("error_name", "message", "stacktrace"),
+    [
+        ("unknown error", "server failed", ""),
+        ("element not interactable", "element is not interactable", ""),
+        ("element not selectable", "element is not selectable", ""),
+        (
+            "unknown error",
+            "server failed",
+            "Did not know how to dismiss the keyboard",
+        ),
+    ],
+)
+def test_ios_hide_keyboard_preserves_other_server_errors(
+    service: IosActionProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    error_name: str,
+    message: str,
+    stacktrace: str,
+) -> None:
+    service.queue(
+        "action",
+        ResponsePlan(
+            status=500,
+            payload={
+                "value": {
+                    "error": error_name,
+                    "message": message,
+                    "stacktrace": stacktrace,
+                }
+            },
+        ),
+    )
+    with connected(service) as connection:
+        session = ios_session_for(service, connection, monkeypatch)
+        with pytest.raises(CommandError) as caught:
+            session.device.hide_keyboard()
+        assert_error(caught.value, CommandError, "command_failed", "response_received")
+        assert session.session_info().state == "active"
         session.quit()
 
 

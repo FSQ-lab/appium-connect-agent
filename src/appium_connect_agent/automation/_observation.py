@@ -173,6 +173,7 @@ _IOS_ATTRIBUTES: tuple[ElementAttribute, ...] = (
     "bounds",
     "index",
     "traits",
+    "uid",
 )
 _BOOLEAN_ATTRIBUTES = frozenset(
     {
@@ -216,7 +217,7 @@ def _error(
 def _validate_attributes(
     attributes: object, operation_id: str, platform: Literal["android", "macos", "ios"]
 ) -> tuple[ElementAttribute, ...]:
-    maximum = 18 if platform == "android" else 14 if platform == "macos" else 15
+    maximum = 18 if platform == "android" else 14 if platform == "macos" else 16
     allowed = (
         _ATTRIBUTES
         if platform == "android"
@@ -471,6 +472,7 @@ def _read_ios_attribute(
     upstream = {
         "id": "name",
         "placeholder_value": "placeholderValue",
+        "uid": "UID",
     }.get(name, name)
     raw = gateway.request(
         lambda: (
