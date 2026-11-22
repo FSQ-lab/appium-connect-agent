@@ -185,7 +185,7 @@ def _perform_swipe_gesture(
             prepare=lambda resolved: resolved[0],
         )
         gateway.checkpoint()
-        gateway.final_action(
+        gateway.mutation_action(
             lambda: _execute_none(
                 driver,
                 "mobile: swipeGesture",
@@ -216,7 +216,7 @@ def _perform_scroll_gesture(
             prepare=lambda resolved: resolved[0],
         )
         gateway.checkpoint()
-        result = gateway.final_action(
+        result = gateway.mutation_action(
             lambda: _execute_scroll_gesture(
                 driver, _gesture_payload(target, direction, percent, area)
             )
@@ -300,7 +300,7 @@ def _perform_official_scroll(
         "maxSwipes": max_swipes,
     }
     gateway.checkpoint()
-    gateway.final_action(lambda: _execute_none(driver, "mobile: scroll", payload))
+    gateway.mutation_action(lambda: _execute_none(driver, "mobile: scroll", payload))
     gateway.complete("action_completed")
     _postcheck_scroll_target(driver, target, gateway)
 
@@ -386,7 +386,7 @@ def _perform_drag_and_drop(
         )
         gateway.complete("destination_geometry_read")
         gateway.checkpoint()
-        gateway.final_action(
+        gateway.mutation_action(
             lambda: _execute_none(
                 driver,
                 "mobile: dragGesture",

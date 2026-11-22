@@ -297,7 +297,7 @@ def _activate_app(
     def action() -> None:
         _none(driver.execute_script("mobile: activateApp", {"appId": app_id}))
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 
@@ -342,7 +342,7 @@ def _terminate_app(
             raise ValueError("terminateApp must return bool")
         return result
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
@@ -383,7 +383,7 @@ def _install_app(
             )
         _none(driver.execute_script("mobile: installApp", payload))
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 
@@ -405,7 +405,7 @@ def _remove_app(
             raise ValueError("removeApp must return bool")
         return result
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
@@ -439,7 +439,7 @@ def _status_bar(
             raise ValueError("statusBar response exceeds UTF-8 size limit")
         return result
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
@@ -507,7 +507,7 @@ def _back(driver: WebDriver, gateway: _SessionOperationGateway) -> None:
     def action() -> None:
         _none(back())
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 
@@ -525,7 +525,7 @@ def _press_keycode(
         if helper(keycode, metastate=metastate, flags=flags) is not driver:
             raise ValueError("key helper must return its driver")
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 
@@ -536,7 +536,7 @@ def _hide_keyboard(driver: WebDriver, gateway: _SessionOperationGateway) -> bool
             raise ValueError("hideKeyboard must return bool")
         return result
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
@@ -573,7 +573,7 @@ def _set_clipboard_text(
     payload = {"content": content, "contentType": "plaintext"}
     if label is not None:
         payload["label"] = label
-    gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
+    gateway.mutation_action(lambda: _none(driver.execute_script(script, payload)))
     gateway.complete("action_completed")
 
 
@@ -586,7 +586,7 @@ def _alert(
 ) -> None:
     payload = {} if button_label is None else {"buttonLabel": button_label}
     script = "mobile: acceptAlert" if accept else "mobile: dismissAlert"
-    gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
+    gateway.mutation_action(lambda: _none(driver.execute_script(script, payload)))
     gateway.complete("action_completed")
 
 
@@ -722,7 +722,7 @@ def _take_screenshot(driver: WebDriver, gateway: _SessionOperationGateway) -> by
 def _tap_at(
     driver: WebDriver, gateway: _SessionOperationGateway, *, x: int, y: int
 ) -> None:
-    gateway.final_action(
+    gateway.mutation_action(
         lambda: _none(driver.execute_script("mobile: clickGesture", {"x": x, "y": y}))
     )
     gateway.complete("action_completed")
@@ -761,7 +761,7 @@ def _swipe_between(
             raise ValueError("W3C actions response missing value")
         _none(response["value"])
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 

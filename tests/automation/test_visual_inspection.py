@@ -7,7 +7,7 @@ import struct
 import threading
 import zlib
 from collections.abc import Callable, Iterator
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields, is_dataclass
 from typing import Any, cast
 
 import pytest
@@ -27,12 +27,14 @@ from appium_connect_agent.automation import (
     SessionBusyError,
     VisualImageMatch,
     VisualInspection,
+    VisualMode,
     VisualProvider,
     VisualProviderRequest,
     VisualProviderResponse,
     VisualTargetCandidate,
     create_mac2_session,
     create_xcuitest_session,
+    sample_png_color,
 )
 from appium_connect_agent.automation import _session as session_module
 from appium_connect_agent.runtime import OperationControl, RuntimeConnection
@@ -161,13 +163,44 @@ def ios_session_for(
     return create_xcuitest_session(connection, f"IOS-VISUAL-{id(service)}")
 
 
+def _platform_session(
+    service: VisualProtocolService,
+    connection: RuntimeConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> Session:
+    if platform == "macos":
+        return create_mac2_session(connection)
+    if platform == "ios":
+        return ios_session_for(service, connection, monkeypatch)
+    return session_for(service, connection, "visual-platform")
+
+
 def test_visual_provider_protocol_runtime_checkable() -> None:
     provider = StubVisualProvider(VisualProviderResponse(summary="ok"))
     assert isinstance(provider, VisualProvider)
 
 
-def test_inspect_with_ai_extract_mode_android_and_macos(
+def _mac_displays(width: int, height: int, *, multi: bool = False) -> dict[str, object]:
+    displays: dict[str, object] = {
+        "1": {
+            "id": 1,
+            "isMain": True,
+            "rect": {"x": 0, "y": 0, "width": width, "height": height},
+        }
+    }
+    if multi:
+        displays["2"] = {
+            "id": 2,
+            "isMain": False,
+            "rect": {"x": width, "y": 0, "width": width, "height": height},
+        }
+    return displays
+
+
+def test_inspect_with_ai_extract_mode_three_platforms(
     service: VisualProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_png, encoded = _encoded_png(600, 800)
     expected_sha256 = hashlib.sha256(raw_png).hexdigest()
@@ -175,6 +208,11 @@ def test_inspect_with_ai_extract_mode_android_and_macos(
         "take_screenshot",
         ResponsePlan(payload={"value": encoded}),
         ResponsePlan(payload={"value": encoded}),
+        ResponsePlan(payload={"value": encoded}),
+    )
+    service.queue(
+        "macos_display_size",
+        ResponsePlan(payload={"value": _mac_displays(600, 800)}),
     )
     provider = StubVisualProvider(
         VisualProviderResponse(summary="Canvas shows red circle", candidates=())
@@ -242,7 +280,19 @@ def test_inspect_with_ai_extract_mode_android_and_macos(
         assert mac_result.mode == "extract"
         assert mac_result.pointer_size is None
         assert mac_result.summary == "Canvas shows red circle"
+        assert len(service.of_kind("macos_display_size")) == 1
         mac_session.quit()
+
+        ios_session = ios_session_for(service, connection, monkeypatch)
+        ios_result = ios_session.device.inspect_with_ai(
+            "Read calculator display", provider=provider
+        )
+        assert ios_result.platform == "ios"
+        assert ios_result.pointer_size is None
+        assert ios_result.summary == mac_result.summary
+        assert ios_result.png_sha256 == expected_sha256
+        assert service.of_kind("ios_display_size") == []
+        ios_session.quit()
 
 
 def test_inspect_with_ai_locate_mode_1to1_and_integer_scaled_coordinates(
@@ -501,6 +551,50 @@ def test_inspect_with_ai_ios_retina_mapping_and_mismatch_rejection(
         )
         assert len(provider.requests) == 2
         assert len(service.of_kind("ios_display_size")) == 3
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("platform", "mode", "kind", "size"),
+    [
+        ("android", "locate", "display_size", {"realDisplaySize": "1080x0"}),
+        (
+            "ios",
+            "locate",
+            "ios_display_size",
+            {"screenSize": {"width": True, "height": 844}},
+        ),
+        (
+            "macos",
+            "extract",
+            "macos_display_size",
+            _mac_displays(1080, 2400, multi=True),
+        ),
+    ],
+)
+def test_visual_invalid_geometry_fails_without_provider(
+    service: VisualProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    mode: VisualMode,
+    kind: str,
+    size: object,
+) -> None:
+    service.queue(kind, ResponsePlan(payload={"value": size}))
+    provider = StubVisualProvider(VisualProviderResponse(summary="unused"))
+    with connected(service) as connection:
+        session = _platform_session(service, connection, monkeypatch, platform)
+        with pytest.raises(CommandError) as caught:
+            session.device.inspect_with_ai("Find icon", provider=provider, mode=mode)
+        assert_error(
+            caught.value,
+            CommandError,
+            "pointer_mapping_unavailable",
+            "response_received",
+            steps=("screenshot_captured",),
+        )
+        assert len(service.of_kind(kind)) == 1
+        assert provider.requests == []
         session.quit()
 
 
@@ -786,16 +880,33 @@ def test_inspect_with_ai_rejects_invalid_provider_responses(
         session.quit()
 
 
+@pytest.mark.parametrize("platform", ["android", "ios", "macos"])
+@pytest.mark.parametrize("controlled", [False, True])
 def test_inspect_with_ai_provider_exception_is_wrapped_and_keeps_session_active(
     service: VisualProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    controlled: bool,
 ) -> None:
+    _, encoded = _encoded_png(1512, 982)
+    service.queue("take_screenshot", ResponsePlan(payload={"value": encoded}))
+
     def boom(request: VisualProviderRequest) -> VisualProviderResponse:
-        del request
-        raise RuntimeError("model gateway failed with secret token")
+        try:
+            raise RuntimeError(request.png_bytes)
+        except RuntimeError as cause:
+            if controlled:
+                raise CommandError(
+                    "secret token",
+                    "provider-operation",
+                    "response_unknown",
+                    cleanup_errors=(cause,),
+                ) from cause
+            raise RuntimeError("model gateway failed with secret token") from cause
 
     provider = StubVisualProvider(boom)
     with connected(service) as connection:
-        session = session_for(service, connection, "visual-provider-boom")
+        session = _platform_session(service, connection, monkeypatch, platform)
         with pytest.raises(CommandError) as caught:
             session.device.inspect_with_ai(
                 "Extract text",
@@ -807,9 +918,15 @@ def test_inspect_with_ai_provider_exception_is_wrapped_and_keeps_session_active(
             CommandError,
             "visual_provider_failed",
             "response_received",
-            steps=("screenshot_captured",),
+            steps=("screenshot_captured", "display_size_read")
+            if platform == "macos"
+            else ("screenshot_captured",),
         )
         assert "secret token" not in str(caught.value)
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        assert caught.value.cleanup_errors == ()
+        assert caught.value.operation_id != "provider-operation"
         assert session.session_info().state == "active"
         session.quit()
 
@@ -1050,5 +1167,191 @@ def test_inspect_with_ai_complete_document_65536_and_65537_boundaries(
             "response_received",
             steps=("screenshot_captured", "display_size_read", "visual_inspected"),
         )
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+@pytest.mark.parametrize(
+    ("platform", "kind", "size", "scale"),
+    [
+        ("android", "display_size", {"realDisplaySize": "2x2"}, 1),
+        ("ios", "ios_display_size", {"screenSize": {"width": 2, "height": 2}}, 2),
+        ("macos", "macos_display_size", _mac_displays(2, 2), 2),
+    ],
+)
+def test_sample_color_matches_offline_exact_frame_and_pointer_footprint(
+    service: VisualProtocolService,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    kind: str,
+    size: object,
+    scale: int,
+) -> None:
+    extent = 2 * scale
+    color = bytes((0, 191, 243, 255))
+    other = bytes((255, 255, 255, 255))
+    scanlines = b"".join(
+        b"\0" + (other * extent if y < scale else other * scale + color * scale)
+        for y in range(extent)
+    )
+    frame = _png(zlib.compress(scanlines), width=extent, height=extent)
+    service.queue(
+        "take_screenshot",
+        ResponsePlan(payload={"value": base64.b64encode(frame).decode("ascii")}),
+    )
+    service.queue(kind, ResponsePlan(payload={"value": size}))
+    with connected(service) as connection:
+        session = _platform_session(service, connection, monkeypatch, platform)
+        result = session.device.sample_color(1, 1)
+        assert result == sample_png_color(frame, 1, 1, pointer_size=DisplaySize(2, 2))
+        assert result.hex == "#00BFF3"
+        assert result.image_bounds == Bounds(scale, scale, scale, scale)
+        assert result.uniform and result.opaque
+        assert (
+            len(service.of_kind("take_screenshot")) == len(service.of_kind(kind)) == 1
+        )
+        session.quit()
+
+
+def test_sample_color_image_region_bypasses_pointer_read_and_rejects_bounds(
+    service: VisualProtocolService,
+) -> None:
+    frame = _png(zlib.compress(b"\0\0\xbf\xf3\xff\0\0\0\xff"), width=2, height=1)
+    encoded = base64.b64encode(frame).decode("ascii")
+    response = ResponsePlan(payload={"value": encoded})
+    service.queue("take_screenshot", response, response)
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        result = session.device.sample_color(
+            region=Bounds(0, 0, 2, 1), coordinate_space="image"
+        )
+        assert not result.uniform and result.pointer_size is None
+        assert result.min_rgb == (0, 0, 0) and result.max_rgb == (0, 191, 243)
+        with pytest.raises(InvalidRequestError) as caught:
+            session.device.sample_color(2, 0, coordinate_space="image")
+        assert_error(
+            caught.value,
+            InvalidRequestError,
+            "invalid_argument",
+            "response_received",
+            steps=("screenshot_captured",),
+        )
+        assert service.of_kind("macos_display_size") == []
+        session.quit()
+
+
+def test_sample_color_apng_before_mapping_and_transport_unknown(
+    service: VisualProtocolService,
+) -> None:
+    _, encoded = _encoded_png(
+        2, 2, before_iend=(_chunk(b"acTL", struct.pack(">II", 1, 0)),)
+    )
+    service.queue(
+        "take_screenshot",
+        ResponsePlan(payload={"value": encoded}),
+        ResponsePlan(disconnect=True),
+    )
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        with pytest.raises(CommandError) as apng:
+            session.device.sample_color(0, 0)
+        assert_error(
+            apng.value, CommandError, "frame_not_single", "response_received", steps=()
+        )
+        with pytest.raises(ExecutionUnknownError) as unknown:
+            session.device.sample_color(0, 0)
+        assert_error(
+            unknown.value,
+            ExecutionUnknownError,
+            "execution_unknown",
+            "response_unknown",
+            steps=(),
+        )
+        assert service.of_kind("macos_display_size") == []
+        assert session.session_info().state == "uncertain"
+
+
+def test_sample_color_macos_rejects_ambiguous_pointer_mapping(
+    service: VisualProtocolService,
+) -> None:
+    frame = _png(zlib.compress(b"\0\0\xbf\xf3\xff"), width=1, height=1)
+    service.queue(
+        "take_screenshot",
+        ResponsePlan(payload={"value": base64.b64encode(frame).decode("ascii")}),
+    )
+    service.queue(
+        "macos_display_size",
+        ResponsePlan(payload={"value": _mac_displays(1, 1, multi=True)}),
+    )
+    with connected(service) as connection:
+        session = create_mac2_session(connection)
+        with pytest.raises(CommandError) as caught:
+            session.device.sample_color(0, 0)
+        assert_error(
+            caught.value,
+            CommandError,
+            "pointer_mapping_unavailable",
+            "response_received",
+            steps=("screenshot_captured",),
+        )
+        assert session.session_info().state == "active"
+        session.quit()
+
+
+@pytest.mark.parametrize("case", ["bad_crc", "out_of_bounds", "row_limit", "deflate"])
+def test_sample_color_failures_do_not_retain_the_online_frame(
+    service: VisualProtocolService,
+    case: str,
+) -> None:
+    canary = b"phase2-private-screenshot-keynote-canary"
+    idat = zlib.compress(b"\0\0\xbf\xf3\xff") if case != "deflate" else b"bad zlib"
+    width = 100_000 if case == "row_limit" else 1
+    frame = _png(
+        idat,
+        width=width,
+        height=1,
+        before_iend=(_chunk(b"tEXt", b"Comment\0" + canary),),
+    )
+    if case == "bad_crc":
+        frame = frame[:29] + bytes((frame[29] ^ 1,)) + frame[30:]
+    encoded = base64.b64encode(frame).decode("ascii")
+    service.queue("take_screenshot", ResponsePlan(payload={"value": encoded}))
+
+    def assert_safe(value: object) -> None:
+        if isinstance(value, memoryview):
+            assert_safe(value.obj)
+        elif isinstance(value, (bytes, bytearray)):
+            assert canary not in value
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                assert_safe(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                assert_safe(key)
+                assert_safe(item)
+        elif is_dataclass(value) and not isinstance(value, type):
+            for field in fields(value):
+                assert_safe(getattr(value, field.name))
+        elif isinstance(value, str):
+            assert canary.decode("ascii") not in value and encoded not in value
+
+    with connected(service) as connection:
+        session = session_for(service, connection, "sample-privacy")
+        error_type = InvalidRequestError if case == "out_of_bounds" else CommandError
+        with pytest.raises(error_type) as caught:
+            session.device.sample_color(
+                1 if case == "out_of_bounds" else 0, 0, coordinate_space="image"
+            )
+        reason = "invalid_argument" if case == "out_of_bounds" else "command_failed"
+        steps = ("screenshot_captured",) if case in ("out_of_bounds", "deflate") else ()
+        assert_error(caught.value, error_type, reason, "response_received", steps=steps)
+        assert caught.value.__cause__ is None and caught.value.__context__ is None
+        assert caught.value.cleanup_errors == ()
+        trace = caught.value.__traceback__
+        assert_safe(vars(caught.value))
+        while trace is not None:
+            if "/src/appium_connect_agent/" in trace.tb_frame.f_code.co_filename:
+                assert_safe(trace.tb_frame.f_locals)
+            trace = trace.tb_next
         assert session.session_info().state == "active"
         session.quit()

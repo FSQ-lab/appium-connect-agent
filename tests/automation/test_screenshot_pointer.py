@@ -1220,7 +1220,7 @@ def test_directional_swipe_respects_explicit_coordinates_without_display_size_qu
         ),
     ],
 )
-def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
+def test_read_dead_session_reattaches_with_non_destructive_capabilities(
     service: DeviceProtocolService,
     tmp_path: Path,
     error_code: str,
@@ -1236,11 +1236,10 @@ def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
         }
     }
     service.queue(
-        "tap_at",
+        "take_screenshot",
         ResponsePlan(
             status=404 if "invalid" in error_code else 500, payload=dead_payload
         ),
-        ResponsePlan(payload={"value": None}),
     )
     with connected(service) as connection:
         session = create_session(
@@ -1259,8 +1258,7 @@ def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
         assert initial_info.appium_session_id == "appium-1"
         assert initial_info.target_app_id == "com.example.initial"
 
-        # First tap_at hits dead session -> transparently re-attaches and succeeds
-        session.device.tap_at(100, 200)
+        session.device.take_screenshot()
 
         recovered_info = session.session_info()
         assert recovered_info.state == "active"
@@ -1284,11 +1282,33 @@ def test_dead_session_triggers_non_destructive_reattach_and_recovers_operation(
         assert "appActivity" not in reattach_caps
         assert "appium:app" not in reattach_caps
 
-        taps = service.of_kind("tap_at")
-        assert len(taps) == 2
-        assert "/session/appium-1/" in taps[0].path
-        assert "/session/appium-2/" in taps[1].path
+        reads = service.of_kind("take_screenshot")
+        assert len(reads) == 2
+        assert "/session/appium-1/" in reads[0].path
+        assert "/session/appium-2/" in reads[1].path
         session.quit()
+
+
+def test_tap_dead_session_does_not_reattach_or_resend(
+    service: DeviceProtocolService,
+) -> None:
+    service.queue(
+        "tap_at",
+        ResponsePlan(
+            status=404,
+            payload={"value": {"error": "invalid session id", "message": "terminated"}},
+        ),
+    )
+    with connected(service) as connection:
+        session = session_for(service, connection, "tap-dead")
+        with pytest.raises(CommandError) as caught:
+            session.device.tap_at(100, 200)
+        assert_error(
+            caught.value, CommandError, "command_failed", "response_received", steps=()
+        )
+        assert session.session_info().state == "uncertain"
+        assert len(service.of_kind("create")) == 1
+        assert len(service.of_kind("tap_at")) == 1
 
 
 def test_ensure_alive_and_ping_reattach_only_when_session_is_dead(

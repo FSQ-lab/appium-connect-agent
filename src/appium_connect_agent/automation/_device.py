@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
+from appium.webdriver.webdriver import WebDriver
+
 from appium_connect_agent.runtime import OperationControl
 
 from ._element import _PreparedOperation, _valid_package
@@ -37,6 +39,9 @@ from ._macos_actions import (
 )
 from ._macos_keyboard import MacKeyStroke
 from ._models import (
+    AutomationError,
+    Bounds,
+    ColorSample,
     DeviceTime,
     DisplaySize,
     ImageRegion,
@@ -44,6 +49,12 @@ from ._models import (
     VisualInspection,
     VisualMode,
     VisualProvider,
+)
+from ._sample_color import (
+    _parse_sample_frame,
+    _sample_failure,
+    _sample_frame,
+    _validate_sample_inputs,
 )
 from ._system_actions import (
     _activate_app,
@@ -74,10 +85,15 @@ from ._system_actions import (
     _tap_at,
     _terminate_app,
 )
-from ._visual import _inspect_with_ai, _validate_visual_inputs
+from ._visual import (
+    _capture_visual_png,
+    _inspect_with_ai,
+    _read_visual_pointer_size,
+    _validate_visual_inputs,
+)
 
 if TYPE_CHECKING:
-    from ._session import Session
+    from ._session import Session, _SessionOperationGateway
 
 _MARKER = object()
 
@@ -523,6 +539,59 @@ class Device:
         owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
         return owner._run_operation(operation_id, control, deadline, _take_screenshot)
 
+    def sample_color(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        *,
+        region: ImageRegion | Bounds | None = None,
+        coordinate_space: Literal["pointer", "image"] = "pointer",
+        control: OperationControl | None = None,
+    ) -> ColorSample:
+        """Capture one frame and read its encoded RGB without a visual provider."""
+        owner, (operation_id, control, _, deadline) = _bind_operation(self, control)
+        bounds, space = _validate_sample_inputs(
+            x, y, region, coordinate_space, operation_id
+        )
+
+        def sample(driver: WebDriver, gateway: _SessionOperationGateway) -> ColorSample:
+            def checkpoint() -> None:
+                gateway.checkpoint(response_received=True)
+
+            try:
+                frame = _parse_sample_frame(
+                    _capture_visual_png(driver, gateway),
+                    operation_id,
+                    "response_received",
+                    checkpoint,
+                )
+                gateway.complete("screenshot_captured")
+                pointer_size = (
+                    _read_visual_pointer_size(driver, gateway, frame.image_size)
+                    if space == "pointer"
+                    else None
+                )
+                result = _sample_frame(
+                    frame,
+                    bounds,
+                    space,
+                    pointer_size,
+                    operation_id,
+                    "response_received",
+                    checkpoint,
+                )
+            except AutomationError as error:
+                error.completed_steps = gateway.completed_steps
+                raise
+            gateway.complete("color_sampled")
+            return result
+
+        try:
+            return owner._run_operation(operation_id, control, deadline, sample)
+        except AutomationError as error:
+            failure = _sample_failure(error)
+        raise failure from None
+
     def inspect_with_ai(
         self,
         prompt: str,
@@ -556,7 +625,6 @@ class Device:
                 mode=valid_mode,
                 region=valid_region,
                 max_candidates=valid_max_candidates,
-                platform=owner.platform,
             ),
         )
 

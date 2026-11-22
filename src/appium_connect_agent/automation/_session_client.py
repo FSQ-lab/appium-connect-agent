@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import time
+from collections.abc import Callable
 from threading import Event, Lock
 from typing import Any, cast
 from urllib.parse import ParseResult
@@ -36,6 +37,7 @@ class _LifecycleConnection(AppiumConnection):
         self._record_lock = Lock()
         self._cancellation: Event | None = None
         self._request_deadline: float | None = None
+        self._dispatch_callback: Callable[[], None] | None = None
         self._request_started = False
         self._response_received = False
         self._terminal_not_created = False
@@ -55,7 +57,10 @@ class _LifecycleConnection(AppiumConnection):
             )
 
     def prepare_request(
-        self, cancellation: Event | None, request_deadline: float | None
+        self,
+        cancellation: Event | None,
+        request_deadline: float | None,
+        dispatch_callback: Callable[[], None] | None = None,
     ) -> None:
         with self._record_lock:
             self._cancellation = cancellation
@@ -64,6 +69,7 @@ class _LifecycleConnection(AppiumConnection):
             self._response_received = False
             self._terminal_not_created = False
             self._new_session_response = None
+            self._dispatch_callback = dispatch_callback
 
     def _apply_request_control(self) -> None:
         with self._record_lock:
@@ -83,6 +89,11 @@ class _LifecycleConnection(AppiumConnection):
 
     def execute(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
         self._apply_request_control()
+        with self._record_lock:
+            dispatch_callback = self._dispatch_callback
+            self._dispatch_callback = None
+        if dispatch_callback is not None:
+            dispatch_callback()
         with self._record_lock:
             self._request_started = True
         response = cast(

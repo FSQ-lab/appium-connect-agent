@@ -420,9 +420,14 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 本节定义 Issue #47 经用户 SPEC Gate 确认、并由 Issue #53（iOS）与 Issue #58（macOS 单显示器）扩展的 AIF-13 契约增量；依据为[已确认 AIF-13 设计](docs/superpowers/specs/2026-11-16-visual-perception-grounding-design.md)。契约确认不替代实现验证、独立审查或真实设备授权。
 
 - 架构遵循“视觉识别是统一的，截图与视觉分析后的执行是分平台的”：Automation 在绑定 `Device` 上公开 `Device.inspect_with_ai(prompt: str, *, provider: VisualProvider, mode: VisualMode = "extract", region: ImageRegion | None = None, max_candidates: int = 5, control: OperationControl | None = None) -> VisualInspection`，并由 `appium_connect_agent.automation` 导出 `VisualMode`、`Point`、`ImageRegion`、`VisualImageMatch`、`VisualProviderRequest`、`VisualProviderResponse`、`VisualProvider`、`VisualTargetCandidate` 与 `VisualInspection`。不提供 `assert_with_ai`、同名别名或业务真假裁决。
-- SDK 不持有任何模型 API key、HTTP 模型客户端或业务 prompt 策略，仅在同一 Session 非阻塞 gate 与单次 `OperationControl` 总预算内顺序执行：单帧 PNG 截图（拒绝含 `acTL`/`fcTL`/`fdAT` 的 APNG `frame_not_single`，提取 `IHDR` `image_size` 与 64 字符小写 `png_sha256`）→ 全图 `image-space` 的 `region` 边界核验 → `locate` 模式下获取平台权威 `pointer_size`（Android 走 `mobile: deviceInfo` 物理像素；iOS 走 `mobile: deviceScreenInfo` 逻辑点；Mac2 走单显示器 `macos: listDisplays` 逻辑点；三平台均要求与 PNG 像素尺寸为正整数倍轴对齐等比例关系，多屏拓扑或比例失配均在调用 provider 前 fail-closed 抛 `CommandError/pointer_mapping_unavailable/response_received`）→ 调用宿主注入的同步 `provider.inspect(request)` 一次（传入完整未裁剪原图 `png_bytes`）→ 严格校验 `VisualProviderResponse`（`extract` 必须 `candidates == ()`；`locate` 将每个全图 `image-space` 的 `VisualImageMatch.image_bounds` 映射为非 `None` 的平台 pointer-space `pointer_bounds: Bounds` 与 `pointer_center: Point`）→ 65,536-byte 规范 JSON 计量并返回不可变 `VisualInspection`。
-- 方法绝不自动执行点击或滑动；调用方显式将 `pointer_center` / `pointer_bounds` 传给 `Device.tap_at` / `Device.swipe_between` 等平台原生动作方法。`png_bytes` 不进入 `VisualInspection`、规范 JSON、日志或异常文本。
+- SDK 不持有模型 API key 或 HTTP 模型客户端。绑定 Device 在同一 Session gate 与 OperationControl 预算内截取单帧 PNG、核验区域；Mac2 两种模式均校验单主屏 `(0,0)` 和整数比例，移动端仅 `locate` 获取权威 pointer-space 并校验比例。成功响应但尺寸非法或映射不可用时三平台统一 `pointer_mapping_unavailable/response_received`；真实 transport unknown 不改写。视觉调用一次受信任进程内 `provider.inspect`，传完整未裁剪 PNG；`ImageRegion` 只限制候选/观察范围，不隔离字节。FSQ 等宿主负责逐帧出站授权和敏感度 fail-closed，SDK 统一脱敏 provider 失败。
+- 不自动执行动作，不在 `VisualInspection`、规范 JSON、日志或异常中返回帧。视觉方法的既有模型和尺寸映射公式见 Automation SPEC。
 - 复用锁定 Appium/UiAutomator2/Mac2/Python Client/Selenium 与 CPython 3.11 标准库（`hashlib`、`struct`、`zlib`）；`Runtime`、`Contracts`、`Configuration`、`Integrations`（现有 22 工具目录与 schema）、产品/开发依赖及 lockfile 均 no-delta。
+
+## Automation Deterministic Color Sampling And Mutation No-Replay (#74)
+
+- `Device.sample_color`（单帧捕获）和 `sample_png_color`（调用方持有同帧 PNG）共享 `ColorSample`、点/区域及 image/pointer 语义；无 provider、无外部出站、无 ICC 转换。支持批准的有界非交错 PNG 样本解码，以原始编码颜色计算 RGB、均匀性与透明度，并如实报告颜色标记。具体映射、格式、错误及资源上限见 [Automation SPEC](modules/automation/SPEC.md)。
+- 只读阶段取得确定死会话终态时可重建并重跑一次；一旦本次操作已 dispatch 写入，即使后置读取得确定死会话，也不得隐式重建或重跑该操作；Session 隔离为 `uncertain`，不释放持有的远端占用。真实 `response_unknown` 保持原隔离，不重放。无依赖、工具目录、设备授权或版本变更。
 
 ## Automation Condition-Wait Transport Timeout Decoupling And Device Local Clock（AIF-14）
 

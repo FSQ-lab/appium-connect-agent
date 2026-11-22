@@ -353,7 +353,7 @@ def _restore_setting(
             raise primary
         return
     try:
-        gateway.cleanup_request(
+        gateway.mutation_cleanup_request(
             lambda: driver.update_settings({setting: value}), "settings_restored"
         )
     except AutomationError as restoration:
@@ -413,7 +413,7 @@ def _with_raw_id_guard(
             )
         changed = not settings["disableIdLocatorAutocompletion"]
         if changed:
-            gateway.request(
+            gateway.mutation_request(
                 lambda: driver.update_settings(
                     {"disableIdLocatorAutocompletion": True}
                 ),

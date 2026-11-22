@@ -405,7 +405,8 @@ def test_validation_is_inside_final_gate_and_late_control_cannot_replace_result(
     result_kind: str,
 ) -> None:
     cancel = threading.Event()
-    original = _session._SessionOperationGateway.final_action
+    boundary = "final_action" if method == "query_app_state" else "mutation_action"
+    original = getattr(_session._SessionOperationGateway, boundary)
     outcomes: list[str] = []
     with connected(service) as connection:
         session = session_for(service, connection, "app-final-gate")
@@ -435,7 +436,7 @@ def test_validation_is_inside_final_gate_and_late_control_cannot_replace_result(
 
                 return original(gateway, finish)
 
-            patch.setattr(_session._SessionOperationGateway, "final_action", observed)
+            patch.setattr(_session._SessionOperationGateway, boundary, observed)
             if result_kind != "valid":
                 plan = (
                     ResponsePlan(payload={"value": "invalid"})

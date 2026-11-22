@@ -857,6 +857,7 @@ class _SessionOperationGateway:
         self._deadline = deadline
         self._completed: list[str] = []
         self.observed_at: datetime | None = None
+        self._mutation_dispatched = False
 
     @property
     def completed_steps(self) -> tuple[str, ...]:
@@ -865,6 +866,10 @@ class _SessionOperationGateway:
     @property
     def operation_deadline(self) -> float | None:
         return self._deadline
+
+    @property
+    def mutation_dispatched(self) -> bool:
+        return self._mutation_dispatched
 
     @property
     def platform(self) -> AutomationPlatform:
@@ -882,6 +887,9 @@ class _SessionOperationGateway:
     def complete(self, step: str) -> None:
         if step not in self._completed:
             self._completed.append(step)
+
+    def _mark_mutation_dispatched(self) -> None:
+        self._mutation_dispatched = True
 
     def checkpoint(self, *, response_received: bool = False) -> None:
         try:
@@ -983,6 +991,7 @@ class _SessionOperationGateway:
         request_deadline: float | None,
         condition_deadline: float | None,
         cleanup: bool,
+        mutation: bool,
         pre_action: bool,
         post_check: Literal["operation", "condition"] | None,
     ) -> _Result:
@@ -990,7 +999,11 @@ class _SessionOperationGateway:
         cancellation = (
             None if cleanup or self._control is None else self._control.cancellation
         )
-        client.prepare_request(cancellation, None if cleanup else request_deadline)
+        client.prepare_request(
+            cancellation,
+            None if cleanup else request_deadline,
+            self._mark_mutation_dispatched if mutation else None,
+        )
         try:
             result = action()
         except _RequestCancelled as cause:
@@ -1003,11 +1016,19 @@ class _SessionOperationGateway:
                     assert condition_deadline is not None
                     self.wait_checkpoint(condition_deadline, response_received=True)
                     raise _PreActionStale from cause
-                if _is_dead_session_exception(cause):
+                if not _is_dead_session_exception(cause):
+                    raise self.failure(
+                        CommandError, "command_failed", "response_received"
+                    ) from cause
+                if not self._mutation_dispatched:
                     raise _DeadSessionError from cause
-                raise self.failure(
-                    CommandError, "command_failed", "response_received"
-                ) from cause
+                error = self.failure(
+                    CommandError,
+                    "command_failed",
+                    "response_received",
+                    self.abandon(),
+                )
+                raise error from cause
             if not client.request_started:
                 raise
             raise self._unknown_failure(condition_deadline, cleanup=cleanup) from cause
@@ -1041,6 +1062,7 @@ class _SessionOperationGateway:
             condition_deadline=None,
             cleanup=False,
             pre_action=False,
+            mutation=False,
             post_check="operation",
         )
 
@@ -1059,7 +1081,23 @@ class _SessionOperationGateway:
             condition_deadline=condition_deadline,
             cleanup=False,
             pre_action=pre_action,
+            mutation=False,
             post_check="condition",
+        )
+
+    def mutation_request(
+        self, action: Callable[[], _Result], step: str | None = None
+    ) -> _Result:
+        self.checkpoint()
+        return self._request(
+            action,
+            step,
+            request_deadline=self._deadline,
+            condition_deadline=None,
+            cleanup=False,
+            pre_action=False,
+            post_check="operation",
+            mutation=True,
         )
 
     def final_action(self, action: Callable[[], _Result]) -> _Result:
@@ -1072,6 +1110,20 @@ class _SessionOperationGateway:
             cleanup=False,
             pre_action=False,
             post_check=None,
+            mutation=False,
+        )
+
+    def mutation_action(self, action: Callable[[], _Result]) -> _Result:
+        self.checkpoint()
+        return self._request(
+            action,
+            None,
+            request_deadline=self._deadline,
+            condition_deadline=None,
+            cleanup=False,
+            pre_action=False,
+            post_check=None,
+            mutation=True,
         )
 
     def cleanup_request(
@@ -1085,6 +1137,21 @@ class _SessionOperationGateway:
             cleanup=True,
             pre_action=False,
             post_check=None,
+            mutation=False,
+        )
+
+    def mutation_cleanup_request(
+        self, action: Callable[[], _Result], step: str | None = None
+    ) -> _Result:
+        return self._request(
+            action,
+            step,
+            request_deadline=None,
+            condition_deadline=None,
+            cleanup=True,
+            pre_action=False,
+            post_check=None,
+            mutation=True,
         )
 
 
@@ -1452,8 +1519,6 @@ class Session:
         control: OperationControl | None,
         deadline: float | None,
         action: Callable[[webdriver.Remote, _SessionOperationGateway], _Result],
-        *,
-        replay_on_dead_session: bool = True,
     ) -> _Result:
         if not self._operation_gate.acquire(blocking=False):
             raise SessionBusyError("session_busy", operation_id, "not_sent")
@@ -1472,13 +1537,16 @@ class Session:
             try:
                 return action(driver, gateway)
             except _DeadSessionError as dead_error:
-                new_driver = self._reattach_locked(operation_id, control, deadline)
-                if not replay_on_dead_session:
+                if gateway.mutation_dispatched:
                     cause = dead_error.__cause__
                     error = gateway.failure(
-                        CommandError, "command_failed", "response_received"
+                        CommandError,
+                        "command_failed",
+                        "response_received",
+                        gateway.abandon(),
                     )
                     raise error from cause
+                new_driver = self._reattach_locked(operation_id, control, deadline)
                 retry_gateway = _SessionOperationGateway(
                     self, operation_id, control, deadline
                 )

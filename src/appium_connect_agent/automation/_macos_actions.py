@@ -269,7 +269,7 @@ def _perform_macos_element_action(
     if duration_seconds is not None:
         _budget_gate(gateway, duration_seconds)
         payload["duration"] = duration_seconds
-    gateway.final_action(
+    gateway.mutation_action(
         lambda: _none(driver.execute_script(f"macos: {script}", payload))
     )
     gateway.complete("action_completed")
@@ -284,7 +284,7 @@ def _perform_macos_element_keys(
     condition_deadline: float,
 ) -> None:
     target = _wait_for_ready_element(driver, element, gateway, condition_deadline)
-    gateway.final_action(
+    gateway.mutation_action(
         lambda: _none(
             driver.execute_script("macos: keys", {"elementId": target.id, "keys": keys})
         )
@@ -315,7 +315,9 @@ def _perform_macos_element_scroll(
         "deltaY": delta_y,
         **_modifier_payload(modifier_flags),
     }
-    gateway.final_action(lambda: _none(driver.execute_script("macos: scroll", payload)))
+    gateway.mutation_action(
+        lambda: _none(driver.execute_script("macos: scroll", payload))
+    )
     gateway.complete("action_completed")
 
 
@@ -343,7 +345,9 @@ def _perform_macos_element_swipe(
     }
     if velocity is not None:
         payload["velocity"] = velocity
-    gateway.final_action(lambda: _none(driver.execute_script("macos: swipe", payload)))
+    gateway.mutation_action(
+        lambda: _none(driver.execute_script("macos: swipe", payload))
+    )
     gateway.complete("action_completed")
 
 
@@ -419,7 +423,7 @@ def _perform_macos_drag(
         "duration": duration_seconds,
         **_modifier_payload(modifier_flags),
     }
-    gateway.final_action(
+    gateway.mutation_action(
         lambda: _none(driver.execute_script("macos: clickAndDrag", payload))
     )
     gateway.complete("action_completed")
@@ -431,7 +435,7 @@ def _macos_execute_none(
     script: str,
     payload: dict[str, object],
 ) -> None:
-    gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
+    gateway.mutation_action(lambda: _none(driver.execute_script(script, payload)))
     gateway.complete("action_completed")
 
 
@@ -447,7 +451,7 @@ def _macos_execute_bool(
             raise ValueError("Mac2 action must return bool")
         return value
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
