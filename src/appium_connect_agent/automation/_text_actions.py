@@ -91,7 +91,7 @@ def _perform_text_action(
             _wait_for_ready_element(driver, element, gateway, condition_deadline),
         )
         gateway.checkpoint()
-        gateway.final_action(
+        gateway.mutation_action(
             lambda: _ANDROID_TEXT_ACTIONS.perform(
                 driver,
                 target,

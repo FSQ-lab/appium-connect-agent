@@ -12,7 +12,6 @@ from selenium.webdriver.remote.command import Command
 
 from ._models import (
     AutomationError,
-    AutomationPlatform,
     Bounds,
     CommandError,
     DisplaySize,
@@ -313,6 +312,37 @@ def _visual_document(
     }
 
 
+def _capture_visual_png(driver: WebDriver, gateway: _SessionOperationGateway) -> bytes:
+    return gateway.final_action(
+        lambda: _decode_screenshot_base64(driver.execute(Command.SCREENSHOT))
+    )
+
+
+def _read_visual_pointer_size(
+    driver: WebDriver, gateway: _SessionOperationGateway, image_size: DisplaySize
+) -> DisplaySize:
+    script, parse = (
+        ("macos: listDisplays", _parse_macos_display_size)
+        if gateway.platform == "macos"
+        else ("mobile: deviceScreenInfo", _parse_ios_display_size)
+        if gateway.platform == "ios"
+        else ("mobile: deviceInfo", _parse_display_size)
+    )
+    raw_size = gateway.final_action(lambda: driver.execute_script(script))
+    try:
+        pointer_size = parse(raw_size)
+    except ValueError:
+        pointer_size = None
+    if pointer_size is not None:
+        gateway.complete("display_size_read")
+        gateway.checkpoint(response_received=True)
+        if _is_proportional_axis_aligned(image_size, pointer_size):
+            return pointer_size
+    raise gateway.failure(
+        CommandError, "pointer_mapping_unavailable", "response_received"
+    )
+
+
 def _inspect_with_ai(
     driver: WebDriver,
     gateway: _SessionOperationGateway,
@@ -322,13 +352,8 @@ def _inspect_with_ai(
     mode: VisualMode,
     region: ImageRegion | None,
     max_candidates: int,
-    platform: AutomationPlatform = "android",
 ) -> VisualInspection:
-    def capture() -> bytes:
-        response: object = driver.execute(Command.SCREENSHOT)
-        return _decode_screenshot_base64(response)
-
-    png_bytes = gateway.final_action(capture)
+    png_bytes = _capture_visual_png(driver, gateway)
     try:
         image_size, maybe_sha256 = _parse_png_container(
             png_bytes, reject_apng=True, compute_sha256=True
@@ -353,36 +378,13 @@ def _inspect_with_ai(
             InvalidRequestError, "invalid_argument", "response_received"
         )
 
-    pointer_size: DisplaySize | None = None
-    if mode == "locate":
-        if platform == "macos":
-            raw_displays = gateway.final_action(
-                lambda: driver.execute_script("macos: listDisplays")
-            )
-            try:
-                pointer_size = _parse_macos_display_size(raw_displays)
-            except ValueError as cause:
-                raise gateway.failure(
-                    CommandError, "pointer_mapping_unavailable", "response_received"
-                ) from cause
-        else:
-            pointer_size = gateway.final_action(
-                lambda: (
-                    _parse_ios_display_size(
-                        driver.execute_script("mobile: deviceScreenInfo")
-                    )
-                    if platform == "ios"
-                    else _parse_display_size(
-                        driver.execute_script("mobile: deviceInfo")
-                    )
-                )
-            )
-        gateway.complete("display_size_read")
-        gateway.checkpoint(response_received=True)
-        if not _is_proportional_axis_aligned(image_size, pointer_size):
-            raise gateway.failure(
-                CommandError, "pointer_mapping_unavailable", "response_received"
-            )
+    pointer_size = (
+        _read_visual_pointer_size(driver, gateway, image_size)
+        if mode == "locate" or gateway.platform == "macos"
+        else None
+    )
+    if mode == "extract":
+        pointer_size = None
 
     gateway.checkpoint(response_received=True)
     remaining: float | None = None
@@ -404,20 +406,23 @@ def _inspect_with_ai(
         max_candidates=max_candidates,
         remaining_timeout_seconds=remaining,
     )
+    provider_error: tuple[type[AutomationError], str] | None = None
+    raw_response: object = None
     try:
         raw_response = provider.inspect(provider_request)
-    except (OperationCancelledError, OperationTimeoutError):
-        gateway.checkpoint(response_received=True)
-        raise
-    except AutomationError:
-        raise
-    except Exception as cause:
-        gateway.checkpoint(response_received=True)
-        raise gateway.failure(
-            CommandError, "visual_provider_failed", "response_received"
-        ) from cause
-
+    except OperationCancelledError:
+        provider_error = (OperationCancelledError, "operation_cancelled")
+    except OperationTimeoutError:
+        provider_error = (OperationTimeoutError, "operation_timeout")
+    except Exception:
+        provider_error = (CommandError, "visual_provider_failed")
+    del provider_request, png_bytes
+    # Raise only after exiting the provider exception handler. `from None`
+    # inside that handler would still retain the untrusted __context__.
     gateway.checkpoint(response_received=True)
+    if provider_error is not None:
+        raise gateway.failure(*provider_error, "response_received")
+
     try:
         summary, candidates = _validate_provider_response(
             raw_response,

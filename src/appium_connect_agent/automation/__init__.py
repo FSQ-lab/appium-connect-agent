@@ -16,6 +16,9 @@ from ._models import AttributeObservation as AttributeObservation
 from ._models import AutomationError as AutomationError
 from ._models import AutomationPlatform as AutomationPlatform
 from ._models import Bounds as Bounds
+from ._models import ColorCoordinateSpace as ColorCoordinateSpace
+from ._models import ColorSample as ColorSample
+from ._models import ColorSpace as ColorSpace
 from ._models import CommandError as CommandError
 from ._models import Coverage as Coverage
 from ._models import DeviceInfo as DeviceInfo
@@ -58,6 +61,7 @@ from ._models import VisualProvider as VisualProvider
 from ._models import VisualProviderRequest as VisualProviderRequest
 from ._models import VisualProviderResponse as VisualProviderResponse
 from ._models import VisualTargetCandidate as VisualTargetCandidate
+from ._sample_color import sample_png_color as sample_png_color
 from ._session import Session as Session
 from ._session import create_mac2_session as create_mac2_session
 from ._session import create_session as create_session

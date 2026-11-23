@@ -575,7 +575,7 @@ def test_result_validation_holds_gate_and_valid_final_success_wins(
     late: str,
 ) -> None:
     cancellation = threading.Event()
-    original = _session._SessionOperationGateway.final_action
+    original = _session._SessionOperationGateway.mutation_action
     outcomes: list[str] = []
     argument: object = apk if method == "install_app" else "com.example"
     with connected(service) as connection:
@@ -600,7 +600,9 @@ def test_result_validation_holds_gate_and_valid_final_success_wins(
 
                 return original(gateway, finish)
 
-            patch.setattr(_session._SessionOperationGateway, "final_action", observed)
+            patch.setattr(
+                _session._SessionOperationGateway, "mutation_action", observed
+            )
             result = invoke(
                 session.device,
                 method,

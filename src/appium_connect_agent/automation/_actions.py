@@ -81,7 +81,7 @@ def _perform_action(
                 "not_sent",
                 completed_steps=gateway.completed_steps,
             )
-        gateway.final_action(
+        gateway.mutation_action(
             lambda: _ANDROID_ACTIONS.perform(
                 driver,
                 target,

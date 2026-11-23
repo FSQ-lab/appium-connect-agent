@@ -154,6 +154,8 @@ class DeviceTime:
 
 
 VisualMode: TypeAlias = Literal["extract", "locate"]
+ColorCoordinateSpace: TypeAlias = Literal["pointer", "image"]
+ColorSpace: TypeAlias = Literal["cicp", "embedded_icc", "srgb", "untagged"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +170,27 @@ class ImageRegion:
     top: int
     right: int
     bottom: int
+
+
+@dataclass(frozen=True, slots=True)
+class ColorSample:
+    rgb: tuple[int, int, int]
+    hex: str
+    opaque: bool
+    min_alpha: int
+    uniform: bool
+    min_rgb: tuple[int, int, int]
+    max_rgb: tuple[int, int, int]
+    color_space: ColorSpace
+    icc_profile_name: str | None
+    coordinate_space: ColorCoordinateSpace
+    pointer_point: tuple[int, int] | None
+    pointer_bounds: Bounds | None
+    image_point: tuple[int, int]
+    image_bounds: Bounds
+    image_size: DisplaySize
+    pointer_size: DisplaySize | None
+    png_sha256: str
 
 
 @dataclass(frozen=True, slots=True)

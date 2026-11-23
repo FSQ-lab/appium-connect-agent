@@ -63,7 +63,7 @@ def _ios_execute_none(
     script: str,
     payload: dict[str, object],
 ) -> None:
-    gateway.final_action(lambda: _none(driver.execute_script(script, payload)))
+    gateway.mutation_action(lambda: _none(driver.execute_script(script, payload)))
     gateway.complete("action_completed")
 
 
@@ -79,7 +79,7 @@ def _ios_execute_bool(
             raise ValueError("XCUITest action must return bool")
         return value
 
-    result = gateway.final_action(action)
+    result = gateway.mutation_action(action)
     gateway.complete("action_completed")
     return result
 
@@ -114,12 +114,12 @@ def _perform_ios_element_click(
         _budget_gate(gateway, duration_seconds)
     if script == "click":
         click: Callable[[], object] = target.click
-        gateway.final_action(lambda: _none(click()))
+        gateway.mutation_action(lambda: _none(click()))
     else:
         payload: dict[str, object] = {"elementId": target.id}
         if duration_seconds is not None:
             payload["duration"] = duration_seconds
-        gateway.final_action(
+        gateway.mutation_action(
             lambda: _none(driver.execute_script(f"mobile: {script}", payload))
         )
     gateway.complete("action_completed")
@@ -272,7 +272,7 @@ def _perform_ios_container_scroll(
         condition_deadline,
         prepare=lambda resolved: resolved[0],
     )
-    gateway.final_action(
+    gateway.mutation_action(
         lambda: _none(
             driver.execute_script(
                 "mobile: scroll", _ios_scroll_payload(target, container_element.id)
@@ -377,7 +377,7 @@ def _ios_install_app(
             )
         _none(driver.execute_script("mobile: installApp", payload))
 
-    gateway.final_action(action)
+    gateway.mutation_action(action)
     gateway.complete("action_completed")
 
 

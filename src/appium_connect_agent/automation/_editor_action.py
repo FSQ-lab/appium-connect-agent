@@ -88,7 +88,7 @@ def _perform_editor_action(
             driver, element, gateway, condition_deadline, prepare=prepare
         )
         if not focused:
-            gateway.final_action(
+            gateway.mutation_action(
                 lambda: _ANDROID_ACTIONS.perform(
                     driver, target, kind="single", duration_ms=None
                 )
@@ -110,7 +110,7 @@ def _perform_editor_action(
             if result is not None:
                 raise _InvalidActionResponse
 
-        gateway.final_action(perform)
+        gateway.mutation_action(perform)
         gateway.complete("action_completed")
 
     _with_raw_id_guard(driver, (element,), gateway, guarded_action)

@@ -1703,7 +1703,7 @@ def _source_operation(
     result: _Result | None = None
     try:
         if changed:
-            gateway.request(
+            gateway.mutation_request(
                 lambda: driver.update_settings({"allowInvisibleElements": True}),
                 "settings_changed",
             )
