@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -19,6 +19,10 @@ from appium_connect_agent.automation import (
     ResourceStateError,
     SessionBusyError,
     TargetError,
+    _editor_action,
+    _element_target,
+    _session,
+    _session_client,
     create_session,
 )
 from appium_connect_agent.runtime import OperationControl
@@ -397,18 +401,41 @@ def test_stale_action_response_is_never_replayed(
 
 @pytest.mark.parametrize("total_budget", [False, True])
 def test_post_click_focus_wait_shares_original_condition_and_operation_budget(
-    service: EditorProtocolService, total_budget: bool
+    service: EditorProtocolService, total_budget: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     service.states[("target", "focused")] = False
-    service.queue(
-        "attribute", ResponsePlan(payload={"value": False}, header_delay_seconds=0.1)
-    )
     with connected(service) as connection:
         session = session_for(service, connection, f"shared-budget-{total_budget}")
         expected_type: type[AutomationError] = (
             OperationTimeoutError if total_budget else TargetError
         )
-        started = time.monotonic()
+        now = 0.0
+
+        def advance(seconds: float) -> None:
+            nonlocal now
+            now += seconds
+
+        clock = SimpleNamespace(monotonic=lambda: now, sleep=advance)
+        monkeypatch.setattr(_session, "time", clock)
+        monkeypatch.setattr(_editor_action, "time", clock)
+        monkeypatch.setattr(_element_target, "time", clock)
+        # Keep a stable transport allowance without changing socket clocks.
+        monkeypatch.setattr(
+            _session_client, "time", SimpleNamespace(monotonic=lambda: -10.0)
+        )
+        complete = _session._SessionOperationGateway.complete
+
+        def complete_then_advance(
+            gateway: _session._SessionOperationGateway, step: str
+        ) -> None:
+            complete(gateway, step)
+            if step == "focus_click_completed":
+                advance(0.3)
+
+        monkeypatch.setattr(
+            _session._SessionOperationGateway, "complete", complete_then_advance
+        )
+        started = clock.monotonic()
         with pytest.raises(expected_type) as caught:
             session.element("id", "target").perform_editor_action(
                 "done",
@@ -417,7 +444,7 @@ def test_post_click_focus_wait_shares_original_condition_and_operation_budget(
                 if total_budget
                 else None,
             )
-        assert time.monotonic() - started < 0.45
+        assert clock.monotonic() - started < 0.45
         assert_error(
             caught.value,
             expected_type,
@@ -426,6 +453,7 @@ def test_post_click_focus_wait_shares_original_condition_and_operation_budget(
             steps=_CLICKED,
         )
         assert len(service.of_kind("find")) == len(service.of_kind("action")) == 1
+        assert len(service.of_kind("attribute")) == 1
         assert service.of_kind("ime") == []
         assert session.session_info().state == "active"
         session.quit()
