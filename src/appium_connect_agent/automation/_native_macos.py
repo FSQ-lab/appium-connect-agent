@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from functools import cache
-from threading import Lock
+from threading import Event, Lock
 from time import monotonic, sleep
 from typing import Any, Literal, cast
 from uuid import uuid4
@@ -255,6 +255,10 @@ def _quartz() -> _Quartz:
 
 
 class _Operation:
+    deadline: float | None
+    cancellation: Event | None
+    posted: bool
+
     def __init__(self, control: OperationControl | None) -> None:
         self.id = uuid4().hex
         if sys.platform != "darwin":
