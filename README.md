@@ -2,7 +2,7 @@
 
 当前已实现 Runtime 本地静态诊断、已有本地 Appium 检查/连接、指定组合的本地受管安装准备、受管 Appium 3.x 启动/就绪/显式 stop/restart/usage 保护与清理、三大目标官方 driver（`uiautomator2@8.7.0 | xcuitest@12.22.8 | mac2@4.6.1`）的显式受管维护与显式 Doctor 环境准备、三大目标平台（Android Native / iOS Simulator & Real Device / macOS Desktop）的 Automation 公开 SDK 能力，以及 Integrations 唯一不可变 **22 工具 `TOOL_CATALOG`** 同源驱动的本地 stdio MCP（`appium-connect-agent-mcp`）、面向 FSQ 的进程内 Python ToolCall 表面与基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`，支持 `external` 与 `managed` 两种 Runtime 服务模式）；各能力的实际验收状态与真实硬件阻塞边界以对应交付台账、Issue 和模块 SPEC 为准。
 发行名为 `appium-connect-agent`，导入名为 `appium_connect_agent`。
-项目包版本为 `0.1.3`；是否已公开发布以 PyPI 与 GitHub Releases 为准。
+项目包版本为 `0.1.4`；是否已公开发布以 PyPI 与 GitHub Releases 为准。
 
 Contracts 提供唯一共享设置值。Runtime 可显式准备指定的本地 Appium 组件，在固定受管根内显式维护三个 allowlist 官方 driver 与执行显式官方 Driver Doctor，并在受管范围内启动本次拥有的 Appium 3.x、通过内核级监听 FD 归属证明与 Session usage lease 保护有界清理，但不替 Automation 创建或关闭 Session。Automation 已在 macOS 宿主下提供 Android Native（`uiautomator2@8.7.0`）、iOS（`xcuitest@12.22.8`）与 macOS Desktop（`mac2@4.6.1`）三端设备发现、显式 Session（含默认 900 秒空闲超时与死会话探活/受控重连）、结构观测、Element 动作、Device 系统与应用操作、本地包安装/卸载、只读屏幕 PNG 截图、显式屏幕坐标触控、单显示器/全屏 `display_size`、设备本地时区时间 `device_time` 以及宿主注入 `VisualProvider` 的单帧视觉感知与 `locate` 坐标映射；各 feature 与模块收口状态以 [Automation 台账](docs/tasks/automation-delivery-ledger.md)为准，当前不提供 `clear_app`、数据删除保证、多显示器跨屏坐标拼接或真实多设备资格。Integrations 当前基于唯一不可变 **22 工具 `TOOL_CATALOG`** 与协议无关 `Application`，同时提供 Host 中立的本地 stdio MCP、面向 FSQ `ToolBinding` 的进程内 Python ToolCall/SDK 表面（含 `SyncApplication`），以及基于当前登录账号私有 Unix domain socket 的正式产品 CLI（`appium-connect-agent`），覆盖一个显式 Application-owned Session 的 open/status/close、Native 只读观测、Element click/text/IME/gesture、Device back/key/keyboard/clipboard/alert/status-bar/screenshot/pointer、macOS/iOS 组合键 `macos.keys`，以及应用 activate/terminate/query-state/launch/install/remove；不提供自动动作链、动作后观测、自动导航、重试、fallback、回滚、HTTP、`clear_app`、跨进程 attach/recovery 或多 Session 产品能力。三大目标平台（Android / iOS Simulator / macOS Desktop）均已完成代码实现、协议回归与获准真实环境端到端冒烟（物理 iPhone 真机 WDA 签名链路与部分 Android 动态页面/Settings 全量链仍按实际硬件授权保持 `device-validation-blocked`）。Runtime 连接的已确认迁移依赖为 HTTPX 0.28.1、AnyIO 4.15.1 和 HTTPcore 1.0.9（无 extras）；Integrations 固定使用 plain `mcp==2.3.0` 和仅限 Integrations DTO/schema 的 `pydantic==2.14.1`。工程与模块约束见 [SPEC.md](SPEC.md)，开发流程见 [AGENTS.md](AGENTS.md)。
 
@@ -523,13 +523,13 @@ mypy 对 `src`、`tests` 和诊断工具使用 strict 基线。默认验证不�
 ```shell
 artifact_env="$(mktemp -d)"
 uv venv --python 3.11 --no-python-downloads "$artifact_env/venv"
-uv pip install --python "$artifact_env/venv/bin/python" dist/appium_connect_agent-0.1.3-py3-none-any.whl
+uv pip install --python "$artifact_env/venv/bin/python" dist/appium_connect_agent-0.1.4-py3-none-any.whl
 cd "$artifact_env"
 "$artifact_env/venv/bin/python" -I -c 'from importlib.resources import files; import appium_connect_agent; assert files(appium_connect_agent).joinpath("py.typed").is_file(); print(appium_connect_agent.__name__)'
 ```
 
 验证 sdist 时，在另一个临时环境安装仓库 `dist/` 中的
-`appium_connect_agent-0.1.3.tar.gz`，再执行同样的仓库外导入检查。
+`appium_connect_agent-0.1.4.tar.gz`，再执行同样的仓库外导入检查。
 构建产物和本地环境不纳入版本控制；示例未涉及发布或 Appium 调用。
 
 ## 模块依赖检查边界
