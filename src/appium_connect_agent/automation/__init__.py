@@ -61,6 +61,8 @@ from ._models import VisualProvider as VisualProvider
 from ._models import VisualProviderRequest as VisualProviderRequest
 from ._models import VisualProviderResponse as VisualProviderResponse
 from ._models import VisualTargetCandidate as VisualTargetCandidate
+from ._native_macos import NativeMacOSDesktop as NativeMacOSDesktop
+from ._native_macos import macos_main_display_bounds as macos_main_display_bounds
 from ._sample_color import sample_png_color as sample_png_color
 from ._session import Session as Session
 from ._session import create_mac2_session as create_mac2_session

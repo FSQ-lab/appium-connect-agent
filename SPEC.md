@@ -455,6 +455,12 @@ Detailed Interface, exact catalog metadata, schema evidence, reuse decision, pri
 - Mac2 结构观测通过 `macos: listDisplays` 严格校验显示器映射提取唯一主屏 `Viewport`（畸形响应明确失败，不混用窗口 `rect`），使用 `defusedxml` 在既有 4 MiB / 20,000 节点 / 128 深度、tree 524,288 UTF-8 bytes、attributes/structure 65,536 bytes规范JSON预算下解析 `<XCUIElementType*>` XML，按 WDA `am_text` 真实顺序（`value → label → placeholderValue → title → ""`）合成 `text` 并支持 14 项 XCUI 属性检查。
 - Mac2 桌面交互在绑定 `Element` 上提供 `click`、`double_click`、`right_click`、`hover`、`long_click`（映射 `macos: press`）、`send_keys`、`clear`、`send_macos_keys`、`scroll_by`、`macos_swipe` 与 `drag_and_drop`（映射 `macos: clickAndDrag`；无原子对应的 `replace_element_value` 与无 `percent` 参数的 `swipe_gesture` 在 Mac2 零请求拒绝 `unsupported_operation/not_sent`）；在绑定 `Device` 上提供 `take_screenshot`、`get_clipboard_text`/`set_clipboard_text`、`launch_app`/`activate_app`/`terminate_app`/`query_app_state`（`0..4`）、`tap_at`/`click_at`/`hover_at`/`scroll_at`/`swipe_between` 与系统级 `send_keys`（`macos: keys`）；跨平台不适用方法一律零请求返回 `unsupported_operation/not_sent`，不开放 `macos: appleScript`、录屏或 WebView 切换。
 
+## Automation Native macOS Desktop Input And Geometry（AUTO-MAC-07）
+
+[#80](https://github.com/FSQ-lab/appium-connect-agent/issues/80) 新增 `Automation.NativeMacOSDesktop` 与 `Automation.macos_main_display_bounds()`。输入通过本地 Quartz CGEvent，主屏几何通过 CoreGraphics 返回逻辑点；不依赖 Appium Session，零 HTTP、WDA、隐式激活和剪贴板访问，不修改既有 Mac2、Android、iOS 或 Integrations 契约。
+
+调用方可提供同步只读前台证明；绑定目标的调用须保留现有前台/命中校验，不重放，失败只允许完成已开始的配对释放。结果只确认本地派发，不确认送达、UI 效果或持久化。详细接口与验证见 [Automation SPEC](modules/automation/SPEC.md#auto-mac-07-native-macos-desktop-input-and-geometry)。
+
 ## Integrations Multi-Platform Mac2 And Optional ADB Bootstrap Delta（INT-MAC-01）
 
 本节定义 Issue #33 经独立审查与用户 SPEC Gate 确认的 `INT-MAC-01` 契约增量；依据为[已确认 INT-MAC-01 详细设计](docs/superpowers/specs/2026-11-14-integrations-macos-mac2-tools-design.md)。

@@ -816,6 +816,21 @@ Device.device_time(*, control: OperationControl | None = None) -> DeviceTime
 - 永久受控测试必须使用锁定真实 Python 客户端连接本地 `ThreadingHTTPServer(poll_interval=0.01)`，覆盖精确路由/载荷/返回类型、Element 等待与几何、按键与修饰位、坐标/数值/路径边界、跨平台零请求门禁、预算门禁、非法响应、共享 gate、取消/超时/unknown 与既有 Android 回归。
 - 受控协议测试通过不等于真实 Mac2 桌面链路验收。获准真实 Calculator 冒烟须由集成 owner 使用固定 Mac2 资格环境执行，并单独记录 Session 关闭、应用恢复、隐私与副作用证据。
 
+## AUTO-MAC-07 Native macOS Desktop Input And Geometry
+
+[#80](https://github.com/FSQ-lab/appium-connect-agent/issues/80) 批准的本机 macOS 原语。仅复用 CPython 3.11/3.12 `ctypes`、Apple CoreGraphics/CoreFoundation 与 HIToolbox 公开键码定义，零第三方依赖。import/构造零 I/O，首调才加载系统框架；不需要 Session/Runtime 服务，零 HTTP、WDA、激活或剪贴板。AX、截图、TCC 自动授权、跨平台及 Integrations 非目标；原有 SDK API 不变。
+
+- `NativeMacOSDesktop(*, foreground_check: Callable[[], bool] | None = None)`；方法均同步、返回 `None`、接受 keyword-only `control: OperationControl | None = None`：
+  - `click_at(x: float, y: float, *, button: Literal["left", "right", "middle"] = "left", click_count: int = 1, modifier_flags: int = 0, ...)`：计数 `1..3`；配对 down/up 使用相同 clickState，从 1 递增。
+  - `hover_at(x: float, y: float, *, ...)`；`scroll_at(x: float, y: float, delta_x: float, delta_y: float, *, unit: Literal["pixel", "line"] = "pixel", modifier_flags: int = 0, ...)`：有符号整数或整数值浮点 `-32767..32767`；Quartz 正值上/左。
+  - `drag_between(start_x: float, start_y: float, end_x: float, end_y: float, *, duration_ms: int = 250, modifier_flags: int = 0, ...)`：左键 `50..5000`ms，中间点有界插值；坐标均为有限全局逻辑点，可为负，拒绝 bool。
+  - `send_keys(keys: Sequence[str | MacKeyStroke], *, ...)`：ANSI 物理字母/数字、Escape、Return/Enter、Tab、Space、Backspace/Delete、ForwardDelete、方向键、Home/End、PageUp/PageDown、F1–F19 及对应 XCUI 名称（`XCUIKeyboardKeyEnter` 为小键盘）。`modifier_flags` 仅支持公开 SHIFT/CONTROL/OPTION/COMMAND 的组合；flags 随事件赋值，无独立修饰键 down，不污染后续动作。不是键盘布局翻译；裸字符串不是键序列。
+  - `type_text(text: str, *, ...)`：Quartz UTF-16 分块不拆代理对，CR/LF/CRLF 逐换行发 Return；拒绝孤立代理码点。
+- `macos_main_display_bounds(*, control: OperationControl | None = None) -> Bounds`：`CGMainDisplayID` + `CGDisplayBounds` 的主屏全局逻辑点，不读取窗口/屏幕像素、不检测输入权限、不触碰 Session。不可用或非法几何明确失败。
+- 同一进程的本地输入序列不交错，等待受同一操作预算或取消约束。前台回调须有界、只读、不重入，首个及后续派发检查点和结束只接受严格 `True`；`False` → `target_not_foreground`，异常或非布尔 → `foreground_unobservable`。`None` 仅用于调用者明确不做目标绑定；锚点调用方仍负责 bundle/PID/窗口/命中等证明。输入权限仅无提示预检。失配/取消/超时只继续必要配对释放，禁止重放或激活；OS 可能在检查与投递间抢焦，post 不保证送达/状态变更/持久化。
+- 沿用公开 `AutomationError` 体系：`InvalidRequestError/invalid_argument|unsupported_platform`、`TargetError/target_not_foreground|foreground_unobservable`、`CommandError/native_backend_unavailable|native_input_permission_denied|native_input_failed|native_display_unavailable`、`OperationCancelledError/operation_cancelled`、`OperationTimeoutError/operation_timeout`。未 post 为 `not_sent`，已尝试投递为 `response_unknown`；不回显输入、PID 或原始回调异常，不修改任何 Session 状态。
+- 确定性验证覆盖 C ABI 与无提示 preflight、键码与 flags、点击/拖拽配对、滚动轴、前台丢失/取消、UTF-16/换行、非 Darwin、主屏 bounds。真实输入只在获授权一次性克隆验证，不以宿主机发真实事件或单测替代。
+
 ## AUTO-IOS-01A iOS Device Discovery, XCUITest Session, Locators And Shared XCUI Observation
 
 ### Read-Only iOS Device Discovery
