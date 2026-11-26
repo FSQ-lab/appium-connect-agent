@@ -118,17 +118,11 @@ def _loopback_port_is_available(port: int) -> bool:
     ipv6_error = _bind_error(socket.AF_INET6, _IPV6_LOOPBACK, port)
     if ipv6_error == errno.EADDRNOTAVAIL:
         ipv6_error = _bind_error(socket.AF_INET6, _IPV6_WILDCARD, port)
-    if (
-        ipv6_error is not None
-        and ipv6_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS
-    ):
+    if ipv6_error is not None and ipv6_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS:
         return False
 
     ipv4_error = _bind_error(socket.AF_INET, _IPV4_LOOPBACK, port)
-    if (
-        ipv4_error is not None
-        and ipv4_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS
-    ):
+    if ipv4_error is not None and ipv4_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS:
         return False
     return ipv6_error is None or ipv4_error is None
 

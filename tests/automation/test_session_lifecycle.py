@@ -2298,6 +2298,7 @@ def test_xcuitest_coordinator_has_exact_independent_hundred_port_pool() -> None:
     for reservation in reservations:
         reservation.release()
 
+
 @contextmanager
 def listening_loopback_socket(
     family: socket.AddressFamily, address: str, port: int
@@ -2354,9 +2355,10 @@ def test_production_coordinators_enable_host_probe_only_for_xcuitest() -> None:
 def test_xcuitest_coordinator_skips_occupied_loopback_port_without_interference(
     family: socket.AddressFamily, listen_address: str
 ) -> None:
-    with listening_socket_with_free_successor(
-        family, listen_address
-    ) as (listener, port):
+    with listening_socket_with_free_successor(family, listen_address) as (
+        listener,
+        port,
+    ):
         coordinator = automation_coordination._Coordinator(
             port, port + 1, require_free_loopback_port=True
         )
@@ -2373,9 +2375,7 @@ def test_xcuitest_coordinator_skips_occupied_loopback_port_without_interference(
 
 def test_xcuitest_coordinator_reports_all_host_ports_occupied() -> None:
     with (
-        listening_socket_with_free_successor(
-            socket.AF_INET, "127.0.0.1"
-        ) as (_, port),
+        listening_socket_with_free_successor(socket.AF_INET, "127.0.0.1") as (_, port),
         listening_loopback_socket(socket.AF_INET, "127.0.0.1", port + 1),
     ):
         coordinator = automation_coordination._Coordinator(
@@ -2426,7 +2426,7 @@ def test_xcuitest_probe_checks_ipv6_wildcard_when_loopback_is_unavailable(
         assert socket_type == socket.SOCK_STREAM
         return ProbeSocket(family, bind_errors, bind_calls)
 
-    monkeypatch.setattr(automation_coordination.socket, "socket", socket_factory)
+    monkeypatch.setattr(socket, "socket", socket_factory)
     assert automation_coordination._loopback_port_is_available(port) is (
         wildcard_error is None
     )
@@ -2453,7 +2453,7 @@ def test_xcuitest_coordinator_uses_ipv4_when_ipv6_family_is_unsupported(
             raise OSError(errno.EAFNOSUPPORT, "IPv6 unavailable")
         return ProbeSocket(family, bind_errors, bind_calls)
 
-    monkeypatch.setattr(automation_coordination.socket, "socket", socket_factory)
+    monkeypatch.setattr(socket, "socket", socket_factory)
     coordinator = automation_coordination._Coordinator(
         first_port, first_port + 1, require_free_loopback_port=True
     )
