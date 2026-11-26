@@ -1,8 +1,10 @@
-"""Process-local device and UiAutomator2 system-port reservations."""
+"""Process-local device and automation system-port reservations."""
 
 from __future__ import annotations
 
+import errno
 import os
+import socket
 import stat
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -20,6 +22,12 @@ _MIN_XCUITEST_SYSTEM_PORT = 8100
 _MAX_XCUITEST_SYSTEM_PORT = 8199
 _PRIVATE_TMP_OPEN_PATH = Path("/private/tmp")
 _PRIVATE_TMP_RESULT_PATH = Path("/private/tmp")
+_UNSUPPORTED_SOCKET_FAMILY_ERRORS = frozenset(
+    (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT)
+)
+_IPV6_LOOPBACK = "::1"
+_IPV6_WILDCARD = "::"
+_IPV4_LOOPBACK = "127.0.0.1"
 _ROOT_UID = 0
 _DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -54,12 +62,15 @@ class _Coordinator:
         self,
         min_system_port: int = _MIN_SYSTEM_PORT,
         max_system_port: int = _MAX_SYSTEM_PORT,
+        *,
+        require_free_loopback_port: bool = False,
     ) -> None:
         self._lock = Lock()
         self._devices: dict[str, str] = {}
         self._ports: dict[int, str] = {}
         self._min_system_port = min_system_port
         self._max_system_port = max_system_port
+        self._require_free_loopback_port = require_free_loopback_port
 
     def reserve(self, device_id: str) -> _Reservation:
         with self._lock:
@@ -72,6 +83,10 @@ class _Coordinator:
                         self._min_system_port, self._max_system_port + 1
                     )
                     if candidate not in self._ports
+                    and (
+                        not self._require_free_loopback_port
+                        or _loopback_port_is_available(candidate)
+                    )
                 ),
                 None,
             )
@@ -90,10 +105,34 @@ class _Coordinator:
                 del self._ports[reservation.system_port]
 
 
+def _bind_error(family: socket.AddressFamily, address: str, port: int) -> int | None:
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.bind((address, port))
+    except OSError as error:
+        return error.errno
+    return None
+
+
+def _loopback_port_is_available(port: int) -> bool:
+    ipv6_error = _bind_error(socket.AF_INET6, _IPV6_LOOPBACK, port)
+    if ipv6_error == errno.EADDRNOTAVAIL:
+        ipv6_error = _bind_error(socket.AF_INET6, _IPV6_WILDCARD, port)
+    if ipv6_error is not None and ipv6_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS:
+        return False
+
+    ipv4_error = _bind_error(socket.AF_INET, _IPV4_LOOPBACK, port)
+    if ipv4_error is not None and ipv4_error not in _UNSUPPORTED_SOCKET_FAMILY_ERRORS:
+        return False
+    return ipv6_error is None or ipv4_error is None
+
+
 _COORDINATOR = _Coordinator()
 _MAC2_COORDINATOR = _Coordinator(_MIN_MAC2_SYSTEM_PORT, _MAX_MAC2_SYSTEM_PORT)
 _XCUITEST_COORDINATOR = _Coordinator(
-    _MIN_XCUITEST_SYSTEM_PORT, _MAX_XCUITEST_SYSTEM_PORT
+    _MIN_XCUITEST_SYSTEM_PORT,
+    _MAX_XCUITEST_SYSTEM_PORT,
+    require_free_loopback_port=True,
 )
 
 

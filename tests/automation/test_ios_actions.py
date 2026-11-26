@@ -25,7 +25,12 @@ from appium_connect_agent.automation import (
     _session_client,
     create_xcuitest_session,
 )
-from appium_connect_agent.automation import _session as session_module
+from appium_connect_agent.automation import (
+    _session as session_module,
+)
+from appium_connect_agent.automation import (
+    _session_coordination as automation_coordination,
+)
 from appium_connect_agent.runtime import OperationControl, RuntimeConnection
 from tests.automation._action_protocol import (
     ActionProtocolService,
@@ -642,6 +647,9 @@ def test_ios_ensure_alive_reattaches_with_preserved_private_metadata(
     service: IosActionProtocolService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        automation_coordination, "_loopback_port_is_available", lambda port: True
+    )
     monkeypatch.setattr(
         session_module,
         "_prepare_xcuitest_derived_data",

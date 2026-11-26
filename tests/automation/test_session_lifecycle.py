@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -2167,6 +2168,9 @@ def test_xcuitest_capabilities_coordination_and_release(
     service: ProtocolService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     private_tmp = configure_private_tmp(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        automation_coordination, "_loopback_port_is_available", lambda port: True
+    )
     app = tmp_path / "Sample.app"
     app.mkdir()
     (app / "Info.plist").write_bytes(b"plist")
@@ -2293,6 +2297,173 @@ def test_xcuitest_coordinator_has_exact_independent_hundred_port_pool() -> None:
         coordinator.reserve("overflow")
     for reservation in reservations:
         reservation.release()
+
+
+@contextmanager
+def listening_loopback_socket(
+    family: socket.AddressFamily, address: str, port: int
+) -> Iterator[socket.socket]:
+    listener: socket.socket | None = None
+    try:
+        try:
+            listener = socket.socket(family, socket.SOCK_STREAM)
+            listener.bind((address, port))
+        except OSError as error:
+            if family == socket.AF_INET6 and error.errno in {
+                errno.EADDRNOTAVAIL,
+                errno.EAFNOSUPPORT,
+                errno.EPROTONOSUPPORT,
+            }:
+                pytest.skip("IPv6 loopback is unavailable on this host")
+            raise
+        listener.listen()
+        yield listener
+    finally:
+        if listener is not None:
+            listener.close()
+
+
+@contextmanager
+def listening_socket_with_free_successor(
+    family: socket.AddressFamily, address: str
+) -> Iterator[tuple[socket.socket, int]]:
+    for _ in range(100):
+        with listening_loopback_socket(family, address, 0) as listener:
+            port = int(listener.getsockname()[1])
+            if port < 65535 and automation_coordination._loopback_port_is_available(
+                port + 1
+            ):
+                yield listener, port
+                return
+    pytest.fail("could not acquire adjacent test-owned loopback ports")
+
+
+def test_production_coordinators_enable_host_probe_only_for_xcuitest() -> None:
+    assert automation_coordination._XCUITEST_COORDINATOR._require_free_loopback_port
+    assert not automation_coordination._COORDINATOR._require_free_loopback_port
+    assert not automation_coordination._MAC2_COORDINATOR._require_free_loopback_port
+
+
+@pytest.mark.parametrize(
+    ("family", "listen_address"),
+    [
+        (socket.AF_INET, "127.0.0.1"),
+        (socket.AF_INET6, "::1"),
+        (socket.AF_INET6, "::"),
+    ],
+)
+def test_xcuitest_coordinator_skips_occupied_loopback_port_without_interference(
+    family: socket.AddressFamily, listen_address: str
+) -> None:
+    with listening_socket_with_free_successor(family, listen_address) as (
+        listener,
+        port,
+    ):
+        coordinator = automation_coordination._Coordinator(
+            port, port + 1, require_free_loopback_port=True
+        )
+        reservation = coordinator.reserve("occupied-port-device")
+        assert reservation.system_port == port + 1
+        listener.listen()
+        assert listener.getsockname()[1] == port
+        reservation.release()
+
+    replacement = coordinator.reserve("released-listener-device")
+    assert replacement.system_port == port
+    replacement.release()
+
+
+def test_xcuitest_coordinator_reports_all_host_ports_occupied() -> None:
+    with (
+        listening_socket_with_free_successor(socket.AF_INET, "127.0.0.1") as (_, port),
+        listening_loopback_socket(socket.AF_INET, "127.0.0.1", port + 1),
+    ):
+        coordinator = automation_coordination._Coordinator(
+            port, port + 1, require_free_loopback_port=True
+        )
+        with pytest.raises(automation_coordination._SystemPortUnavailable):
+            coordinator.reserve("no-host-port-device")
+
+
+class ProbeSocket:
+    def __init__(
+        self,
+        family: socket.AddressFamily,
+        bind_errors: dict[tuple[socket.AddressFamily, str, int], int],
+        bind_calls: list[tuple[socket.AddressFamily, str, int]],
+    ) -> None:
+        self._family = family
+        self._bind_errors = bind_errors
+        self._bind_calls = bind_calls
+
+    def __enter__(self) -> ProbeSocket:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def bind(self, address: tuple[str, int]) -> None:
+        target = (self._family, *address)
+        self._bind_calls.append(target)
+        error = self._bind_errors.get(target)
+        if error is not None:
+            raise OSError(error, "probe failure")
+
+
+@pytest.mark.parametrize("wildcard_error", [None, errno.EADDRINUSE])
+def test_xcuitest_probe_checks_ipv6_wildcard_when_loopback_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, wildcard_error: int | None
+) -> None:
+    port = 41000
+    bind_calls: list[tuple[socket.AddressFamily, str, int]] = []
+    bind_errors = {(socket.AF_INET6, "::1", port): errno.EADDRNOTAVAIL}
+    if wildcard_error is not None:
+        bind_errors[(socket.AF_INET6, "::", port)] = wildcard_error
+
+    def socket_factory(
+        family: socket.AddressFamily, socket_type: socket.SocketKind
+    ) -> ProbeSocket:
+        assert socket_type == socket.SOCK_STREAM
+        return ProbeSocket(family, bind_errors, bind_calls)
+
+    monkeypatch.setattr(socket, "socket", socket_factory)
+    assert automation_coordination._loopback_port_is_available(port) is (
+        wildcard_error is None
+    )
+    assert bind_calls[:2] == [
+        (socket.AF_INET6, "::1", port),
+        (socket.AF_INET6, "::", port),
+    ]
+
+
+def test_xcuitest_coordinator_uses_ipv4_when_ipv6_family_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_port = 41000
+    bind_calls: list[tuple[socket.AddressFamily, str, int]] = []
+    bind_errors = {
+        (socket.AF_INET, "127.0.0.1", first_port): errno.EADDRINUSE,
+    }
+
+    def socket_factory(
+        family: socket.AddressFamily, socket_type: socket.SocketKind
+    ) -> ProbeSocket:
+        assert socket_type == socket.SOCK_STREAM
+        if family == socket.AF_INET6:
+            raise OSError(errno.EAFNOSUPPORT, "IPv6 unavailable")
+        return ProbeSocket(family, bind_errors, bind_calls)
+
+    monkeypatch.setattr(socket, "socket", socket_factory)
+    coordinator = automation_coordination._Coordinator(
+        first_port, first_port + 1, require_free_loopback_port=True
+    )
+    reservation = coordinator.reserve("ipv4-only-device")
+    assert reservation.system_port == first_port + 1
+    assert bind_calls == [
+        (socket.AF_INET, "127.0.0.1", first_port),
+        (socket.AF_INET, "127.0.0.1", first_port + 1),
+    ]
+    reservation.release()
 
 
 def assert_private_exception_chain(
