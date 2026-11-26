@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -9,18 +10,25 @@ from appium_connect_agent.runtime import _coordination
 
 
 @pytest.fixture(autouse=True)
-def fresh_process_coordinator(monkeypatch: pytest.MonkeyPatch) -> None:
+def fresh_process_coordinator() -> Iterator[None]:
     """Keep intentional uncertain reservations inside their originating test."""
-    monkeypatch.setattr(
-        _session_coordination,
-        "_COORDINATOR",
-        _session_coordination._Coordinator(),
+    coordinators = (
+        _session_coordination._COORDINATOR,
+        _session_coordination._MAC2_COORDINATOR,
+        _session_coordination._XCUITEST_COORDINATOR,
     )
-    monkeypatch.setattr(
-        _session_coordination,
-        "_MAC2_COORDINATOR",
-        _session_coordination._Coordinator(10100, 10199),
-    )
+
+    def clear_reservations() -> None:
+        for coordinator in coordinators:
+            with coordinator._lock:
+                coordinator._devices.clear()
+                coordinator._ports.clear()
+
+    clear_reservations()
+    try:
+        yield
+    finally:
+        clear_reservations()
 
 
 @pytest.fixture(autouse=True)
