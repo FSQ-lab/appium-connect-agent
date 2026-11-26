@@ -406,7 +406,11 @@ def test_maintenance_npm_policy_accepts_disabled_filters(
     ],
 )
 def test_maintenance_npm_policy_rejects_before_writes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, npm_version: str, key: str, value: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    npm_version: str,
+    key: str,
+    value: str,
 ) -> None:
     runtime, log = _setup(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
@@ -423,7 +427,9 @@ def test_maintenance_npm_policy_rejects_before_writes(
     commands = _commands(log)
     assert commands[-1][1:] == ["config", "get", key]
     assert not any(command[1:3] == ["driver", "install"] for command in commands)
-    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+    assert {
+        path: path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == before
 
 
 def test_maintenance_accepts_verified_appium_three_without_minor_matrix(

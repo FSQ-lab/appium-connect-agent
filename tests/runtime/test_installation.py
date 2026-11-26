@@ -1219,7 +1219,11 @@ def test_install_npm_policy_accepts_disabled_filters(
     ],
 )
 def test_install_npm_policy_rejects_before_writes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, npm_version: str, key: str, value: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    npm_version: str,
+    key: str,
+    value: str,
 ) -> None:
     settings = fake_tools(tmp_path, monkeypatch)
     monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
