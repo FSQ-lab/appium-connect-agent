@@ -205,6 +205,19 @@ _NPM_EFFECTIVE_POLICY: dict[str, frozenset[str]] = {
 }
 
 
+def _allows_undefined_npm_exclusion(
+    key: str, value: str, npm_version: str, verified_filters: dict[str, str]
+) -> bool:
+    # npm added this key in 11.17.0. Without either filter its absence is inert.
+    return (
+        key == "min-release-age-exclude"
+        and value == "undefined"
+        and verified_filters.get("before") == "null"
+        and verified_filters.get("min-release-age") == "0"
+        and satisfies(npm_version, "<11.17.0") is True
+    )
+
+
 def _base_environment() -> dict[str, str]:
     environment: dict[str, str] = {}
     for key, value in os.environ.items():
@@ -1152,10 +1165,11 @@ class _Installer:
             raise self.operation.error(InstallationError, "tool_version_invalid")
         if not node_match or not npm_match:
             raise self.operation.error(InstallationError, "tool_version_incompatible")
-        self._verify_npm_policy(base_env)
+        self._verify_npm_policy(base_env, raw_npm)
 
-    def _verify_npm_policy(self, environment: dict[str, str]) -> None:
+    def _verify_npm_policy(self, environment: dict[str, str], npm_version: str) -> None:
         assert self.node is not None and self.npm is not None
+        verified_filters: dict[str, str] = {}
         for key, expected in _NPM_EFFECTIVE_POLICY.items():
             result = self._spawn(
                 f"npm_config_{key.replace('-', '_')}",
@@ -1179,10 +1193,14 @@ class _Installer:
                 raise self.operation.error(
                     InstallationError, "installation_state_unknown"
                 ) from None
-            if observed not in expected:
+            if observed not in expected and not _allows_undefined_npm_exclusion(
+                key, observed, npm_version, verified_filters
+            ):
                 raise self.operation.error(
                     InstallationError, "installation_state_unknown"
                 )
+            if key in ("before", "min-release-age"):
+                verified_filters[key] = observed
 
     def _prepare_root(self) -> None:
         root = self.operation.root
