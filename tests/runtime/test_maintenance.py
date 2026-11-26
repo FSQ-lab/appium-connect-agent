@@ -61,10 +61,23 @@ if args == ["--version"]:
 if args and Path(args[0]).name == "npm":
     command = args[1:]
     if command == ["--version"]:
-        print("11.19.0")
+        print(os.environ.get("FAKE_NPM_VERSION", "11.19.0"))
         raise SystemExit(0)
     if command[:2] == ["config", "get"] and len(command) == 3:
         key = command[2]
+        override = os.environ.get("FAKE_NPM_POLICY_" + key.replace("-", "_").upper())
+        if override is not None:
+            if override == "@failure":
+                print("undefined")
+                raise SystemExit(7)
+            if override == "@truncated":
+                print("undefined" + " " * (64 * 1024))
+                raise SystemExit(0)
+            if override == "@invalid-utf8":
+                sys.stdout.buffer.write(b"undefined\xff")
+                raise SystemExit(0)
+            print(override)
+            raise SystemExit(0)
         env_key = "npm_config_" + key.replace("-", "_")
         value = os.environ.get(env_key)
         defaults = {
@@ -359,6 +372,64 @@ def test_missing_driver_uses_exact_designated_install_and_final_list(
         ]
     ]
     assert _maintenance_state(_root()) == "complete"
+
+
+@pytest.mark.parametrize(
+    ("npm_version", "exclusion"), [("10.9.4", "undefined"), ("11.17.0", "")]
+)
+def test_maintenance_npm_policy_accepts_disabled_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, npm_version: str, exclusion: str
+) -> None:
+    runtime, _ = _setup(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
+    monkeypatch.setenv("FAKE_NPM_POLICY_MIN_RELEASE_AGE_EXCLUDE", exclusion)
+
+    result = runtime.ensure_managed_driver("xcuitest")
+
+    assert result.outcome == "installed"
+    assert result.after.status == "verified"
+    assert _maintenance_state(_root()) == "complete"
+
+
+@pytest.mark.parametrize(
+    ("npm_version", "key", "value"),
+    [
+        ("11.17.0", "min-release-age-exclude", "undefined"),
+        ("10.9.4", "min-release-age-exclude", "@scope/pkg"),
+        ("10.9.4", "min-release-age-exclude", "Undefined"),
+        ("10.9.4", "before", "2000-01-01"),
+        ("10.9.4", "min-release-age", "1"),
+        ("10.9.4", "min-release-age-exclude", "@failure"),
+        ("10.9.4", "min-release-age-exclude", "@truncated"),
+        ("10.9.4", "min-release-age-exclude", "@invalid-utf8"),
+        ("10.9.4", "ignore-scripts", "undefined"),
+    ],
+)
+def test_maintenance_npm_policy_rejects_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    npm_version: str,
+    key: str,
+    value: str,
+) -> None:
+    runtime, log = _setup(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
+    monkeypatch.setenv("FAKE_NPM_POLICY_MIN_RELEASE_AGE_EXCLUDE", "undefined")
+    monkeypatch.setenv("FAKE_NPM_POLICY_" + key.replace("-", "_").upper(), value)
+    root = _root()
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+
+    with pytest.raises(DriverMaintenanceError) as caught:
+        runtime.ensure_managed_driver("xcuitest")
+
+    assert caught.value.code == "driver_state_unknown"
+    assert caught.value.driver_result is None
+    commands = _commands(log)
+    assert commands[-1][1:] == ["config", "get", key]
+    assert not any(command[1:3] == ["driver", "install"] for command in commands)
+    assert {
+        path: path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == before
 
 
 def test_maintenance_accepts_verified_appium_three_without_minor_matrix(

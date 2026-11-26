@@ -17,6 +17,7 @@ from ._installation import (
     _COMBINATION,
     _METADATA_LIMIT,
     _NPM_EFFECTIVE_POLICY,
+    _allows_undefined_npm_exclusion,
     _atomic_json,
     _base_environment,
     _cleanup_checkpoint,
@@ -412,6 +413,7 @@ class _MaintenanceRunner:
             raise self._error("tool_version_invalid")
         if not node_match or not npm_match:
             raise self._error("tool_version_incompatible")
+        verified_filters: dict[str, str] = {}
         for key, expected in _NPM_EFFECTIVE_POLICY.items():
             observed = self._spawn(
                 "npm_policy",
@@ -424,8 +426,12 @@ class _MaintenanceRunner:
                 value = observed[1].decode("utf-8").strip()
             except UnicodeDecodeError:
                 raise self._error("driver_state_unknown") from None
-            if value not in expected:
+            if value not in expected and not _allows_undefined_npm_exclusion(
+                key, value, raw_npm, verified_filters
+            ):
                 raise self._error("driver_state_unknown")
+            if key in ("before", "min-release-age"):
+                verified_filters[key] = value
         self.environment = self._environment()
 
     def _validate_root(self) -> None:

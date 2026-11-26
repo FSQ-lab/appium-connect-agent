@@ -51,6 +51,19 @@ if args and Path(args[0]).name == "npm":
         raise SystemExit(0)
     if command[:2] == ["config", "get"] and len(command) == 3:
         key = command[2]
+        override = os.environ.get("FAKE_NPM_POLICY_" + key.replace("-", "_").upper())
+        if override is not None:
+            if override == "@failure":
+                print("undefined")
+                raise SystemExit(7)
+            if override == "@truncated":
+                print("undefined" + " " * (64 * 1024))
+                raise SystemExit(0)
+            if override == "@invalid-utf8":
+                sys.stdout.buffer.write(b"undefined\xff")
+                raise SystemExit(0)
+            print(override)
+            raise SystemExit(0)
         env_key = "npm_config_" + key.replace("-", "_")
         value = os.environ.get(env_key)
         if value:
@@ -1172,6 +1185,61 @@ def test_npm_network_config_survives_but_behavior_is_fixed(
     assert (root / "appium" / "lifecycle-marker").read_text() == "ran\n"
     assert user_config.read_bytes() == safe_content
     assert "PRIVATE" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("npm_version", "exclusion"), [("10.9.4", "undefined"), ("11.17.0", "")]
+)
+def test_install_npm_policy_accepts_disabled_filters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, npm_version: str, exclusion: str
+) -> None:
+    settings = fake_tools(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
+    monkeypatch.setenv("FAKE_NPM_POLICY_MIN_RELEASE_AGE_EXCLUDE", exclusion)
+
+    result = Runtime(settings).install(InstallRequest())
+
+    assert result.outcome == "installed"
+    assert result.npm_version == npm_version
+    assert installed_record_state(managed_root()) == "complete"
+
+
+@pytest.mark.parametrize(
+    ("npm_version", "key", "value"),
+    [
+        ("11.17.0", "min-release-age-exclude", "undefined"),
+        ("10.9.4", "min-release-age-exclude", "@scope/pkg"),
+        ("10.9.4", "min-release-age-exclude", "Undefined"),
+        ("10.9.4", "before", "2000-01-01"),
+        ("10.9.4", "min-release-age", "1"),
+        ("10.9.4", "min-release-age-exclude", "@failure"),
+        ("10.9.4", "min-release-age-exclude", "@truncated"),
+        ("10.9.4", "min-release-age-exclude", "@invalid-utf8"),
+        ("10.9.4", "ignore-scripts", "undefined"),
+    ],
+)
+def test_install_npm_policy_rejects_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    npm_version: str,
+    key: str,
+    value: str,
+) -> None:
+    settings = fake_tools(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_NPM_VERSION", npm_version)
+    monkeypatch.setenv("FAKE_NPM_POLICY_MIN_RELEASE_AGE_EXCLUDE", "undefined")
+    monkeypatch.setenv("FAKE_NPM_POLICY_" + key.replace("-", "_").upper(), value)
+
+    with pytest.raises(InstallationError) as caught:
+        Runtime(settings).install(InstallRequest())
+
+    assert caught.value.code == "installation_state_unknown"
+    result = caught.value.installation_result
+    assert result is not None and result.changed is False
+    commands = command_log(tmp_path)
+    assert commands[-1][1:] == ["config", "get", key]
+    assert not any("install" in command for command in commands)
+    assert not managed_root().exists()
 
 
 @pytest.mark.parametrize("boundary", ["cancel", "deadline", "popen"])
